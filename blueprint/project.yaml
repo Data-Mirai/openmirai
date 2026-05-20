@@ -1,0 +1,6 @@
+name: datamirai-engine
+description: Motor open source de ejecucion de grafos agentivos. Alternativa a LangGraph y Google ADK.
+version: 0.1.0
+status: pre-development
+repo_type: public
+language: python

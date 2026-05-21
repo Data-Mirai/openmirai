@@ -1,5 +1,26 @@
 # Data Mirai Engine — Instrucciones
 
+## Regla de testing — OBLIGATORIA
+
+**NUNCA usar mocks, placeholders, ni implementaciones falsas en tests E2E.**
+
+Los tests E2E con Playwright son la UNICA forma válida de verificar que el código funciona. Deben:
+- Correr con `--headed` para ver la UI real
+- Usar el backend REAL (no mocks)
+- Ejecutar flujos REALES (web scraping real, LLM real, DB real)
+- Verificar datos REALES en los resultados (no inventados)
+- Los ciclos de desarrollo solo están completos cuando los E2E integration tests pasan con UI real
+
+**NO se acepta:**
+- Tests que pasan pero no prueban nada real
+- Endpoints placeholder que retornan datos fake
+- Mocks de servicios que deberían funcionar de verdad
+- Decir "ya quedó" sin haber corrido los E2E con headed
+
+Si un endpoint no está implementado, no se considera terminado. Punto.
+
+---
+
 Motor open source de ejecucion de grafos agentivos. Alternativa a LangGraph y Google ADK.
 
 ## Que es

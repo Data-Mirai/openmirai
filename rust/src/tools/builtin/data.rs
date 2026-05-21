@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use regex;
 use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
@@ -395,6 +396,443 @@ impl Tool for StorageWriteTool {
     }
 }
 
+// ===========================================================================
+// VaultReadTool
+// ===========================================================================
+
+data_tool! {
+    struct VaultReadTool, factory VaultReadFactory;
+    tool_type = "data/vault_read",
+    name = "Vault Read",
+    description = "Reads notes from the Knowledge Vault. Placeholder that returns empty results.",
+    inputs = [
+        field("query", "string", false, "Search query for vault notes"),
+        field("path", "string", false, "Specific vault path to read"),
+    ],
+    outputs = [
+        field("notes", "array", true, "Matched vault notes"),
+        field("count", "number", true, "Number of notes returned"),
+    ],
+    config_fields = [
+        field("folder", "string", false, "Vault folder to search in"),
+        field("limit", "number", false, "Maximum notes to return"),
+    ]
+}
+
+#[async_trait]
+impl Tool for VaultReadTool {
+    async fn execute(
+        &self,
+        _inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        // Placeholder: vault requires a filesystem backend.
+        // In a real implementation this would query the vault service.
+        let mut out = HashMap::new();
+        out.insert("notes".to_string(), json!([]));
+        out.insert("count".to_string(), json!(0));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// VaultWriteTool
+// ===========================================================================
+
+data_tool! {
+    struct VaultWriteTool, factory VaultWriteFactory;
+    tool_type = "data/vault_write",
+    name = "Vault Write",
+    description = "Writes a note to the Knowledge Vault. Placeholder that acknowledges the write.",
+    inputs = [
+        field("path", "string", true, "Vault path for the note"),
+        field("title", "string", false, "Note title"),
+        field("content", "string", true, "Note content"),
+    ],
+    outputs = [
+        field("path", "string", true, "Path where note was written"),
+        field("written", "boolean", true, "Whether write succeeded"),
+    ],
+    config_fields = [
+        field("tags", "string", false, "Comma-separated tags"),
+    ]
+}
+
+#[async_trait]
+impl Tool for VaultWriteTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let path = inputs
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("vault/untitled.md");
+
+        let mut out = HashMap::new();
+        out.insert("path".to_string(), json!(path));
+        out.insert("written".to_string(), json!(true));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// EntityQueryTool
+// ===========================================================================
+
+data_tool! {
+    struct EntityQueryTool, factory EntityQueryFactory;
+    tool_type = "data/entity_query",
+    name = "Entity Query",
+    description = "Queries entities from the database with field extraction",
+    inputs = [
+        field("entity_type", "string", true, "Entity type to query"),
+        field("filters", "object", false, "Filter conditions as {field: value}"),
+    ],
+    outputs = [
+        field("entities", "array", true, "Matched entities"),
+        field("count", "number", true, "Number of entities returned"),
+    ],
+    config_fields = [
+        field("limit", "number", false, "Maximum entities to return"),
+        field("order_by", "string", false, "Field to order by"),
+    ]
+}
+
+#[async_trait]
+impl Tool for EntityQueryTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let db = context.db().ok_or_else(|| ToolError::ExecutionFailed {
+            tool_type: "data/entity_query".into(),
+            message: "no database resource configured".into(),
+        })?;
+
+        let entity_type = inputs
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+
+        let limit = config
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(100);
+
+        let query = format!("SELECT * FROM entities WHERE type = ? LIMIT {}", limit);
+        let params = vec![json!(entity_type)];
+
+        let rows = db
+            .fetch_all(&query, &params)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "data/entity_query".into(),
+                message: e.to_string(),
+            })?;
+
+        let count = rows.len();
+        let mut out = HashMap::new();
+        out.insert("entities".to_string(), json!(rows));
+        out.insert("count".to_string(), json!(count));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// EntityUpsertTool
+// ===========================================================================
+
+data_tool! {
+    struct EntityUpsertTool, factory EntityUpsertFactory;
+    tool_type = "data/entity_upsert",
+    name = "Entity Upsert",
+    description = "Creates or updates an entity in the database",
+    inputs = [
+        field("entity_type", "string", true, "Entity type"),
+        field("data", "object", true, "Entity field data"),
+        field("id", "string", false, "Entity ID (if updating)"),
+    ],
+    outputs = [
+        field("id", "string", true, "Entity ID"),
+        field("action", "string", true, "Action performed: created or updated"),
+    ],
+    config_fields = []
+}
+
+#[async_trait]
+impl Tool for EntityUpsertTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let db = context.db().ok_or_else(|| ToolError::ExecutionFailed {
+            tool_type: "data/entity_upsert".into(),
+            message: "no database resource configured".into(),
+        })?;
+
+        let entity_type = inputs
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let data = inputs
+            .get("data")
+            .cloned()
+            .unwrap_or(json!({}));
+        let existing_id = inputs
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+
+        let action = if existing_id.is_some() { "updated" } else { "created" };
+
+        let id = existing_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        let params = vec![json!(id), json!(entity_type), data];
+        db.execute("UPSERT", &params)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "data/entity_upsert".into(),
+                message: e.to_string(),
+            })?;
+
+        let mut out = HashMap::new();
+        out.insert("id".to_string(), json!(id));
+        out.insert("action".to_string(), json!(action));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// WebScrapeTool
+// ===========================================================================
+
+data_tool! {
+    struct WebScrapeTool, factory WebScrapeFactory;
+    tool_type = "data/web_scrape",
+    name = "Web Scrape",
+    description = "Fetches web pages via HTTP GET and returns their content",
+    inputs = [
+        field("url", "string", true, "URL to fetch"),
+    ],
+    outputs = [
+        field("content", "string", true, "Page content as text"),
+        field("status", "number", true, "HTTP status code"),
+        field("url", "string", true, "URL that was fetched"),
+    ],
+    config_fields = [
+        field("timeout", "number", false, "Request timeout in seconds"),
+    ]
+}
+
+#[async_trait]
+impl Tool for WebScrapeTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let url = inputs
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "data/web_scrape".into(),
+                message: "input 'url' is required".into(),
+            })?;
+
+        let timeout_secs = config
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build()
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "data/web_scrape".into(),
+                message: format!("Failed to build HTTP client: {e}"),
+            })?;
+
+        let response = client
+            .get(url)
+            .header("User-Agent", "DataMirai-Engine/1.0")
+            .send()
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "data/web_scrape".into(),
+                message: format!("HTTP request failed: {e}"),
+            })?;
+
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "data/web_scrape".into(),
+                message: format!("Failed to read response body: {e}"),
+            })?;
+
+        let mut out = HashMap::new();
+        out.insert("content".to_string(), json!(body));
+        out.insert("status".to_string(), json!(status));
+        out.insert("url".to_string(), json!(url));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// HtmlToMarkdownTool
+// ===========================================================================
+
+data_tool! {
+    struct HtmlToMarkdownTool, factory HtmlToMarkdownFactory;
+    tool_type = "data/html_to_markdown",
+    name = "HTML to Markdown",
+    description = "Converts HTML content to clean Markdown by stripping tags and converting semantic elements",
+    inputs = [
+        field("html", "string", true, "HTML content to convert"),
+    ],
+    outputs = [
+        field("markdown", "string", true, "Converted markdown text"),
+        field("length", "number", true, "Length of markdown output"),
+    ],
+    config_fields = []
+}
+
+/// Simple HTML to Markdown converter.
+/// Strips script/style tags, converts headings, links, paragraphs, and strips remaining tags.
+fn html_to_markdown(html: &str) -> String {
+    use regex::Regex;
+
+    let mut text = html.to_string();
+
+    // Remove script and style blocks
+    let script_re = Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
+    text = script_re.replace_all(&text, "").to_string();
+    let style_re = Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
+    text = style_re.replace_all(&text, "").to_string();
+    let noscript_re = Regex::new(r"(?is)<noscript[^>]*>.*?</noscript>").unwrap();
+    text = noscript_re.replace_all(&text, "").to_string();
+
+    // Convert headings: <h1>text</h1> -> # text
+    for level in 1..=6 {
+        let hashes = "#".repeat(level);
+        let re = Regex::new(&format!(r"(?is)<h{level}[^>]*>(.*?)</h{level}>")).unwrap();
+        text = re
+            .replace_all(&text, |caps: &regex::Captures| {
+                format!("\n\n{} {}\n\n", hashes, caps[1].trim())
+            })
+            .to_string();
+    }
+
+    // Convert links: <a href="url">text</a> -> [text](url)
+    let link_re = Regex::new(r#"(?is)<a[^>]*href\s*=\s*["']([^"']*)["'][^>]*>(.*?)</a>"#).unwrap();
+    text = link_re
+        .replace_all(&text, |caps: &regex::Captures| {
+            let href = &caps[1];
+            let link_text = caps[2].trim();
+            if link_text.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]({})", link_text, href)
+            }
+        })
+        .to_string();
+
+    // Convert strong/bold
+    let bold_re = Regex::new(r"(?is)<(?:strong|b)[^>]*>(.*?)</(?:strong|b)>").unwrap();
+    text = bold_re
+        .replace_all(&text, |caps: &regex::Captures| {
+            format!("**{}**", caps[1].trim())
+        })
+        .to_string();
+
+    // Convert emphasis/italic
+    let em_re = Regex::new(r"(?is)<(?:em|i)[^>]*>(.*?)</(?:em|i)>").unwrap();
+    text = em_re
+        .replace_all(&text, |caps: &regex::Captures| {
+            format!("*{}*", caps[1].trim())
+        })
+        .to_string();
+
+    // Convert list items
+    let li_re = Regex::new(r"(?is)<li[^>]*>(.*?)</li>").unwrap();
+    text = li_re
+        .replace_all(&text, |caps: &regex::Captures| {
+            format!("\n- {}", caps[1].trim())
+        })
+        .to_string();
+
+    // Convert paragraphs and divs to double newlines
+    let p_re = Regex::new(r"(?is)<(?:p|div)[^>]*>").unwrap();
+    text = p_re.replace_all(&text, "\n\n").to_string();
+    let p_close_re = Regex::new(r"(?is)</(?:p|div)>").unwrap();
+    text = p_close_re.replace_all(&text, "\n\n").to_string();
+
+    // Convert <br> to newlines
+    let br_re = Regex::new(r"(?i)<br\s*/?>").unwrap();
+    text = br_re.replace_all(&text, "\n").to_string();
+
+    // Convert <hr> to horizontal rules
+    let hr_re = Regex::new(r"(?i)<hr\s*/?>").unwrap();
+    text = hr_re.replace_all(&text, "\n\n---\n\n").to_string();
+
+    // Strip all remaining HTML tags
+    let tag_re = Regex::new(r"<[^>]+>").unwrap();
+    text = tag_re.replace_all(&text, "").to_string();
+
+    // Decode common HTML entities
+    text = text
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ");
+
+    // Clean up excessive blank lines
+    let multi_newline = Regex::new(r"\n{3,}").unwrap();
+    text = multi_newline.replace_all(&text, "\n\n").to_string();
+
+    text.trim().to_string()
+}
+
+#[async_trait]
+impl Tool for HtmlToMarkdownTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let html = inputs
+            .get("html")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "data/html_to_markdown".into(),
+                message: "input 'html' is required".into(),
+            })?;
+
+        let markdown = html_to_markdown(html);
+        let length = markdown.len();
+
+        let mut out = HashMap::new();
+        out.insert("markdown".to_string(), json!(markdown));
+        out.insert("length".to_string(), json!(length));
+        Ok(out)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registration helper
 // ---------------------------------------------------------------------------
@@ -405,6 +843,12 @@ pub fn register_data_tools(registry: &mut ToolRegistry) {
     registry.register("data/db_write", Box::new(DbWriteFactory::new()));
     registry.register("data/storage_read", Box::new(StorageReadFactory::new()));
     registry.register("data/storage_write", Box::new(StorageWriteFactory::new()));
+    registry.register("data/vault_read", Box::new(VaultReadFactory::new()));
+    registry.register("data/vault_write", Box::new(VaultWriteFactory::new()));
+    registry.register("data/entity_query", Box::new(EntityQueryFactory::new()));
+    registry.register("data/entity_upsert", Box::new(EntityUpsertFactory::new()));
+    registry.register("data/web_scrape", Box::new(WebScrapeFactory::new()));
+    registry.register("data/html_to_markdown", Box::new(HtmlToMarkdownFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -824,16 +1268,88 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // -- VaultReadTool --------------------------------------------------------
+
+    #[tokio::test]
+    async fn vault_read_returns_empty() {
+        let ctx = TestContext::empty();
+        let tool = VaultReadTool;
+        let result = tool
+            .execute(HashMap::new(), HashMap::new(), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result["count"], json!(0));
+        assert_eq!(result["notes"], json!([]));
+    }
+
+    // -- VaultWriteTool -------------------------------------------------------
+
+    #[tokio::test]
+    async fn vault_write_returns_path() {
+        let ctx = TestContext::empty();
+        let tool = VaultWriteTool;
+        let mut inputs = HashMap::new();
+        inputs.insert("path".to_string(), json!("vault/test.md"));
+        inputs.insert("content".to_string(), json!("hello"));
+        let result = tool
+            .execute(inputs, HashMap::new(), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result["path"], json!("vault/test.md"));
+        assert_eq!(result["written"], json!(true));
+    }
+
+    // -- HtmlToMarkdownTool ---------------------------------------------------
+
+    #[tokio::test]
+    async fn html_to_markdown_basic() {
+        let ctx = TestContext::empty();
+        let tool = HtmlToMarkdownTool;
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            "html".to_string(),
+            json!("<h1>Title</h1><p>Hello <strong>world</strong></p>"),
+        );
+        let result = tool
+            .execute(inputs, HashMap::new(), &ctx)
+            .await
+            .unwrap();
+        let md = result["markdown"].as_str().unwrap();
+        assert!(md.contains("# Title"));
+        assert!(md.contains("**world**"));
+        assert!(result["length"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn html_to_markdown_strips_script() {
+        let md = super::html_to_markdown("<p>hello</p><script>evil()</script><p>world</p>");
+        assert!(!md.contains("evil"));
+        assert!(md.contains("hello"));
+        assert!(md.contains("world"));
+    }
+
+    #[test]
+    fn html_to_markdown_converts_links() {
+        let md = super::html_to_markdown(r#"<a href="https://example.com">Click here</a>"#);
+        assert!(md.contains("[Click here](https://example.com)"));
+    }
+
     // -- Registration ---------------------------------------------------------
 
     #[test]
-    fn register_data_tools_adds_four() {
+    fn register_data_tools_adds_ten() {
         let mut reg = ToolRegistry::new();
         register_data_tools(&mut reg);
         assert!(reg.get("data/db_read").is_some());
         assert!(reg.get("data/db_write").is_some());
         assert!(reg.get("data/storage_read").is_some());
         assert!(reg.get("data/storage_write").is_some());
-        assert_eq!(reg.list_tools().len(), 4);
+        assert!(reg.get("data/vault_read").is_some());
+        assert!(reg.get("data/vault_write").is_some());
+        assert!(reg.get("data/entity_query").is_some());
+        assert!(reg.get("data/entity_upsert").is_some());
+        assert!(reg.get("data/web_scrape").is_some());
+        assert!(reg.get("data/html_to_markdown").is_some());
+        assert_eq!(reg.list_tools().len(), 10);
     }
 }

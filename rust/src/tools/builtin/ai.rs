@@ -602,6 +602,71 @@ fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[Strin
     )
 }
 
+// ===========================================================================
+// TranscribeTool
+// ===========================================================================
+
+ai_tool! {
+    struct TranscribeTool, factory TranscribeFactory;
+    tool_type = "ai/transcribe",
+    name = "Transcribe Audio",
+    description = "Transcribes audio content using an LLM to describe/transcribe the file",
+    inputs = [
+        field("file_path", "string", true, "Path to the audio file"),
+    ],
+    outputs = [
+        field("text", "string", true, "Transcription text"),
+        field("duration_seconds", "number", true, "Audio duration in seconds"),
+    ],
+    config_fields = [
+        field("model", "string", false, "Model to use for transcription"),
+    ]
+}
+
+#[async_trait]
+impl Tool for TranscribeTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let file_path = inputs
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: "input 'file_path' is required".into(),
+            })?;
+
+        let model = config
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+
+        // Placeholder: delegate to LLM with a transcription prompt.
+        // In a real implementation this would use a speech-to-text API.
+        let prompt = format!("Transcribe the audio file at: {}", file_path);
+        let context_messages = vec![Value::String(
+            format!("Audio file: {}", file_path),
+        )];
+
+        let result = context
+            .llm()
+            .call(model, &prompt, &context_messages, 0.0, 4096)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: e.to_string(),
+            })?;
+
+        let mut out = HashMap::new();
+        out.insert("text".to_string(), json!(result.response));
+        out.insert("duration_seconds".to_string(), json!(0.0));
+        Ok(out)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registration helper
 // ---------------------------------------------------------------------------
@@ -610,6 +675,7 @@ fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[Strin
 pub fn register_ai_tools(registry: &mut ToolRegistry) {
     registry.register("ai/llm_call", Box::new(LlmCallFactory::new()));
     registry.register("ai/embeddings", Box::new(EmbeddingsFactory::new()));
+    registry.register("ai/transcribe", Box::new(TranscribeFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -841,11 +907,12 @@ mod tests {
     // -- Registration ---------------------------------------------------------
 
     #[test]
-    fn register_ai_tools_adds_two() {
+    fn register_ai_tools_adds_three() {
         let mut reg = ToolRegistry::new();
         register_ai_tools(&mut reg);
         assert!(reg.get("ai/llm_call").is_some());
         assert!(reg.get("ai/embeddings").is_some());
-        assert_eq!(reg.list_tools().len(), 2);
+        assert!(reg.get("ai/transcribe").is_some());
+        assert_eq!(reg.list_tools().len(), 3);
     }
 }

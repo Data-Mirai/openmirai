@@ -227,6 +227,79 @@ impl Tool for BashTool {
     }
 }
 
+// ===========================================================================
+// ProcessListTool
+// ===========================================================================
+
+system_tool! {
+    struct ProcessListTool, factory ProcessListFactory;
+    tool_type = "system/process_list",
+    name = "Process List",
+    description = "Lists running processes on the system",
+    category = "system",
+    inputs = [],
+    outputs = [
+        field("processes", "array", true, "List of running processes"),
+        field("count", "number", true, "Number of processes"),
+    ],
+    config_fields = [
+        field("filter", "string", false, "Filter processes by name"),
+    ]
+}
+
+#[async_trait]
+impl Tool for ProcessListTool {
+    async fn execute(
+        &self,
+        _inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let filter = config
+            .get("filter")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let output = Command::new("ps")
+            .args(["aux"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "system/process_list".into(),
+                message: format!("Failed to run ps: {e}"),
+            })?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+
+        let mut processes: Vec<Value> = Vec::new();
+
+        // Skip header line
+        for line in lines.iter().skip(1) {
+            if filter.is_empty() || line.contains(filter) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 11 {
+                    processes.push(json!({
+                        "user": parts[0],
+                        "pid": parts[1],
+                        "cpu": parts[2],
+                        "mem": parts[3],
+                        "command": parts[10..].join(" "),
+                    }));
+                }
+            }
+        }
+
+        let count = processes.len();
+        let mut out = HashMap::new();
+        out.insert("processes".to_string(), json!(processes));
+        out.insert("count".to_string(), json!(count));
+        Ok(out)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registration helper
 // ---------------------------------------------------------------------------
@@ -234,6 +307,7 @@ impl Tool for BashTool {
 /// Register all system tools into the given registry.
 pub fn register_system_tools(registry: &mut ToolRegistry) {
     registry.register("system/bash", Box::new(BashFactory::new()));
+    registry.register("system/process_list", Box::new(ProcessListFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -352,11 +426,25 @@ mod tests {
         assert!(stdout.contains("tmp"));
     }
 
+    #[tokio::test]
+    async fn process_list_returns_processes() {
+        let tool = ProcessListTool;
+        let result = tool
+            .execute(HashMap::new(), HashMap::new(), &ctx())
+            .await
+            .unwrap();
+        let count = result["count"].as_u64().unwrap();
+        assert!(count > 0);
+        let processes = result["processes"].as_array().unwrap();
+        assert!(!processes.is_empty());
+    }
+
     #[test]
-    fn register_system_tools_adds_bash() {
+    fn register_system_tools_adds_all() {
         let mut reg = ToolRegistry::new();
         register_system_tools(&mut reg);
         assert!(reg.get("system/bash").is_some());
-        assert_eq!(reg.list_tools().len(), 1);
+        assert!(reg.get("system/process_list").is_some());
+        assert_eq!(reg.list_tools().len(), 2);
     }
 }

@@ -1,6 +1,9 @@
 pub mod core;
+pub mod energy;
 pub mod llm;
+pub mod mcp;
 pub mod memory;
+pub mod server;
 pub mod tools;
 pub mod triggers;
 

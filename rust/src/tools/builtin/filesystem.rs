@@ -809,6 +809,501 @@ impl Tool for EditFileTool {
     }
 }
 
+// ===========================================================================
+// CopyTool
+// ===========================================================================
+
+fs_tool! {
+    struct CopyTool, factory CopyFactory;
+    tool_type = "fs/copy",
+    name = "Copy File",
+    description = "Copies a file from source to destination",
+    category = "filesystem",
+    inputs = [
+        field("source", "string", true, "Source file path"),
+        field("destination", "string", true, "Destination file path"),
+    ],
+    outputs = [
+        field("source", "string", true, "Resolved source path"),
+        field("destination", "string", true, "Resolved destination path"),
+        field("bytes_copied", "number", true, "Number of bytes copied"),
+    ],
+    config_fields = []
+}
+
+#[async_trait]
+impl Tool for CopyTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let source = inputs
+            .get("source")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/copy".into(),
+                message: "missing required input: source".into(),
+            })?;
+        let destination = inputs
+            .get("destination")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/copy".into(),
+                message: "missing required input: destination".into(),
+            })?;
+
+        let src_path = fs::canonicalize(source).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/copy".into(),
+            message: format!("Source not found: {source} ({e})"),
+        })?;
+
+        let dest_path = PathBuf::from(destination);
+        let abs_dest = if dest_path.is_absolute() {
+            dest_path
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(&dest_path)
+        };
+
+        // Create parent dirs if needed
+        if let Some(parent) = abs_dest.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "fs/copy".into(),
+                    message: format!("Cannot create parent directories: {e}"),
+                })?;
+            }
+        }
+
+        let bytes_copied = fs::copy(&src_path, &abs_dest).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/copy".into(),
+            message: format!("Copy failed: {e}"),
+        })?;
+
+        let mut out = HashMap::new();
+        out.insert("source".to_string(), json!(src_path.display().to_string()));
+        out.insert("destination".to_string(), json!(abs_dest.display().to_string()));
+        out.insert("bytes_copied".to_string(), json!(bytes_copied));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// MoveTool
+// ===========================================================================
+
+fs_tool! {
+    struct MoveTool, factory MoveFactory;
+    tool_type = "fs/move",
+    name = "Move/Rename",
+    description = "Moves or renames a file or directory",
+    category = "filesystem",
+    inputs = [
+        field("source", "string", true, "Source path"),
+        field("destination", "string", true, "Destination path"),
+    ],
+    outputs = [
+        field("source", "string", true, "Original path"),
+        field("destination", "string", true, "New path"),
+    ],
+    config_fields = []
+}
+
+#[async_trait]
+impl Tool for MoveTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let source = inputs
+            .get("source")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/move".into(),
+                message: "missing required input: source".into(),
+            })?;
+        let destination = inputs
+            .get("destination")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/move".into(),
+                message: "missing required input: destination".into(),
+            })?;
+
+        let src_path = fs::canonicalize(source).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/move".into(),
+            message: format!("Source not found: {source} ({e})"),
+        })?;
+
+        let dest_path = PathBuf::from(destination);
+        let abs_dest = if dest_path.is_absolute() {
+            dest_path
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(&dest_path)
+        };
+
+        if let Some(parent) = abs_dest.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "fs/move".into(),
+                    message: format!("Cannot create parent directories: {e}"),
+                })?;
+            }
+        }
+
+        fs::rename(&src_path, &abs_dest).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/move".into(),
+            message: format!("Move failed: {e}"),
+        })?;
+
+        let mut out = HashMap::new();
+        out.insert("source".to_string(), json!(src_path.display().to_string()));
+        out.insert("destination".to_string(), json!(abs_dest.display().to_string()));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// DeleteTool
+// ===========================================================================
+
+fs_tool! {
+    struct DeleteTool, factory DeleteFactory;
+    tool_type = "fs/delete",
+    name = "Delete",
+    description = "Deletes a file or directory (recursive for directories)",
+    category = "filesystem",
+    inputs = [
+        field("path", "string", true, "Path to delete"),
+    ],
+    outputs = [
+        field("path", "string", true, "Path that was deleted"),
+        field("deleted", "boolean", true, "Whether deletion succeeded"),
+    ],
+    config_fields = []
+}
+
+#[async_trait]
+impl Tool for DeleteTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let raw_path = inputs
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/delete".into(),
+                message: "missing required input: path".into(),
+            })?;
+
+        let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/delete".into(),
+            message: format!("Path not found: {raw_path} ({e})"),
+        })?;
+
+        if path.is_dir() {
+            fs::remove_dir_all(&path).map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "fs/delete".into(),
+                message: format!("Cannot delete directory: {e}"),
+            })?;
+        } else {
+            fs::remove_file(&path).map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "fs/delete".into(),
+                message: format!("Cannot delete file: {e}"),
+            })?;
+        }
+
+        let mut out = HashMap::new();
+        out.insert("path".to_string(), json!(path.display().to_string()));
+        out.insert("deleted".to_string(), json!(true));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// MkdirTool
+// ===========================================================================
+
+fs_tool! {
+    struct MkdirTool, factory MkdirFactory;
+    tool_type = "fs/mkdir",
+    name = "Create Directory",
+    description = "Creates a directory and all parent directories as needed",
+    category = "filesystem",
+    inputs = [
+        field("path", "string", true, "Directory path to create"),
+    ],
+    outputs = [
+        field("path", "string", true, "Created directory path"),
+        field("created", "boolean", true, "Whether directory was created"),
+    ],
+    config_fields = []
+}
+
+#[async_trait]
+impl Tool for MkdirTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let raw_path = inputs
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/mkdir".into(),
+                message: "missing required input: path".into(),
+            })?;
+
+        let path = PathBuf::from(raw_path);
+        let abs_path = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(&path)
+        };
+
+        fs::create_dir_all(&abs_path).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/mkdir".into(),
+            message: format!("Cannot create directory: {e}"),
+        })?;
+
+        let mut out = HashMap::new();
+        out.insert("path".to_string(), json!(abs_path.display().to_string()));
+        out.insert("created".to_string(), json!(true));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// TreeTool
+// ===========================================================================
+
+fs_tool! {
+    struct TreeTool, factory TreeFactory;
+    tool_type = "fs/tree",
+    name = "Directory Tree",
+    description = "Displays a recursive directory listing with indentation",
+    category = "filesystem",
+    inputs = [
+        field("path", "string", true, "Root directory path"),
+    ],
+    outputs = [
+        field("tree", "string", true, "Formatted directory tree"),
+        field("files", "number", true, "Total file count"),
+        field("dirs", "number", true, "Total directory count"),
+    ],
+    config_fields = [
+        field("max_depth", "number", false, "Maximum depth to traverse (default 5)"),
+        field("show_hidden", "boolean", false, "Include hidden files"),
+    ]
+}
+
+fn build_tree(
+    dir: &Path,
+    prefix: &str,
+    depth: usize,
+    max_depth: usize,
+    show_hidden: bool,
+    lines: &mut Vec<String>,
+    file_count: &mut usize,
+    dir_count: &mut usize,
+) {
+    if depth > max_depth {
+        return;
+    }
+
+    let mut entries: Vec<_> = match fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .collect(),
+        Err(_) => return,
+    };
+    entries.sort_by(|a, b| {
+        a.file_name()
+            .to_string_lossy()
+            .cmp(&b.file_name().to_string_lossy())
+    });
+
+    let count = entries.len();
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !show_hidden && name.starts_with('.') {
+            continue;
+        }
+        let is_last = i == count - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let suffix = if is_dir { "/" } else { "" };
+
+        lines.push(format!("{}{}{}{}", prefix, connector, name, suffix));
+
+        if is_dir {
+            *dir_count += 1;
+            let child_prefix = if is_last {
+                format!("{}    ", prefix)
+            } else {
+                format!("{}│   ", prefix)
+            };
+            build_tree(
+                &entry.path(),
+                &child_prefix,
+                depth + 1,
+                max_depth,
+                show_hidden,
+                lines,
+                file_count,
+                dir_count,
+            );
+        } else {
+            *file_count += 1;
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for TreeTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let raw_path = inputs
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/tree".into(),
+                message: "missing required input: path".into(),
+            })?;
+        let max_depth = config
+            .get("max_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+        let show_hidden = config
+            .get("show_hidden")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/tree".into(),
+            message: format!("Path not found: {raw_path} ({e})"),
+        })?;
+
+        if !path.is_dir() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "fs/tree".into(),
+                message: format!("Not a directory: {}", path.display()),
+            });
+        }
+
+        let mut lines = vec![format!("{}/", path.display())];
+        let mut file_count: usize = 0;
+        let mut dir_count: usize = 0;
+        build_tree(
+            &path, "", 0, max_depth, show_hidden, &mut lines, &mut file_count, &mut dir_count,
+        );
+
+        let mut out = HashMap::new();
+        out.insert("tree".to_string(), json!(lines.join("\n")));
+        out.insert("files".to_string(), json!(file_count));
+        out.insert("dirs".to_string(), json!(dir_count));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// FileInfoTool
+// ===========================================================================
+
+fs_tool! {
+    struct FileInfoTool, factory FileInfoFactory;
+    tool_type = "fs/file_info",
+    name = "File Info",
+    description = "Returns metadata about a file: size, modified time, type, permissions",
+    category = "filesystem",
+    inputs = [
+        field("path", "string", true, "Path to get info for"),
+    ],
+    outputs = [
+        field("path", "string", true, "Resolved absolute path"),
+        field("size", "number", true, "Size in bytes"),
+        field("modified", "number", true, "Last modified timestamp (seconds since epoch)"),
+        field("is_file", "boolean", true, "Whether path is a file"),
+        field("is_dir", "boolean", true, "Whether path is a directory"),
+        field("permissions", "string", true, "Permission mode (octal on unix)"),
+    ],
+    config_fields = []
+}
+
+#[async_trait]
+impl Tool for FileInfoTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        _config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let raw_path = inputs
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "fs/file_info".into(),
+                message: "missing required input: path".into(),
+            })?;
+
+        let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/file_info".into(),
+            message: format!("Path not found: {raw_path} ({e})"),
+        })?;
+
+        let metadata = fs::metadata(&path).map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "fs/file_info".into(),
+            message: format!("Cannot stat path: {e}"),
+        })?;
+
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+
+        #[cfg(unix)]
+        let permissions = {
+            use std::os::unix::fs::PermissionsExt;
+            format!("{:o}", metadata.permissions().mode())
+        };
+        #[cfg(not(unix))]
+        let permissions = if metadata.permissions().readonly() {
+            "readonly".to_string()
+        } else {
+            "read-write".to_string()
+        };
+
+        let mut out = HashMap::new();
+        out.insert("path".to_string(), json!(path.display().to_string()));
+        out.insert("size".to_string(), json!(metadata.len()));
+        out.insert("modified".to_string(), json!(modified));
+        out.insert("is_file".to_string(), json!(metadata.is_file()));
+        out.insert("is_dir".to_string(), json!(metadata.is_dir()));
+        out.insert("permissions".to_string(), json!(permissions));
+        Ok(out)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registration helper
 // ---------------------------------------------------------------------------
@@ -821,6 +1316,12 @@ pub fn register_filesystem_tools(registry: &mut ToolRegistry) {
     registry.register("fs/glob_files", Box::new(GlobFilesFactory::new()));
     registry.register("fs/grep_files", Box::new(GrepFilesFactory::new()));
     registry.register("fs/edit_file", Box::new(EditFileFactory::new()));
+    registry.register("fs/copy", Box::new(CopyFactory::new()));
+    registry.register("fs/move", Box::new(MoveFactory::new()));
+    registry.register("fs/delete", Box::new(DeleteFactory::new()));
+    registry.register("fs/mkdir", Box::new(MkdirFactory::new()));
+    registry.register("fs/tree", Box::new(TreeFactory::new()));
+    registry.register("fs/file_info", Box::new(FileInfoFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,6 +1636,116 @@ mod tests {
         assert_eq!(result["count"], json!(2));
     }
 
+    // -- CopyTool -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn copy_file_basic() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("source.txt");
+        fs::write(&src, "copy me").unwrap();
+        let dest = dir.path().join("dest.txt");
+
+        let tool = CopyTool;
+        let mut inputs = HashMap::new();
+        inputs.insert("source".to_string(), json!(src.display().to_string()));
+        inputs.insert("destination".to_string(), json!(dest.display().to_string()));
+        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+
+        assert_eq!(result["bytes_copied"], json!(7));
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "copy me");
+    }
+
+    // -- MoveTool -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn move_file_basic() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("old.txt");
+        fs::write(&src, "move me").unwrap();
+        let dest = dir.path().join("new.txt");
+
+        let tool = MoveTool;
+        let mut inputs = HashMap::new();
+        inputs.insert("source".to_string(), json!(src.display().to_string()));
+        inputs.insert("destination".to_string(), json!(dest.display().to_string()));
+        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "move me");
+        assert!(result["destination"].as_str().is_some());
+    }
+
+    // -- DeleteTool ---------------------------------------------------------
+
+    #[tokio::test]
+    async fn delete_file_basic() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("delete_me.txt");
+        fs::write(&file, "bye").unwrap();
+
+        let tool = DeleteTool;
+        let mut inputs = HashMap::new();
+        inputs.insert("path".to_string(), json!(file.display().to_string()));
+        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+
+        assert_eq!(result["deleted"], json!(true));
+        assert!(!file.exists());
+    }
+
+    // -- MkdirTool ----------------------------------------------------------
+
+    #[tokio::test]
+    async fn mkdir_creates_nested() {
+        let dir = TempDir::new().unwrap();
+        let nested = dir.path().join("a/b/c");
+
+        let tool = MkdirTool;
+        let mut inputs = HashMap::new();
+        inputs.insert("path".to_string(), json!(nested.display().to_string()));
+        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+
+        assert_eq!(result["created"], json!(true));
+        assert!(nested.is_dir());
+    }
+
+    // -- TreeTool -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn tree_basic() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.txt"), "a").unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub/b.txt"), "b").unwrap();
+
+        let tool = TreeTool;
+        let mut inputs = HashMap::new();
+        inputs.insert("path".to_string(), json!(dir.path().display().to_string()));
+        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+
+        assert!(result["tree"].as_str().unwrap().contains("a.txt"));
+        assert!(result["tree"].as_str().unwrap().contains("sub/"));
+        assert_eq!(result["files"], json!(2));
+        assert_eq!(result["dirs"], json!(1));
+    }
+
+    // -- FileInfoTool -------------------------------------------------------
+
+    #[tokio::test]
+    async fn file_info_basic() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("info.txt");
+        fs::write(&file, "hello").unwrap();
+
+        let tool = FileInfoTool;
+        let mut inputs = HashMap::new();
+        inputs.insert("path".to_string(), json!(file.display().to_string()));
+        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+
+        assert_eq!(result["size"], json!(5));
+        assert_eq!(result["is_file"], json!(true));
+        assert_eq!(result["is_dir"], json!(false));
+    }
+
     // -- Registration -------------------------------------------------------
 
     #[test]
@@ -1147,6 +1758,12 @@ mod tests {
         assert!(reg.get("fs/glob_files").is_some());
         assert!(reg.get("fs/grep_files").is_some());
         assert!(reg.get("fs/edit_file").is_some());
-        assert_eq!(reg.list_tools().len(), 6);
+        assert!(reg.get("fs/copy").is_some());
+        assert!(reg.get("fs/move").is_some());
+        assert!(reg.get("fs/delete").is_some());
+        assert!(reg.get("fs/mkdir").is_some());
+        assert!(reg.get("fs/tree").is_some());
+        assert!(reg.get("fs/file_info").is_some());
+        assert_eq!(reg.list_tools().len(), 12);
     }
 }

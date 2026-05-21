@@ -366,8 +366,10 @@ async fn execute_agent(
             retries: 0,
             error: None,
         }],
+        transcript: vec![],
         error: None,
         interrupt_node_id: None,
+        interrupt_info: None,
     };
 
     let body = json!({

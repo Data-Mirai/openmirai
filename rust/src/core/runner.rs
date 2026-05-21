@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -45,6 +47,126 @@ pub enum ToolError {
 
     #[error("tool `{tool_type}` execution failed: {message}")]
     ExecutionFailed { tool_type: String, message: String },
+}
+
+// ---------------------------------------------------------------------------
+// HookHandler trait + HookResult
+// ---------------------------------------------------------------------------
+
+/// Result returned by hook methods to control execution flow.
+#[derive(Debug, Clone)]
+pub enum HookResult {
+    /// Proceed normally.
+    Continue,
+    /// Skip this block (pre_block_exec only).
+    Skip,
+    /// Abort execution with a reason message.
+    Abort(String),
+    /// Retry the current block (on_error only).
+    Retry,
+    /// Replace the inputs for this block (pre_block_exec only).
+    ModifiedInputs(HashMap<String, Value>),
+}
+
+/// Seven interception points during graph execution.
+#[async_trait]
+pub trait HookHandler: Send + Sync {
+    async fn on_graph_start(
+        &self,
+        graph: &GraphDef,
+        ctx: &dyn ExecutionContext,
+    ) -> HookResult;
+
+    async fn on_graph_end(
+        &self,
+        graph: &GraphDef,
+        state: &SharedState,
+        ctx: &dyn ExecutionContext,
+    ) -> HookResult;
+
+    async fn pre_block_exec(
+        &self,
+        node: &NodeDef,
+        inputs: &mut HashMap<String, Value>,
+        ctx: &dyn ExecutionContext,
+    ) -> HookResult;
+
+    async fn post_block_exec(
+        &self,
+        node: &NodeDef,
+        output: &mut HashMap<String, Value>,
+        ctx: &dyn ExecutionContext,
+    ) -> HookResult;
+
+    async fn pre_llm_call(
+        &self,
+        node: &NodeDef,
+        ctx: &dyn ExecutionContext,
+    ) -> HookResult;
+
+    async fn post_llm_call(
+        &self,
+        node: &NodeDef,
+        response: &mut Value,
+        ctx: &dyn ExecutionContext,
+    ) -> HookResult;
+
+    async fn on_error(
+        &self,
+        node: &NodeDef,
+        error: &ToolError,
+        ctx: &dyn ExecutionContext,
+    ) -> HookResult;
+}
+
+// ---------------------------------------------------------------------------
+// CheckpointCallback trait + Checkpoint
+// ---------------------------------------------------------------------------
+
+/// Snapshot of execution state at a point in time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub session_id: String,
+    pub step: u32,
+    pub node_id: String,
+    pub state_snapshot: HashMap<String, HashMap<String, Value>>,
+    pub cursor_node_id: Option<String>,
+    pub timestamp: f64,
+}
+
+/// Callback invoked after each successful block to persist state.
+#[async_trait]
+pub trait CheckpointCallback: Send + Sync {
+    async fn save_checkpoint(&self, checkpoint: Checkpoint) -> Result<String, RunnerError>;
+}
+
+// ---------------------------------------------------------------------------
+// InterruptInfo
+// ---------------------------------------------------------------------------
+
+/// Information about a human_input interrupt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterruptInfo {
+    pub node_id: String,
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub timeout_minutes: Option<f64>,
+}
+
+// ---------------------------------------------------------------------------
+// TranscriptEntry
+// ---------------------------------------------------------------------------
+
+/// Human-readable log entry generated during execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptEntry {
+    pub entry_type: String,
+    pub message: String,
+    pub timestamp: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub metadata: HashMap<String, Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -133,10 +255,13 @@ pub struct ExecutionResult {
     pub status: ExecutionStatus,
     pub state: SharedState,
     pub trace: Vec<TraceEntry>,
+    pub transcript: Vec<TranscriptEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interrupt_node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interrupt_info: Option<InterruptInfo>,
 }
 
 // ---------------------------------------------------------------------------
@@ -164,12 +289,16 @@ pub trait ToolExecutor: Send + Sync {
 
 /// Sequential cursor that traverses a validated DAG, executing nodes one at a
 /// time.  Supports conditional branching, retry with backoff, template-based
-/// input resolution, and real-time event emission.
+/// input resolution, real-time event emission, hooks, checkpoints,
+/// human_input interrupts, pause/resume, and transcript generation.
 pub struct GraphRunner {
     executor: Box<dyn ToolExecutor>,
     event_emitter: Option<EventEmitter>,
     max_iterations: u32,
     default_retry_policy: RetryPolicy,
+    hook_handler: Option<Box<dyn HookHandler>>,
+    checkpoint_cb: Option<Box<dyn CheckpointCallback>>,
+    pause_requested: Arc<AtomicBool>,
 }
 
 impl GraphRunner {
@@ -180,6 +309,9 @@ impl GraphRunner {
             event_emitter: None,
             max_iterations: 100,
             default_retry_policy: RetryPolicy::default(),
+            hook_handler: None,
+            checkpoint_cb: None,
+            pause_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -200,6 +332,28 @@ impl GraphRunner {
     pub fn with_default_retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.default_retry_policy = policy;
         self
+    }
+
+    /// Attach a hook handler for execution interception.
+    pub fn with_hook_handler(mut self, handler: Box<dyn HookHandler>) -> Self {
+        self.hook_handler = Some(handler);
+        self
+    }
+
+    /// Attach a checkpoint callback for state persistence.
+    pub fn with_checkpoint_callback(mut self, cb: Box<dyn CheckpointCallback>) -> Self {
+        self.checkpoint_cb = Some(cb);
+        self
+    }
+
+    /// Request a pause at the next safe point (after current block finishes).
+    pub fn request_pause(&self) {
+        self.pause_requested.store(true, Ordering::SeqCst);
+    }
+
+    /// Get a clone of the pause flag for external sharing.
+    pub fn pause_flag(&self) -> Arc<AtomicBool> {
+        self.pause_requested.clone()
     }
 
     // -----------------------------------------------------------------------
@@ -229,20 +383,55 @@ impl GraphRunner {
             .first()
             .expect("validated non-empty graph has at least one entry node")
             .id
-            .as_str();
+            .clone();
 
-        // 3. Initialize working state.
-        let state = SharedState::new();
+        self.run_from(graph, context, SharedState::new(), &entry_node_id, 0)
+            .await
+    }
+
+    /// Resume execution from a previously saved state.
+    ///
+    /// Starts the main loop from `resume_node_id` with the given state.
+    pub async fn resume(
+        &self,
+        graph: &GraphDef,
+        context: &dyn ExecutionContext,
+        resume_state: SharedState,
+        resume_node_id: &str,
+    ) -> Result<ExecutionResult, RunnerError> {
+        graph.validate()?;
+        self.run_from(graph, context, resume_state, resume_node_id, 0)
+            .await
+    }
+
+    /// Internal: execute the main loop starting from a specific node/state.
+    async fn run_from(
+        &self,
+        graph: &GraphDef,
+        context: &dyn ExecutionContext,
+        state: SharedState,
+        entry_node_id: &str,
+        start_step: u32,
+    ) -> Result<ExecutionResult, RunnerError> {
         let mut trace: Vec<TraceEntry> = Vec::new();
+        let mut transcript: Vec<TranscriptEntry> = Vec::new();
         let mut visit_counts: HashMap<String, u32> = HashMap::new();
+        let mut step = start_step;
 
-        // We keep the current position as an index into graph.nodes so the
-        // borrow checker is happy (no lifetime tangles with owned Strings).
         let mut current_idx: Option<usize> = node_index(graph, entry_node_id);
 
         let session_id = context.session_id().to_string();
 
-        // 4. Emit SessionStarted.
+        // Transcript: started
+        transcript.push(TranscriptEntry {
+            entry_type: "started".to_string(),
+            message: format!("Ejecucion iniciada"),
+            timestamp: now_ts(),
+            node_id: None,
+            metadata: HashMap::new(),
+        });
+
+        // Emit SessionStarted.
         self.emit_event(
             EventType::SessionStarted,
             &session_id,
@@ -257,12 +446,55 @@ impl GraphRunner {
             "graph execution started"
         );
 
-        // 5. Main loop — walk the cursor until we run out of edges.
+        // Hook: on_graph_start (with 30s timeout)
+        if let Some(ref hook) = self.hook_handler {
+            let hook_result = run_hook_with_timeout(
+                hook.on_graph_start(graph, context),
+            )
+            .await;
+            match hook_result {
+                HookResult::Abort(reason) => {
+                    return Ok(ExecutionResult {
+                        status: ExecutionStatus::Failed,
+                        state,
+                        trace,
+                        transcript,
+                        error: Some(format!("Hook on_graph_start aborted: {}", reason)),
+                        interrupt_node_id: None,
+                        interrupt_info: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Main loop — walk the cursor until we run out of edges.
         while let Some(idx) = current_idx {
             let node = &graph.nodes[idx];
             let node_id = node.id.as_str();
 
-            // 5a. Guard: max iterations per node.
+            // Check for pause request.
+            if self.pause_requested.swap(false, Ordering::SeqCst) {
+                self.save_checkpoint(&session_id, step, node_id, &state, Some(node_id))
+                    .await;
+                self.emit_event(
+                    EventType::SessionInterrupted,
+                    &session_id,
+                    Some(node_id),
+                    HashMap::new(),
+                );
+                return Ok(ExecutionResult {
+                    status: ExecutionStatus::Interrupted,
+                    state,
+                    trace,
+                    transcript,
+                    error: None,
+                    interrupt_node_id: Some(node_id.to_string()),
+                    interrupt_info: None,
+                });
+            }
+
+            // Guard: max iterations per node.
             let visits = visit_counts.entry(node.id.clone()).or_insert(0);
             *visits += 1;
 
@@ -284,8 +516,58 @@ impl GraphRunner {
                 });
             }
 
-            // 5c. Resolve inputs from incoming edges' data_map.
-            let inputs = self.resolve_inputs(node_id, graph, &state);
+            // Check if this is a human_input block — interrupt BEFORE execution.
+            if node.tool_type == "logic/human_input" {
+                let prompt = node
+                    .config
+                    .get("prompt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Requiere decision")
+                    .to_string();
+                let options: Vec<String> = node
+                    .config
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let timeout_minutes = node
+                    .config
+                    .get("timeout_minutes")
+                    .and_then(|v| v.as_f64());
+
+                let info = InterruptInfo {
+                    node_id: node_id.to_string(),
+                    prompt,
+                    options,
+                    timeout_minutes,
+                };
+
+                self.save_checkpoint(&session_id, step, node_id, &state, Some(node_id))
+                    .await;
+                self.emit_event(
+                    EventType::InterruptCreated,
+                    &session_id,
+                    Some(node_id),
+                    HashMap::new(),
+                );
+
+                return Ok(ExecutionResult {
+                    status: ExecutionStatus::Interrupted,
+                    state,
+                    trace,
+                    transcript,
+                    error: None,
+                    interrupt_node_id: Some(node_id.to_string()),
+                    interrupt_info: Some(info),
+                });
+            }
+
+            // Resolve inputs from incoming edges' data_map.
+            let mut inputs = self.resolve_inputs(node_id, graph, &state);
 
             debug!(
                 node_id = %node_id,
@@ -295,7 +577,45 @@ impl GraphRunner {
                 "executing node"
             );
 
-            // 5d. Emit BlockStarted.
+            // Hook: pre_block_exec (with 30s timeout)
+            if let Some(ref hook) = self.hook_handler {
+                let hook_result = run_hook_with_timeout(
+                    hook.pre_block_exec(node, &mut inputs, context),
+                )
+                .await;
+                match hook_result {
+                    HookResult::Abort(reason) => {
+                        return Ok(ExecutionResult {
+                            status: ExecutionStatus::Failed,
+                            state,
+                            trace,
+                            transcript,
+                            error: Some(format!(
+                                "Hook pre_block_exec aborted at '{}': {}",
+                                node_id, reason
+                            )),
+                            interrupt_node_id: None,
+                            interrupt_info: None,
+                        });
+                    }
+                    HookResult::Skip => {
+                        let empty: HashMap<String, Value> = HashMap::new();
+                        let _ = state.set(node_id, empty, true);
+                        current_idx = self
+                            .resolve_next_node(node_id, &HashMap::new(), graph)
+                            .as_deref()
+                            .and_then(|nid| node_index(graph, nid));
+                        step += 1;
+                        continue;
+                    }
+                    HookResult::ModifiedInputs(new_inputs) => {
+                        inputs = new_inputs;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Emit BlockStarted.
             self.emit_event(
                 EventType::BlockStarted,
                 &session_id,
@@ -303,10 +623,29 @@ impl GraphRunner {
                 HashMap::new(),
             );
 
-            // 5e. Record start time.
+            // Transcript: block starting
+            transcript.push(TranscriptEntry {
+                entry_type: "block_start".to_string(),
+                message: format!("Ejecutando {}", node.tool_type),
+                timestamp: now_ts(),
+                node_id: Some(node_id.to_string()),
+                metadata: HashMap::new(),
+            });
+
+            // Record start time.
             let start = Instant::now();
 
-            // 5f. Execute node with retry logic.
+            // Hook: pre_llm_call for AI blocks
+            if node.tool_type.starts_with("ai/") {
+                if let Some(ref hook) = self.hook_handler {
+                    let _ = run_hook_with_timeout(
+                        hook.pre_llm_call(node, context),
+                    )
+                    .await;
+                }
+            }
+
+            // Execute node with retry logic.
             let retry_policy = self.retry_policy_for(node);
             let exec_result = self
                 .execute_with_retry(node, inputs, context, &retry_policy)
@@ -317,7 +656,19 @@ impl GraphRunner {
             // Branch on success / failure.
             current_idx = match exec_result {
                 // ---- Success ----
-                Ok((output, retries)) => {
+                Ok((mut output, retries)) => {
+                    // Hook: post_llm_call for AI blocks
+                    if node.tool_type.starts_with("ai/") {
+                        if let Some(ref hook) = self.hook_handler {
+                            let mut response_val =
+                                serde_json::to_value(&output).unwrap_or(Value::Null);
+                            let _ = run_hook_with_timeout(
+                                hook.post_llm_call(node, &mut response_val, context),
+                            )
+                            .await;
+                        }
+                    }
+
                     // Store output in shared state (overwrite for looping nodes).
                     if let Err(e) = state.set(node_id, output.clone(), true) {
                         warn!(node_id = %node_id, error = %e, "failed to set state");
@@ -332,7 +683,15 @@ impl GraphRunner {
                         error: None,
                     });
 
-                    // 5g. Emit BlockCompleted.
+                    // Hook: post_block_exec
+                    if let Some(ref hook) = self.hook_handler {
+                        let _ = run_hook_with_timeout(
+                            hook.post_block_exec(node, &mut output, context),
+                        )
+                        .await;
+                    }
+
+                    // Emit BlockCompleted.
                     self.emit_event(
                         EventType::BlockCompleted,
                         &session_id,
@@ -340,8 +699,67 @@ impl GraphRunner {
                         HashMap::new(),
                     );
 
-                    // 5h. Resolve next node.
+                    // Transcript: block completed
+                    transcript.push(TranscriptEntry {
+                        entry_type: "block_end".to_string(),
+                        message: format!(
+                            "Completado {} en {}ms",
+                            node.tool_type, elapsed_ms
+                        ),
+                        timestamp: now_ts(),
+                        node_id: Some(node_id.to_string()),
+                        metadata: HashMap::new(),
+                    });
+
+                    // Checkpoint after successful execution (REGLA-12).
+                    step += 1;
                     let next = self.resolve_next_node(node_id, &output, graph);
+
+                    self.save_checkpoint(
+                        &session_id,
+                        step,
+                        node_id,
+                        &state,
+                        next.as_deref(),
+                    )
+                    .await;
+
+                    // Transcript: decision at conditional edges
+                    let outgoing = graph.outgoing_edges(node_id);
+                    let conditional: Vec<_> = outgoing
+                        .iter()
+                        .filter(|e| e.condition.is_some())
+                        .collect();
+                    if conditional.len() > 1 {
+                        if let Some(ref next_id) = next {
+                            // Find matching edge for metadata
+                            let edge_id = outgoing
+                                .iter()
+                                .find(|e| e.target == *next_id)
+                                .map(|e| e.id.as_str())
+                                .unwrap_or("unknown");
+                            let cond_desc = outgoing
+                                .iter()
+                                .find(|e| e.target == *next_id)
+                                .and_then(|e| e.condition.as_ref())
+                                .map(|c| {
+                                    format!("{} {:?} {}", c.field, c.op, c.value)
+                                })
+                                .unwrap_or_default();
+
+                            transcript.push(TranscriptEntry {
+                                entry_type: "decision".to_string(),
+                                message: format!(
+                                    "Decision: siguiendo edge {} (condicion: {})",
+                                    edge_id, cond_desc
+                                ),
+                                timestamp: now_ts(),
+                                node_id: Some(node_id.to_string()),
+                                metadata: HashMap::new(),
+                            });
+                        }
+                    }
+
                     if let Some(ref nid) = next {
                         debug!(from = %node_id, to = %nid, "advancing to next node");
                     } else {
@@ -353,6 +771,43 @@ impl GraphRunner {
                 // ---- Failure ----
                 Err((tool_err, retries)) => {
                     let err_msg = tool_err.to_string();
+
+                    // Hook: on_error
+                    let hook_action = if let Some(ref hook) = self.hook_handler {
+                        run_hook_with_timeout(
+                            hook.on_error(node, &tool_err, context),
+                        )
+                        .await
+                    } else {
+                        HookResult::Continue
+                    };
+
+                    // If hook says Retry, re-execute this node.
+                    if matches!(hook_action, HookResult::Retry) {
+                        // Transcript: error noted but retrying via hook
+                        transcript.push(TranscriptEntry {
+                            entry_type: "error".to_string(),
+                            message: format!(
+                                "Error en {}: {} (retrying via hook)",
+                                node.tool_type, err_msg
+                            ),
+                            timestamp: now_ts(),
+                            node_id: Some(node_id.to_string()),
+                            metadata: HashMap::new(),
+                        });
+                        // Do NOT advance current_idx — re-enter the loop for this node.
+                        current_idx = Some(idx);
+                        continue;
+                    }
+
+                    // Transcript: error
+                    transcript.push(TranscriptEntry {
+                        entry_type: "error".to_string(),
+                        message: format!("Error en {}: {}", node.tool_type, err_msg),
+                        timestamp: now_ts(),
+                        node_id: Some(node_id.to_string()),
+                        metadata: HashMap::new(),
+                    });
 
                     match retry_policy.on_failure {
                         FailureMode::Stop => {
@@ -388,8 +843,10 @@ impl GraphRunner {
                                 status: ExecutionStatus::Failed,
                                 state,
                                 trace,
+                                transcript,
                                 error: Some(err_msg),
                                 interrupt_node_id: None,
+                                interrupt_info: None,
                             });
                         }
 
@@ -465,7 +922,24 @@ impl GraphRunner {
             };
         }
 
-        // 6. Emit SessionCompleted.
+        // Hook: on_graph_end
+        if let Some(ref hook) = self.hook_handler {
+            let _ = run_hook_with_timeout(
+                hook.on_graph_end(graph, &state, context),
+            )
+            .await;
+        }
+
+        // Transcript: completed
+        transcript.push(TranscriptEntry {
+            entry_type: "completed".to_string(),
+            message: format!("Ejecucion completada ({} bloques)", trace.len()),
+            timestamp: now_ts(),
+            node_id: None,
+            metadata: HashMap::new(),
+        });
+
+        // Emit SessionCompleted.
         self.emit_event(
             EventType::SessionCompleted,
             &session_id,
@@ -479,14 +953,61 @@ impl GraphRunner {
             "graph execution completed"
         );
 
-        // 7. Return final result.
+        // Return final result.
         Ok(ExecutionResult {
             status: ExecutionStatus::Completed,
             state,
             trace,
+            transcript,
             error: None,
             interrupt_node_id: None,
+            interrupt_info: None,
         })
+    }
+
+    /// Internal: save checkpoint if callback is configured.
+    async fn save_checkpoint(
+        &self,
+        session_id: &str,
+        step: u32,
+        node_id: &str,
+        state: &SharedState,
+        cursor_node_id: Option<&str>,
+    ) {
+        if let Some(ref cb) = self.checkpoint_cb {
+            let checkpoint = Checkpoint {
+                session_id: session_id.to_string(),
+                step,
+                node_id: node_id.to_string(),
+                state_snapshot: state.snapshot(),
+                cursor_node_id: cursor_node_id.map(String::from),
+                timestamp: now_ts(),
+            };
+            match cb.save_checkpoint(checkpoint).await {
+                Ok(checkpoint_id) => {
+                    self.emit_event(
+                        EventType::CheckpointCreated,
+                        session_id,
+                        Some(node_id),
+                        {
+                            let mut data = HashMap::new();
+                            data.insert(
+                                "checkpoint_id".to_string(),
+                                Value::String(checkpoint_id),
+                            );
+                            data.insert(
+                                "step".to_string(),
+                                Value::Number(serde_json::Number::from(step)),
+                            );
+                            data
+                        },
+                    );
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to save checkpoint");
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -760,6 +1281,28 @@ fn as_f64(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         _ => None,
+    }
+}
+
+/// Get current unix timestamp as f64.
+fn now_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+/// Run a hook future with a 30-second timeout. On timeout, return Continue.
+async fn run_hook_with_timeout<F>(fut: F) -> HookResult
+where
+    F: std::future::Future<Output = HookResult>,
+{
+    match tokio::time::timeout(Duration::from_secs(30), fut).await {
+        Ok(result) => result,
+        Err(_) => {
+            warn!("hook timed out after 30s — continuing");
+            HookResult::Continue
+        }
     }
 }
 
@@ -1646,8 +2189,10 @@ mod tests {
             status: ExecutionStatus::Completed,
             state: SharedState::new(),
             trace: vec![],
+            transcript: vec![],
             error: None,
             interrupt_node_id: None,
+            interrupt_info: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         let back: ExecutionResult = serde_json::from_str(&json).unwrap();
@@ -1667,5 +2212,594 @@ mod tests {
         assert_eq!(back.max_retries, 3);
         assert!(matches!(back.backoff, BackoffStrategy::Exponential));
         assert!(matches!(back.on_failure, FailureMode::RouteToError));
+    }
+
+    // ===================================================================
+    // Mock HookHandler for new feature tests
+    // ===================================================================
+
+    use std::sync::Mutex;
+
+    /// Records which hooks were called and returns configurable results.
+    struct MockHookHandler {
+        calls: Arc<Mutex<Vec<String>>>,
+        on_graph_start_result: Mutex<HookResult>,
+        pre_block_exec_result: Mutex<HookResult>,
+        post_block_exec_result: Mutex<HookResult>,
+        on_error_result: Mutex<HookResult>,
+    }
+
+    impl MockHookHandler {
+        fn new() -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                on_graph_start_result: Mutex::new(HookResult::Continue),
+                pre_block_exec_result: Mutex::new(HookResult::Continue),
+                post_block_exec_result: Mutex::new(HookResult::Continue),
+                on_error_result: Mutex::new(HookResult::Continue),
+            }
+        }
+
+        fn with_on_graph_start(self, result: HookResult) -> Self {
+            *self.on_graph_start_result.lock().unwrap() = result;
+            self
+        }
+
+        fn with_pre_block_exec(self, result: HookResult) -> Self {
+            *self.pre_block_exec_result.lock().unwrap() = result;
+            self
+        }
+
+        fn with_on_error(self, result: HookResult) -> Self {
+            *self.on_error_result.lock().unwrap() = result;
+            self
+        }
+
+        fn call_log(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl HookHandler for MockHookHandler {
+        async fn on_graph_start(
+            &self,
+            _graph: &GraphDef,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            self.calls.lock().unwrap().push("on_graph_start".into());
+            self.on_graph_start_result.lock().unwrap().clone()
+        }
+
+        async fn on_graph_end(
+            &self,
+            _graph: &GraphDef,
+            _state: &SharedState,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            self.calls.lock().unwrap().push("on_graph_end".into());
+            HookResult::Continue
+        }
+
+        async fn pre_block_exec(
+            &self,
+            _node: &NodeDef,
+            _inputs: &mut HashMap<String, Value>,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            self.calls.lock().unwrap().push("pre_block_exec".into());
+            self.pre_block_exec_result.lock().unwrap().clone()
+        }
+
+        async fn post_block_exec(
+            &self,
+            _node: &NodeDef,
+            _output: &mut HashMap<String, Value>,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            self.calls.lock().unwrap().push("post_block_exec".into());
+            self.post_block_exec_result.lock().unwrap().clone()
+        }
+
+        async fn pre_llm_call(
+            &self,
+            _node: &NodeDef,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            self.calls.lock().unwrap().push("pre_llm_call".into());
+            HookResult::Continue
+        }
+
+        async fn post_llm_call(
+            &self,
+            _node: &NodeDef,
+            _response: &mut Value,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            self.calls.lock().unwrap().push("post_llm_call".into());
+            HookResult::Continue
+        }
+
+        async fn on_error(
+            &self,
+            _node: &NodeDef,
+            _error: &ToolError,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            self.calls.lock().unwrap().push("on_error".into());
+            self.on_error_result.lock().unwrap().clone()
+        }
+    }
+
+    // ===================================================================
+    // MockCheckpointCallback
+    // ===================================================================
+
+    struct MockCheckpointCallback {
+        checkpoints: Arc<Mutex<Vec<Checkpoint>>>,
+    }
+
+    impl MockCheckpointCallback {
+        fn new() -> Self {
+            Self {
+                checkpoints: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn saved_checkpoints(&self) -> Vec<Checkpoint> {
+            self.checkpoints.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl CheckpointCallback for MockCheckpointCallback {
+        async fn save_checkpoint(
+            &self,
+            checkpoint: Checkpoint,
+        ) -> Result<String, RunnerError> {
+            let id = format!("cp-{}", checkpoint.step);
+            self.checkpoints.lock().unwrap().push(checkpoint);
+            Ok(id)
+        }
+    }
+
+    // ===================================================================
+    // SlowHookHandler (for timeout test)
+    // ===================================================================
+
+    struct SlowHookHandler;
+
+    #[async_trait]
+    impl HookHandler for SlowHookHandler {
+        async fn on_graph_start(
+            &self,
+            _graph: &GraphDef,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            // Sleep longer than the 30s timeout
+            tokio::time::sleep(Duration::from_secs(35)).await;
+            HookResult::Abort("should never reach this".to_string())
+        }
+
+        async fn on_graph_end(
+            &self,
+            _graph: &GraphDef,
+            _state: &SharedState,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            HookResult::Continue
+        }
+
+        async fn pre_block_exec(
+            &self,
+            _node: &NodeDef,
+            _inputs: &mut HashMap<String, Value>,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            HookResult::Continue
+        }
+
+        async fn post_block_exec(
+            &self,
+            _node: &NodeDef,
+            _output: &mut HashMap<String, Value>,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            HookResult::Continue
+        }
+
+        async fn pre_llm_call(
+            &self,
+            _node: &NodeDef,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            HookResult::Continue
+        }
+
+        async fn post_llm_call(
+            &self,
+            _node: &NodeDef,
+            _response: &mut Value,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            HookResult::Continue
+        }
+
+        async fn on_error(
+            &self,
+            _node: &NodeDef,
+            _error: &ToolError,
+            _ctx: &dyn ExecutionContext,
+        ) -> HookResult {
+            HookResult::Continue
+        }
+    }
+
+    // ===================================================================
+    // Test 1: Hook on_graph_start aborts execution
+    // ===================================================================
+
+    #[tokio::test]
+    async fn hook_on_graph_start_aborts() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "hook_abort".into(),
+            version: "1.0.0".into(),
+            nodes: vec![make_node("a", "tool/echo")],
+            edges: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let hook = MockHookHandler::new()
+            .with_on_graph_start(HookResult::Abort("test abort".to_string()));
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor))
+            .with_hook_handler(Box::new(hook));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Failed);
+        assert!(result.error.unwrap().contains("test abort"));
+        // No blocks should have executed
+        assert_eq!(result.trace.len(), 0);
+    }
+
+    // ===================================================================
+    // Test 2: Hook pre_block_exec skips a block
+    // ===================================================================
+
+    #[tokio::test]
+    async fn hook_pre_block_exec_skips() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "hook_skip".into(),
+            version: "1.0.0".into(),
+            nodes: vec![make_node("a", "tool/echo"), make_node("b", "tool/echo")],
+            edges: vec![make_edge("e1", "a", "b")],
+            metadata: HashMap::new(),
+        };
+
+        let hook = MockHookHandler::new().with_pre_block_exec(HookResult::Skip);
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor))
+            .with_hook_handler(Box::new(hook));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        // Both blocks are skipped, no trace entries from executor
+        assert_eq!(result.status, ExecutionStatus::Completed);
+        assert_eq!(result.trace.len(), 0);
+    }
+
+    // ===================================================================
+    // Test 3: Hook pre_block_exec modifies inputs
+    // ===================================================================
+
+    #[tokio::test]
+    async fn hook_pre_block_exec_modifies_inputs() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "hook_modify".into(),
+            version: "1.0.0".into(),
+            nodes: vec![make_node("a", "tool/echo")],
+            edges: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let mut injected = HashMap::new();
+        injected.insert("injected_key".to_string(), json!("injected_value"));
+
+        let hook =
+            MockHookHandler::new().with_pre_block_exec(HookResult::ModifiedInputs(injected));
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor))
+            .with_hook_handler(Box::new(hook));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Completed);
+        // EchoExecutor echoes inputs back, so "a" should have the injected key
+        let val = result.state.get_field("a", "injected_key");
+        assert_eq!(val, Some(json!("injected_value")));
+    }
+
+    // ===================================================================
+    // Test 4: Hook on_error triggers retry
+    // ===================================================================
+
+    #[tokio::test]
+    async fn hook_on_error_triggers_retry() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "hook_retry".into(),
+            version: "1.0.0".into(),
+            nodes: vec![make_node("a", "tool/flaky")],
+            edges: vec![],
+            metadata: HashMap::new(),
+        };
+
+        // FailNExecutor fails once then succeeds. The hook tells the runner
+        // to retry on error.
+        let hook = MockHookHandler::new().with_on_error(HookResult::Retry);
+
+        let runner = GraphRunner::new(Box::new(FailNExecutor::new(1)))
+            .with_hook_handler(Box::new(hook));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        // The hook-triggered retry should have made it succeed on the second visit
+        assert_eq!(result.status, ExecutionStatus::Completed);
+        assert!(result.trace.iter().any(|t| t.status == "ok"));
+    }
+
+    // ===================================================================
+    // Test 5: Hook timeout (30s) — use tokio::time::pause
+    // ===================================================================
+
+    #[tokio::test]
+    async fn hook_timeout_returns_continue() {
+        // Use tokio::time::pause for instant-advancing time.
+        tokio::time::pause();
+
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "hook_timeout".into(),
+            version: "1.0.0".into(),
+            nodes: vec![make_node("a", "tool/echo")],
+            edges: vec![],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor))
+            .with_hook_handler(Box::new(SlowHookHandler));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        // SlowHookHandler sleeps 35s in on_graph_start.
+        // Timeout fires at 30s → HookResult::Continue → execution proceeds.
+        assert_eq!(result.status, ExecutionStatus::Completed);
+        assert_eq!(result.trace.len(), 1);
+    }
+
+    // ===================================================================
+    // Test 6: Checkpoint callback is called after each block
+    // ===================================================================
+
+    #[tokio::test]
+    async fn checkpoint_called_after_each_block() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "checkpoint".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+            ],
+            edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
+            metadata: HashMap::new(),
+        };
+
+        let cp_cb = Arc::new(MockCheckpointCallback::new());
+        // We need an Arc-shareable wrapper because we want to inspect after run().
+        // Wrap in a struct that forwards:
+        struct ArcCb(Arc<MockCheckpointCallback>);
+
+        #[async_trait]
+        impl CheckpointCallback for ArcCb {
+            async fn save_checkpoint(
+                &self,
+                checkpoint: Checkpoint,
+            ) -> Result<String, RunnerError> {
+                self.0.save_checkpoint(checkpoint).await
+            }
+        }
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor))
+            .with_checkpoint_callback(Box::new(ArcCb(cp_cb.clone())));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Completed);
+        let saved = cp_cb.saved_checkpoints();
+        // One checkpoint per successfully executed block (3 blocks = 3 checkpoints)
+        assert_eq!(saved.len(), 3);
+        assert_eq!(saved[0].node_id, "a");
+        assert_eq!(saved[1].node_id, "b");
+        assert_eq!(saved[2].node_id, "c");
+    }
+
+    // ===================================================================
+    // Test 7: Human input interrupt returns correct status + info
+    // ===================================================================
+
+    #[tokio::test]
+    async fn human_input_interrupts_execution() {
+        let mut hi_node = make_node("hi", "logic/human_input");
+        hi_node
+            .config
+            .insert("prompt".to_string(), json!("Pick one"));
+        hi_node
+            .config
+            .insert("options".to_string(), json!(["yes", "no"]));
+        hi_node
+            .config
+            .insert("timeout_minutes".to_string(), json!(5.0));
+
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "human_input".into(),
+            version: "1.0.0".into(),
+            nodes: vec![make_node("a", "tool/echo"), hi_node, make_node("c", "tool/echo")],
+            edges: vec![make_edge("e1", "a", "hi"), make_edge("e2", "hi", "c")],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Interrupted);
+        assert_eq!(result.interrupt_node_id, Some("hi".to_string()));
+
+        let info = result.interrupt_info.unwrap();
+        assert_eq!(info.node_id, "hi");
+        assert_eq!(info.prompt, "Pick one");
+        assert_eq!(info.options, vec!["yes", "no"]);
+        assert_eq!(info.timeout_minutes, Some(5.0));
+        // Only "a" should have been executed (before the interrupt)
+        assert_eq!(result.trace.len(), 1);
+        assert_eq!(result.trace[0].node_id, "a");
+    }
+
+    // ===================================================================
+    // Test 8: Pause request interrupts execution
+    // ===================================================================
+
+    #[tokio::test]
+    async fn pause_request_interrupts() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "pause".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+            ],
+            edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        // Request pause before run() — will trigger at the first node
+        runner.request_pause();
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Interrupted);
+        assert_eq!(result.interrupt_node_id, Some("a".to_string()));
+        // No blocks executed because pause fires before the first execution
+        assert_eq!(result.trace.len(), 0);
+    }
+
+    // ===================================================================
+    // Test 9: Resume continues from checkpoint state
+    // ===================================================================
+
+    #[tokio::test]
+    async fn resume_continues_from_state() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "resume".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+            ],
+            edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
+            metadata: HashMap::new(),
+        };
+
+        // Simulate: "a" already completed, resume from "b"
+        let resume_state = SharedState::new();
+        let mut a_output = HashMap::new();
+        a_output.insert("_node_id".to_string(), json!("a"));
+        resume_state.set("a", a_output, false).unwrap();
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        let ctx = TestContext::new();
+        let result = runner
+            .resume(&graph, &ctx, resume_state, "b")
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Completed);
+        // Only "b" and "c" should have been executed in this run
+        assert_eq!(result.trace.len(), 2);
+        assert_eq!(result.trace[0].node_id, "b");
+        assert_eq!(result.trace[1].node_id, "c");
+        // State should contain all three nodes
+        assert!(result.state.get("a").is_some());
+        assert!(result.state.get("b").is_some());
+        assert!(result.state.get("c").is_some());
+    }
+
+    // ===================================================================
+    // Test 10: Transcript contains all event types
+    // ===================================================================
+
+    #[tokio::test]
+    async fn transcript_contains_all_event_types() {
+        // Build a graph with a conditional branch to get a "decision" entry
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "transcript".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+            ],
+            edges: vec![
+                // Two conditional edges from "a" to force a decision transcript
+                make_conditional_edge(
+                    "e_yes",
+                    "a",
+                    "b",
+                    "_node_id",
+                    ComparisonOp::Eq,
+                    json!("a"),
+                ),
+                make_conditional_edge(
+                    "e_no",
+                    "a",
+                    "c",
+                    "_node_id",
+                    ComparisonOp::Neq,
+                    json!("a"),
+                ),
+            ],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Completed);
+
+        let types: Vec<&str> = result
+            .transcript
+            .iter()
+            .map(|t| t.entry_type.as_str())
+            .collect();
+
+        assert!(types.contains(&"started"), "missing 'started'");
+        assert!(types.contains(&"block_start"), "missing 'block_start'");
+        assert!(types.contains(&"block_end"), "missing 'block_end'");
+        assert!(types.contains(&"decision"), "missing 'decision'");
+        assert!(types.contains(&"completed"), "missing 'completed'");
     }
 }

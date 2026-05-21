@@ -21,8 +21,9 @@ pub use graph::{
     ComparisonOp, EdgeCondition, EdgeDef, GraphDef, GraphError, NodeDef,
 };
 pub use runner::{
-    BackoffStrategy, ExecutionResult, ExecutionStatus, FailureMode, GraphRunner, RetryPolicy,
-    RunnerError, ToolError, ToolExecutor, TraceEntry,
+    BackoffStrategy, Checkpoint, CheckpointCallback, ExecutionResult, ExecutionStatus,
+    FailureMode, GraphRunner, HookHandler, HookResult, InterruptInfo, RetryPolicy, RunnerError,
+    ToolError, ToolExecutor, TraceEntry, TranscriptEntry,
 };
 pub use schema::{ColumnDef, ColumnType, SchemaError, TableSchema};
 pub use state::{SharedState, StateError};

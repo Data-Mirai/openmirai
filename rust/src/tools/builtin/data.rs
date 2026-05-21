@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use regex;
 use serde_json::{json, Value};
+use tokio::sync::Mutex;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
@@ -613,14 +616,480 @@ impl Tool for EntityUpsertTool {
 }
 
 // ===========================================================================
-// WebScrapeTool
+// WebScrapeTool -- production-grade stealth scraper
 // ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Stealth fingerprinting
+// ---------------------------------------------------------------------------
+
+/// 12 modern user agents from real browsers (2024-2026).
+const USER_AGENT_POOL: &[&str] = &[
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 OPR/111.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+];
+
+/// 5 common desktop viewport sizes.
+const VIEWPORT_POOL: &[(u32, u32)] = &[
+    (1920, 1080),
+    (1366, 768),
+    (1280, 800),
+    (1440, 900),
+    (1536, 864),
+];
+
+/// Deterministic session fingerprint derived from a session_id hash.
+#[derive(Debug, Clone)]
+pub struct SessionFingerprint {
+    pub user_agent: String,
+    pub viewport: (u32, u32),
+    pub platform: String,
+    pub browser: String,
+    pub locale: String,
+}
+
+impl SessionFingerprint {
+    /// Generate a deterministic fingerprint from the given session_id.
+    /// The same session_id always produces the same fingerprint.
+    pub fn generate(session_id: &str) -> Self {
+        use sha2::{Digest, Sha256};
+
+        let hash = Sha256::digest(session_id.as_bytes());
+        let seed = u64::from_le_bytes(hash[..8].try_into().unwrap());
+
+        let ua_idx = (seed as usize) % USER_AGENT_POOL.len();
+        let vp_idx = ((seed >> 16) as usize) % VIEWPORT_POOL.len();
+
+        let ua = USER_AGENT_POOL[ua_idx];
+        let viewport = VIEWPORT_POOL[vp_idx];
+
+        let browser = detect_browser(ua);
+        let platform = detect_platform(ua);
+
+        let locales = ["es-ES", "en-US", "es-MX", "en-GB"];
+        let locale = locales[((seed >> 32) as usize) % locales.len()];
+
+        Self {
+            user_agent: ua.to_string(),
+            viewport,
+            platform: platform.to_string(),
+            browser: browser.to_string(),
+            locale: locale.to_string(),
+        }
+    }
+
+    /// Build HTTP headers from this fingerprint.
+    pub fn build_headers(&self) -> reqwest::header::HeaderMap {
+        use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            HeaderValue::from_str(&self.user_agent).unwrap_or_else(|_| {
+                HeaderValue::from_static("Mozilla/5.0")
+            }),
+        );
+
+        headers.insert(
+            reqwest::header::ACCEPT,
+            HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            ),
+        );
+
+        let accept_lang = format!(
+            "{},{};q=0.9,en-US;q=0.8,en;q=0.7",
+            self.locale,
+            self.locale.split('-').next().unwrap_or("en"),
+        );
+        if let Ok(val) = HeaderValue::from_str(&accept_lang) {
+            headers.insert(reqwest::header::ACCEPT_LANGUAGE, val);
+        }
+
+        headers.insert(
+            reqwest::header::ACCEPT_ENCODING,
+            HeaderValue::from_static("gzip, deflate, br"),
+        );
+
+        headers.insert(
+            HeaderName::from_static("dnt"),
+            HeaderValue::from_static("1"),
+        );
+
+        headers.insert(
+            HeaderName::from_static("upgrade-insecure-requests"),
+            HeaderValue::from_static("1"),
+        );
+
+        // Sec-CH-UA headers only for Chromium-based browsers
+        if matches!(self.browser.as_str(), "chrome" | "edge" | "opera") {
+            let version = extract_chrome_version(&self.user_agent);
+
+            let sec_ch_ua = match self.browser.as_str() {
+                "chrome" => format!(
+                    "\"Chromium\";v=\"{version}\", \"Google Chrome\";v=\"{version}\", \"Not.A/Brand\";v=\"24\""
+                ),
+                "edge" => format!(
+                    "\"Chromium\";v=\"{version}\", \"Microsoft Edge\";v=\"{version}\", \"Not.A/Brand\";v=\"24\""
+                ),
+                "opera" => format!(
+                    "\"Chromium\";v=\"{version}\", \"Opera\";v=\"111\", \"Not.A/Brand\";v=\"24\""
+                ),
+                _ => String::new(),
+            };
+
+            if let Ok(val) = HeaderValue::from_str(&sec_ch_ua) {
+                headers.insert(HeaderName::from_static("sec-ch-ua"), val);
+            }
+            headers.insert(
+                HeaderName::from_static("sec-ch-ua-mobile"),
+                HeaderValue::from_static("?0"),
+            );
+            let platform_quoted = format!("\"{}\"", self.platform);
+            if let Ok(val) = HeaderValue::from_str(&platform_quoted) {
+                headers.insert(HeaderName::from_static("sec-ch-ua-platform"), val);
+            }
+        }
+
+        headers
+    }
+}
+
+fn detect_browser(ua: &str) -> &'static str {
+    if ua.contains("Edg/") {
+        "edge"
+    } else if ua.contains("OPR/") {
+        "opera"
+    } else if ua.contains("Firefox/") {
+        "firefox"
+    } else if ua.contains("Safari/") && !ua.contains("Chrome/") {
+        "safari"
+    } else if ua.contains("Chrome/") {
+        "chrome"
+    } else {
+        "unknown"
+    }
+}
+
+fn detect_platform(ua: &str) -> &'static str {
+    if ua.contains("Macintosh") {
+        "macOS"
+    } else if ua.contains("Windows NT") {
+        "Windows"
+    } else if ua.contains("X11; Linux") || ua.contains("Linux") {
+        "Linux"
+    } else {
+        "Windows"
+    }
+}
+
+fn extract_chrome_version(ua: &str) -> String {
+    let re = regex::Regex::new(r"Chrome/(\d+)").unwrap();
+    re.captures(ua)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| "125".into())
+}
+
+// ---------------------------------------------------------------------------
+// Jitter
+// ---------------------------------------------------------------------------
+
+/// Apply +/-30% random jitter to a delay value.
+fn apply_jitter(delay: Duration) -> Duration {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let factor: f64 = 0.7 + rng.gen::<f64>() * 0.6; // [0.7, 1.3]
+    delay.mul_f64(factor)
+}
+
+// ---------------------------------------------------------------------------
+// URL normalization / cache
+// ---------------------------------------------------------------------------
+
+/// Tracking params to strip when normalizing URLs for cache keys.
+const TRACKING_PARAMS: &[&str] = &[
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+    "ref",
+    "mc_cid",
+    "mc_eid",
+];
+
+/// Normalize a URL: lowercase host, sort query params, strip tracking params.
+fn normalize_url(raw: &str) -> String {
+    let parsed = match url::Url::parse(raw) {
+        Ok(u) => u,
+        Err(_) => return raw.to_string(),
+    };
+
+    let filtered: Vec<(String, String)> = parsed
+        .query_pairs()
+        .filter(|(k, _)| !TRACKING_PARAMS.contains(&k.to_lowercase().as_str()))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    let mut sorted = filtered;
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let base = format!(
+        "{}://{}{}",
+        parsed.scheme(),
+        parsed.host_str().unwrap_or("").to_lowercase(),
+        parsed.path()
+    );
+
+    if sorted.is_empty() {
+        base
+    } else {
+        let qs: Vec<String> = sorted.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        format!("{base}?{}", qs.join("&"))
+    }
+}
+
+/// Cached HTTP response.
+#[derive(Debug, Clone)]
+struct CachedResponse {
+    body: String,
+    status: u16,
+    fetched_at: Instant,
+    ttl: Duration,
+}
+
+impl CachedResponse {
+    fn is_valid(&self) -> bool {
+        self.fetched_at.elapsed() < self.ttl
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SERP link extraction
+// ---------------------------------------------------------------------------
+
+/// Domains to skip when extracting links from search result pages.
+const SKIP_DOMAINS: &[&str] = &[
+    "google.com",
+    "google.co",
+    "gstatic.com",
+    "googleapis.com",
+    "bing.com",
+    "microsoft.com",
+    "msn.com",
+    "live.com",
+    "duckduckgo.com",
+    "brave.com",
+    "schema.org",
+    "w3.org",
+    "youtube.com",
+    "maps.google.com",
+    "facebook.com",
+    "instagram.com",
+    "apple.com",
+    "play.google.com",
+];
+
+/// Detect which search engine a URL belongs to.
+fn detect_search_engine(url_str: &str) -> Option<&'static str> {
+    let lower = url_str.to_lowercase();
+    if lower.contains("google.com/search") {
+        Some("google")
+    } else if lower.contains("duckduckgo.com") {
+        Some("duckduckgo")
+    } else if lower.contains("bing.com/search") {
+        Some("bing")
+    } else {
+        None
+    }
+}
+
+/// Check if a URL looks like a real article (not a search engine or utility page).
+fn is_article_url(url_str: &str) -> bool {
+    let parsed = match url::Url::parse(url_str) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+
+    for skip in SKIP_DOMAINS {
+        if host.contains(skip) {
+            return false;
+        }
+    }
+
+    let path = parsed.path().to_lowercase();
+    let skip_paths = [
+        "/search", "/images", "/maps", "/login", "/signup", "/privacy", "/terms", "/cookie",
+    ];
+    if skip_paths.iter().any(|p| path.starts_with(p)) {
+        return false;
+    }
+
+    let skip_exts = [
+        ".pdf", ".zip", ".exe", ".dmg", ".jpg", ".png", ".gif", ".svg", ".css", ".js",
+    ];
+    if skip_exts.iter().any(|ext| path.ends_with(ext)) {
+        return false;
+    }
+
+    true
+}
+
+/// Extract real article links from a SERP HTML page.
+fn extract_serp_links(html: &str, engine: &str) -> Vec<String> {
+    let mut links: Vec<String> = Vec::new();
+    let max_links = 8;
+
+    match engine {
+        "google" => {
+            // Google wraps result links in /url?q=<actual_url>&...
+            let re = regex::Regex::new(r#"/url\?q=(https?://[^&"']+)"#).unwrap();
+            for cap in re.captures_iter(html) {
+                if links.len() >= max_links {
+                    break;
+                }
+                let url = urlencoding_decode(&cap[1]);
+                if is_article_url(&url) && !links.contains(&url) {
+                    links.push(url);
+                }
+            }
+        }
+        "duckduckgo" => {
+            // DDG uses uddg= redirect param
+            let re = regex::Regex::new(r#"uddg=(https?[^&"']+)"#).unwrap();
+            for cap in re.captures_iter(html) {
+                if links.len() >= max_links {
+                    break;
+                }
+                let url = urlencoding_decode(&cap[1]);
+                if is_article_url(&url) && !links.contains(&url) {
+                    links.push(url);
+                }
+            }
+            // Fallback: direct hrefs
+            if links.is_empty() {
+                let re2 =
+                    regex::Regex::new(r#"class="result__a"[^>]*href="(https?://[^"]+)""#).unwrap();
+                for cap in re2.captures_iter(html) {
+                    if links.len() >= max_links {
+                        break;
+                    }
+                    let url = urlencoding_decode(&cap[1]);
+                    if is_article_url(&url) && !links.contains(&url) {
+                        links.push(url);
+                    }
+                }
+            }
+        }
+        "bing" => {
+            // Bing: article links inside <li class="b_algo">...<a href="...">
+            let re =
+                regex::Regex::new(r#"class="b_algo"[^>]*>.*?<a\s+href="(https?://[^"]+)""#)
+                    .unwrap();
+            for cap in re.captures_iter(html) {
+                if links.len() >= max_links {
+                    break;
+                }
+                let url = urlencoding_decode(&cap[1]);
+                if is_article_url(&url) && !links.contains(&url) {
+                    links.push(url);
+                }
+            }
+            // Fallback
+            if links.is_empty() {
+                let re2 = regex::Regex::new(r#"href="(https?://[^"]+)""#).unwrap();
+                for cap in re2.captures_iter(html) {
+                    if links.len() >= max_links {
+                        break;
+                    }
+                    let url = urlencoding_decode(&cap[1]);
+                    if is_article_url(&url) && !links.contains(&url) {
+                        links.push(url);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    links
+}
+
+/// Minimal URL percent-decoding (handles %XX sequences).
+fn urlencoding_decode(s: &str) -> String {
+    url::form_urlencoded::parse(s.as_bytes())
+        .map(|(k, v)| {
+            if v.is_empty() {
+                k.to_string()
+            } else {
+                format!("{k}={v}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+        // For simple URLs passed as values, just percent-decode directly
+        .replace("%3A", ":")
+        .replace("%2F", "/")
+}
+
+// ---------------------------------------------------------------------------
+// Shared state for rate limiting and caching (lazy-static via Arc)
+// ---------------------------------------------------------------------------
+
+/// Global scrape state shared across all WebScrapeTool executions.
+struct ScrapeState {
+    /// Per-domain last-request timestamps for rate limiting.
+    domain_delays: Mutex<HashMap<String, Instant>>,
+    /// Per-domain backoff multipliers (grows on 429/403).
+    domain_backoff: Mutex<HashMap<String, f64>>,
+    /// URL-based cache with TTL.
+    cache: Mutex<HashMap<String, CachedResponse>>,
+}
+
+impl ScrapeState {
+    fn new() -> Self {
+        Self {
+            domain_delays: Mutex::new(HashMap::new()),
+            domain_backoff: Mutex::new(HashMap::new()),
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// Lazy global state for the scraper. Shared across all invocations.
+static SCRAPE_STATE: std::sync::OnceLock<Arc<ScrapeState>> = std::sync::OnceLock::new();
+
+fn get_scrape_state() -> Arc<ScrapeState> {
+    SCRAPE_STATE
+        .get_or_init(|| Arc::new(ScrapeState::new()))
+        .clone()
+}
+
+// ---------------------------------------------------------------------------
+// WebScrapeTool struct and factory
+// ---------------------------------------------------------------------------
 
 data_tool! {
     struct WebScrapeTool, factory WebScrapeFactory;
     tool_type = "data/web_scrape",
     name = "Web Scrape",
-    description = "Fetches web pages via HTTP GET and returns their content",
+    description = "Fetches web pages with stealth headers, caching, rate limiting, retry, and SERP link extraction",
     inputs = [
         field("url", "string", true, "URL to fetch"),
     ],
@@ -628,9 +1097,15 @@ data_tool! {
         field("content", "string", true, "Page content as text"),
         field("status", "number", true, "HTTP status code"),
         field("url", "string", true, "URL that was fetched"),
+        field("cached", "boolean", false, "Whether the response came from cache"),
+        field("links", "array", false, "Extracted links if URL is a SERP"),
     ],
     config_fields = [
-        field("timeout", "number", false, "Request timeout in seconds"),
+        field("max_retries", "number", false, "Max retries on failure (default 3)"),
+        field("timeout_seconds", "number", false, "Request timeout in seconds (default 30)"),
+        field("cache_ttl_seconds", "number", false, "Cache TTL in seconds (default 300)"),
+        field("output_schema", "string", false, "JSON schema for LLM-based structured extraction"),
+        field("extract_links", "boolean", false, "Whether to extract links from SERP pages (default false)"),
     ]
 }
 
@@ -640,9 +1115,9 @@ impl Tool for WebScrapeTool {
         &self,
         inputs: HashMap<String, Value>,
         config: HashMap<String, Value>,
-        _context: &dyn ExecutionContext,
+        context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let url = inputs
+        let url_str = inputs
             .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
@@ -650,42 +1125,200 @@ impl Tool for WebScrapeTool {
                 message: "input 'url' is required".into(),
             })?;
 
+        let max_retries = config
+            .get("max_retries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as u32;
         let timeout_secs = config
-            .get("timeout")
+            .get("timeout_seconds")
             .and_then(|v| v.as_u64())
             .unwrap_or(30);
+        let cache_ttl_secs = config
+            .get("cache_ttl_seconds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(300);
+        let extract_links = config
+            .get("extract_links")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let output_schema = config
+            .get("output_schema")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
+        let state = get_scrape_state();
+
+        // 1) Generate fingerprint from session_id (deterministic)
+        let session_id = context.session_id();
+        let fingerprint = SessionFingerprint::generate(session_id);
+
+        // 2) Check cache
+        let cache_ttl = Duration::from_secs(cache_ttl_secs);
+        let normalized = normalize_url(url_str);
+        {
+            let cache = state.cache.lock().await;
+            if let Some(cached) = cache.get(&normalized) {
+                if cached.is_valid() {
+                    let mut out = HashMap::new();
+                    out.insert("content".to_string(), json!(cached.body));
+                    out.insert("status".to_string(), json!(cached.status));
+                    out.insert("url".to_string(), json!(url_str));
+                    out.insert("cached".to_string(), json!(true));
+                    return Ok(out);
+                }
+            }
+        }
+
+        // 3) Rate limiting: wait if we recently hit this domain
+        let domain = url::Url::parse(url_str)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+            .unwrap_or_default();
+
+        {
+            let mut delays = state.domain_delays.lock().await;
+            let backoffs = state.domain_backoff.lock().await;
+            let base_delay = Duration::from_secs(1);
+
+            if let Some(last) = delays.get(&domain) {
+                let backoff_multiplier = backoffs.get(&domain).copied().unwrap_or(1.0);
+                let required_delay = base_delay.mul_f64(backoff_multiplier);
+                let elapsed = last.elapsed();
+                if elapsed < required_delay {
+                    let wait = apply_jitter(required_delay - elapsed);
+                    tokio::time::sleep(wait).await;
+                }
+            }
+            delays.insert(domain.clone(), Instant::now());
+        }
+
+        // 4) Build HTTP client
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .timeout(Duration::from_secs(timeout_secs))
+            .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .map_err(|e| ToolError::ExecutionFailed {
                 tool_type: "data/web_scrape".into(),
                 message: format!("Failed to build HTTP client: {e}"),
             })?;
 
-        let response = client
-            .get(url)
-            .header("User-Agent", "DataMirai-Engine/1.0")
-            .send()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                tool_type: "data/web_scrape".into(),
-                message: format!("HTTP request failed: {e}"),
-            })?;
+        let headers = fingerprint.build_headers();
 
-        let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                tool_type: "data/web_scrape".into(),
-                message: format!("Failed to read response body: {e}"),
-            })?;
+        // 5) Fetch with retry + exponential backoff
+        let mut last_status: u16 = 0;
+        let mut last_body = String::new();
+        let mut success = false;
 
+        for attempt in 0..=max_retries {
+            let result = client.get(url_str).headers(headers.clone()).send().await;
+
+            match result {
+                Ok(response) => {
+                    last_status = response.status().as_u16();
+
+                    // Handle rate limiting / server errors with backoff
+                    let should_retry = matches!(last_status, 429 | 500 | 502 | 503 | 504);
+
+                    if last_status == 429 || last_status == 403 {
+                        // Increase domain backoff
+                        let mut backoffs = state.domain_backoff.lock().await;
+                        let current = backoffs.get(&domain).copied().unwrap_or(1.0);
+                        let new_val = (current * 2.0).min(30.0);
+                        backoffs.insert(domain.clone(), new_val);
+                    }
+
+                    if should_retry && attempt < max_retries {
+                        let base = Duration::from_secs(1u64 << attempt.min(4));
+                        tokio::time::sleep(apply_jitter(base)).await;
+                        continue;
+                    }
+
+                    last_body = response.text().await.unwrap_or_default();
+                    success = (200..400).contains(&(last_status as i32));
+                    break;
+                }
+                Err(_) if attempt < max_retries => {
+                    let base = Duration::from_secs(1u64 << attempt.min(4));
+                    tokio::time::sleep(apply_jitter(base)).await;
+                    continue;
+                }
+                Err(e) => {
+                    return Err(ToolError::ExecutionFailed {
+                        tool_type: "data/web_scrape".into(),
+                        message: format!("HTTP request failed after {} retries: {e}", max_retries),
+                    });
+                }
+            }
+        }
+
+        // 6) If SERP URL: extract real links
+        let mut extracted_links: Option<Vec<String>> = None;
+        if extract_links || detect_search_engine(url_str).is_some() {
+            if let Some(engine) = detect_search_engine(url_str) {
+                let links = extract_serp_links(&last_body, engine);
+                if !links.is_empty() {
+                    extracted_links = Some(links);
+                }
+            }
+        }
+
+        // 7) Cache the response
+        if success {
+            let mut cache = state.cache.lock().await;
+            cache.insert(
+                normalized,
+                CachedResponse {
+                    body: last_body.clone(),
+                    status: last_status,
+                    fetched_at: Instant::now(),
+                    ttl: cache_ttl,
+                },
+            );
+        }
+
+        // 8) If output_schema: use LLM to extract structured data
+        if !output_schema.is_empty() && success {
+            let llm = context.llm();
+            let prompt = format!(
+                "Extract the following fields from the content below. \
+                 Return ONLY valid JSON matching this schema: {output_schema}\n\n\
+                 Content:\n{body}\n\nJSON output:",
+                body = &last_body[..last_body.len().min(8000)]
+            );
+
+            match llm.call("", &prompt, &[], 0.0, 2000).await {
+                Ok(llm_response) => {
+                    let re = regex::Regex::new(r"\{[^{}]*\}").unwrap();
+                    if let Some(m) = re.find(&llm_response.response) {
+                        if let Ok(extracted) = serde_json::from_str::<Value>(m.as_str()) {
+                            let mut out = HashMap::new();
+                            out.insert("content".to_string(), json!(last_body));
+                            out.insert("status".to_string(), json!(last_status));
+                            out.insert("url".to_string(), json!(url_str));
+                            out.insert("cached".to_string(), json!(false));
+                            out.insert("extracted".to_string(), extracted);
+                            if let Some(links) = extracted_links {
+                                out.insert("links".to_string(), json!(links));
+                            }
+                            return Ok(out);
+                        }
+                    }
+                }
+                Err(_) => { /* fall through to normal response */ }
+            }
+        }
+
+        // 9) Build response
         let mut out = HashMap::new();
-        out.insert("content".to_string(), json!(body));
-        out.insert("status".to_string(), json!(status));
-        out.insert("url".to_string(), json!(url));
+        out.insert("content".to_string(), json!(last_body));
+        out.insert("status".to_string(), json!(last_status));
+        out.insert("url".to_string(), json!(url_str));
+        out.insert("cached".to_string(), json!(false));
+        if let Some(links) = extracted_links {
+            out.insert("links".to_string(), json!(links));
+        }
+
         Ok(out)
     }
 }
@@ -1351,5 +1984,164 @@ mod tests {
         assert!(reg.get("data/web_scrape").is_some());
         assert!(reg.get("data/html_to_markdown").is_some());
         assert_eq!(reg.list_tools().len(), 10);
+    }
+
+    // =========================================================================
+    // WebScrapeTool: SessionFingerprint tests
+    // =========================================================================
+
+    #[test]
+    fn fingerprint_deterministic_for_same_session() {
+        let fp1 = super::SessionFingerprint::generate("session-abc");
+        let fp2 = super::SessionFingerprint::generate("session-abc");
+        assert_eq!(fp1.user_agent, fp2.user_agent);
+        assert_eq!(fp1.viewport, fp2.viewport);
+        assert_eq!(fp1.platform, fp2.platform);
+        assert_eq!(fp1.browser, fp2.browser);
+        assert_eq!(fp1.locale, fp2.locale);
+    }
+
+    #[test]
+    fn fingerprint_different_for_different_sessions() {
+        let fp1 = super::SessionFingerprint::generate("session-abc");
+        let fp2 = super::SessionFingerprint::generate("session-xyz");
+        let same = fp1.user_agent == fp2.user_agent
+            && fp1.viewport == fp2.viewport
+            && fp1.locale == fp2.locale;
+        assert!(
+            !same,
+            "Different session IDs should produce different fingerprints"
+        );
+    }
+
+    #[test]
+    fn stealth_headers_contain_required_fields() {
+        let fp = super::SessionFingerprint::generate("stealth-test");
+        let headers = fp.build_headers();
+        assert!(headers.get("user-agent").is_some());
+        assert!(headers.get("accept").is_some());
+        assert!(headers.get("accept-language").is_some());
+        assert!(headers.get("accept-encoding").is_some());
+        assert!(headers.get("dnt").is_some());
+        assert!(headers.get("upgrade-insecure-requests").is_some());
+    }
+
+    // =========================================================================
+    // WebScrapeTool: URL normalization
+    // =========================================================================
+
+    #[test]
+    fn url_normalization_strips_tracking_params() {
+        let raw = "https://Example.COM/page?utm_source=google&foo=bar&fbclid=abc123&q=test";
+        let normalized = super::normalize_url(raw);
+        assert!(!normalized.contains("utm_source"));
+        assert!(!normalized.contains("fbclid"));
+        assert!(normalized.contains("foo=bar"));
+        assert!(normalized.contains("q=test"));
+        assert!(normalized.contains("example.com"));
+    }
+
+    // =========================================================================
+    // WebScrapeTool: SERP extraction
+    // =========================================================================
+
+    #[test]
+    fn serp_extraction_google() {
+        let html = r#"
+            <div>
+                <a href="/url?q=https://example.com/article1&sa=U">Result 1</a>
+                <a href="/url?q=https://example.org/news&sa=U">Result 2</a>
+                <a href="/url?q=https://google.com/maps&sa=U">Maps</a>
+            </div>
+        "#;
+        let links = super::extract_serp_links(html, "google");
+        assert!(links.len() >= 2);
+        assert!(links.iter().any(|l| l.contains("example.com/article1")));
+        assert!(links.iter().any(|l| l.contains("example.org/news")));
+        assert!(!links.iter().any(|l| l.contains("google.com/maps")));
+    }
+
+    #[test]
+    fn serp_extraction_duckduckgo() {
+        let html = r#"
+            <a class="result__a" href="https://example.com/ddg-result">DDG Result</a>
+            <a href="?uddg=https%3A%2F%2Fexample.net%2Farticle">Another</a>
+        "#;
+        let links = super::extract_serp_links(html, "duckduckgo");
+        assert!(!links.is_empty());
+    }
+
+    // =========================================================================
+    // WebScrapeTool: jitter
+    // =========================================================================
+
+    #[test]
+    fn jitter_stays_within_30_percent_range() {
+        let base = std::time::Duration::from_millis(1000);
+        for _ in 0..100 {
+            let jittered = super::apply_jitter(base);
+            let ms = jittered.as_millis();
+            assert!(
+                ms >= 700 && ms <= 1300,
+                "Jitter {ms}ms is outside [700, 1300] range"
+            );
+        }
+    }
+
+    // =========================================================================
+    // WebScrapeTool: cache
+    // =========================================================================
+
+    #[tokio::test]
+    async fn cache_returns_cached_response_within_ttl() {
+        let state = super::ScrapeState::new();
+        let url = "https://example.com/page";
+        let normalized = super::normalize_url(url);
+
+        {
+            let mut cache = state.cache.lock().await;
+            cache.insert(
+                normalized.clone(),
+                super::CachedResponse {
+                    body: "cached body".into(),
+                    status: 200,
+                    fetched_at: std::time::Instant::now(),
+                    ttl: std::time::Duration::from_secs(300),
+                },
+            );
+        }
+
+        let cache = state.cache.lock().await;
+        let cached = cache.get(&normalized);
+        assert!(cached.is_some());
+        let cached = cached.unwrap();
+        assert!(cached.is_valid());
+        assert_eq!(cached.body, "cached body");
+        assert_eq!(cached.status, 200);
+    }
+
+    #[tokio::test]
+    async fn cache_misses_after_ttl_expires() {
+        let state = super::ScrapeState::new();
+        let url = "https://example.com/expired";
+        let normalized = super::normalize_url(url);
+
+        {
+            let mut cache = state.cache.lock().await;
+            cache.insert(
+                normalized.clone(),
+                super::CachedResponse {
+                    body: "old body".into(),
+                    status: 200,
+                    fetched_at: std::time::Instant::now() - std::time::Duration::from_secs(10),
+                    ttl: std::time::Duration::from_secs(1),
+                },
+            );
+        }
+
+        let cache = state.cache.lock().await;
+        let cached = cache.get(&normalized);
+        assert!(cached.is_some());
+        assert!(!cached.unwrap().is_valid());
     }
 }

@@ -18,7 +18,7 @@ pub use crate::tools::{
 // Re-export memory types.
 pub use crate::memory::{
     InMemoryBackend, LongTermEntry, LongTermMemory, MemoryBackend, ShortTermEntry,
-    ShortTermMemory,
+    ShortTermMemory, SqliteBackend,
 };
 
 // Re-export trigger types.

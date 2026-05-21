@@ -18,7 +18,8 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
@@ -29,6 +30,11 @@ glob = "0.3"
 fnv = "1"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
+rusqlite = { version = "0.35", features = ["bundled"] }
+url = "2"
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -4,6 +4,8 @@
 //! sees raw provider-specific formats.
 
 mod adapter;
+mod claude;
+mod gemini;
 pub mod groq;
 pub mod nvidia;
 mod ollama;
@@ -12,7 +14,9 @@ pub mod openrouter;
 
 pub use adapter::{
     FunctionCall, LLMAdapter, LLMError, Message, ModelInfo, NormalizedChunk, NormalizedResponse,
-    TokenUsage, ToolCall, ToolCallRequest,
+    OnTokenFn, TokenUsage, ToolCall, ToolCallRequest,
 };
+pub use claude::ClaudeAdapter;
+pub use gemini::GeminiAdapter;
 pub use ollama::OllamaAdapter;
 pub use openai_compat::OpenAICompatAdapter;

@@ -104,6 +104,11 @@ pub enum LLMError {
 // Trait
 // ---------------------------------------------------------------------------
 
+/// Callback type for streaming token events.
+///
+/// Receives each text delta as it arrives from the provider.
+pub type OnTokenFn = dyn Fn(&str) + Send + Sync;
+
 /// Abstract base for LLM provider adapters.
 ///
 /// Each concrete adapter normalizes input/output for a specific provider.
@@ -138,6 +143,104 @@ pub trait LLMAdapter: Send + Sync {
         max_tokens: u32,
     ) -> Result<NormalizedResponse, LLMError>;
 
+    /// Send a full conversation via streaming, calling `on_token` for each
+    /// text delta received.
+    ///
+    /// The default implementation falls back to the non-streaming
+    /// [`call_with_messages`]. Providers that support streaming override this.
+    async fn stream_with_messages(
+        &self,
+        model: &str,
+        messages: Vec<Message>,
+        tools: Option<Vec<Value>>,
+        temperature: f32,
+        max_tokens: u32,
+        on_token: Option<&OnTokenFn>,
+    ) -> Result<NormalizedResponse, LLMError> {
+        // Suppress unused-variable warning for providers that don't stream.
+        let _ = on_token;
+        self.call_with_messages(model, messages, tools, temperature, max_tokens)
+            .await
+    }
+
     /// List models available from this provider.
     async fn list_models(&self) -> Result<Vec<ModelInfo>, LLMError>;
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal adapter that records whether `call_with_messages` was called,
+    /// used to verify that the default `stream_with_messages` falls back.
+    struct StubAdapter;
+
+    #[async_trait]
+    impl LLMAdapter for StubAdapter {
+        fn provider_name(&self) -> &str {
+            "stub"
+        }
+
+        async fn call(
+            &self,
+            _model: &str,
+            _prompt: &str,
+            _context: Option<&str>,
+            _temperature: f32,
+            _max_tokens: u32,
+        ) -> Result<NormalizedResponse, LLMError> {
+            unimplemented!("not needed for this test")
+        }
+
+        async fn call_with_messages(
+            &self,
+            model: &str,
+            _messages: Vec<Message>,
+            _tools: Option<Vec<Value>>,
+            _temperature: f32,
+            _max_tokens: u32,
+        ) -> Result<NormalizedResponse, LLMError> {
+            Ok(NormalizedResponse {
+                response: "fallback_response".to_string(),
+                tokens_used: TokenUsage {
+                    input: 10,
+                    output: 20,
+                },
+                model: model.to_string(),
+                provider: "stub".to_string(),
+                tool_calls: vec![],
+            })
+        }
+
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, LLMError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn default_stream_with_messages_falls_back_to_call_with_messages() {
+        let adapter = StubAdapter;
+        let messages = vec![Message {
+            role: "user".into(),
+            content: Some("test".into()),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let result = adapter
+            .stream_with_messages("test-model", messages, None, 0.7, 100, None)
+            .await
+            .unwrap();
+
+        // Verify it used the call_with_messages fallback.
+        assert_eq!(result.response, "fallback_response");
+        assert_eq!(result.provider, "stub");
+        assert_eq!(result.model, "test-model");
+        assert_eq!(result.tokens_used.input, 10);
+        assert_eq!(result.tokens_used.output, 20);
+    }
 }

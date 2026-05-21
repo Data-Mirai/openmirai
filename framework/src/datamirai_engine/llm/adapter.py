@@ -105,6 +105,31 @@ class LLMAdapter(ABC):
             "Override this method to enable agentic tool-calling."
         )
 
+    async def stream_with_messages(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        on_token: Any = None,
+        **kwargs: Any,
+    ) -> NormalizedResponse:
+        """Stream a conversation response, calling on_token(str) for each chunk.
+
+        Falls back to non-streaming call_with_messages if not overridden.
+        ``on_token`` is called with each text chunk as it arrives.
+        Returns the final complete NormalizedResponse (with tool_calls if any).
+        """
+        result = await self.call_with_messages(
+            model=model, messages=messages, tools=tools,
+            temperature=temperature, max_tokens=max_tokens, **kwargs,
+        )
+        if on_token and result.response:
+            on_token(result.response)
+        return result
+
     async def stream(
         self,
         *,

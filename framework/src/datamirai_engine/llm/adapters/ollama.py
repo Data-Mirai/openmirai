@@ -185,6 +185,92 @@ class OllamaAdapter(LLMAdapter):
             tool_calls=tool_calls,
         )
 
+    async def stream_with_messages(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        on_token: Any = None,
+        **kwargs: Any,
+    ) -> NormalizedResponse:
+        """Stream Ollama response token by token, calling on_token for each chunk."""
+        import json
+
+        ollama_messages = self._convert_messages_for_ollama(messages)
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": ollama_messages,
+            "stream": True,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        if tools:
+            payload["tools"] = tools
+
+        num_ctx = kwargs.get("num_ctx")
+        if num_ctx:
+            payload["options"]["num_ctx"] = int(num_ctx)
+
+        full_content = ""
+        tool_calls: list[ToolCall] = []
+        tokens_input = 0
+        tokens_output = 0
+        model_used = model
+
+        # Streaming needs longer timeouts: connect fast, but read can be slow per token
+        stream_timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+        async with httpx.AsyncClient(timeout=stream_timeout) as client:
+            async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    message = chunk.get("message", {})
+                    delta = message.get("content", "")
+
+                    if delta and on_token:
+                        on_token(delta)
+                    full_content += delta
+
+                    # Tool calls can arrive in ANY chunk (not just done=True)
+                    for tc in message.get("tool_calls", []):
+                        fn = tc.get("function", {})
+                        args = fn.get("arguments", {})
+                        tc_id = tc.get("id", f"call_{len(tool_calls)}")
+                        tool_calls.append(
+                            ToolCall(
+                                id=tc_id,
+                                name=fn.get("name", ""),
+                                arguments=json.dumps(args) if isinstance(args, dict) else str(args),
+                            )
+                        )
+
+                    if chunk.get("done", False):
+                        tokens_input = chunk.get("prompt_eval_count", 0)
+                        tokens_output = chunk.get("eval_count", 0)
+                        model_used = chunk.get("model", model)
+
+        cleaned = self._clean_response(full_content)
+
+        return NormalizedResponse(
+            response=cleaned,
+            tokens_used={"input": tokens_input, "output": tokens_output},
+            model=model_used,
+            provider=self.provider_name,
+            tool_calls=tool_calls,
+        )
+
     async def embed(self, text: str, *, model: str | None = None) -> list[float]:
         embed_model = model or "nomic-embed-text"
         payload = {"model": embed_model, "prompt": text}

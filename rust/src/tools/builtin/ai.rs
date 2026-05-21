@@ -1,0 +1,851 @@
+use std::collections::HashMap;
+
+use async_trait::async_trait;
+use regex::Regex;
+use serde_json::{json, Value};
+use tracing::{info, warn};
+
+use crate::core::context::ExecutionContext;
+use crate::core::runner::ToolError;
+use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
+
+// ---------------------------------------------------------------------------
+// Helper: field builder (same pattern as logic.rs)
+// ---------------------------------------------------------------------------
+
+fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+    ToolField {
+        name: name.into(),
+        field_type: field_type.into(),
+        required,
+        description: if desc.is_empty() {
+            None
+        } else {
+            Some(desc.into())
+        },
+        default: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Macro: simplify boilerplate for struct + factory + spec
+// ---------------------------------------------------------------------------
+
+macro_rules! ai_tool {
+    (
+        struct $tool:ident, factory $factory:ident;
+        tool_type = $tool_type:expr,
+        name = $name:expr,
+        description = $desc:expr,
+        inputs = [ $($input:expr),* $(,)? ],
+        outputs = [ $($output:expr),* $(,)? ],
+        config_fields = [ $($cfg:expr),* $(,)? ]
+    ) => {
+        pub struct $tool;
+
+        pub struct $factory {
+            spec: ToolSpec,
+        }
+
+        impl $factory {
+            pub fn new() -> Self {
+                Self {
+                    spec: ToolSpec {
+                        tool_type: $tool_type.into(),
+                        name: $name.into(),
+                        description: $desc.into(),
+                        version: "1.0.0".into(),
+                        category: "ai".into(),
+                        inputs: vec![$($input),*],
+                        outputs: vec![$($output),*],
+                        config_fields: vec![$($cfg),*],
+                    },
+                }
+            }
+        }
+
+        impl ToolFactory for $factory {
+            fn create(&self) -> Box<dyn Tool> {
+                Box::new($tool)
+            }
+            fn spec(&self) -> &ToolSpec {
+                &self.spec
+            }
+        }
+    };
+}
+
+// ===========================================================================
+// LlmCallTool
+// ===========================================================================
+
+ai_tool! {
+    struct LlmCallTool, factory LlmCallFactory;
+    tool_type = "ai/llm_call",
+    name = "LLM Call",
+    description = "Processes session data through an LLM to produce grounded responses",
+    inputs = [
+        field("prompt", "string", false, "Instruction for the LLM on how to process the data"),
+    ],
+    outputs = [
+        field("response", "string", true, "Raw LLM text response"),
+        field("model", "string", true, "Model used"),
+        field("tokens_input", "number", true, "Input tokens used"),
+        field("tokens_output", "number", true, "Output tokens used"),
+        field("structured_output", "object", false, "Parsed JSON when output_schema is defined"),
+        field("schema_valid", "boolean", false, "Whether response matched output_schema"),
+    ],
+    config_fields = [
+        field("model", "string", false, "LLM model identifier"),
+        field("temperature", "number", false, "Sampling temperature"),
+        field("max_tokens", "number", false, "Max tokens to generate"),
+        field("system_prompt", "string", false, "Node-level system prompt"),
+        field("output_schema", "string", false, "JSON Schema to enforce structured output"),
+        field("max_retries", "number", false, "Retries for schema validation (default 2)"),
+        field("max_context_length", "number", false, "Max chars for session context (default 12000)"),
+    ]
+}
+
+#[async_trait]
+impl Tool for LlmCallTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        // --- Resolve prompt ---
+        let prompt = inputs
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| {
+                config
+                    .get("prompt")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
+            .unwrap_or_default();
+
+        if prompt.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/llm_call".into(),
+                message: "prompt is required (via input or config)".into(),
+            });
+        }
+
+        // --- Build session context from all non-prompt inputs ---
+        let session_data: HashMap<String, Value> = inputs
+            .iter()
+            .filter(|(k, _)| k.as_str() != "prompt")
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        let max_ctx_len = config
+            .get("max_context_length")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(12000) as usize;
+
+        let session_context = format_session_context(&session_data, max_ctx_len);
+
+        // --- Parse output_schema if defined ---
+        let output_schema = parse_output_schema(config.get("output_schema"));
+        let max_retries = if output_schema.is_some() {
+            config
+                .get("max_retries")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2) as usize
+        } else {
+            0
+        };
+
+        // --- If output_schema, enrich prompt with JSON format instructions ---
+        let effective_prompt = match &output_schema {
+            Some(schema) => enrich_prompt_with_schema(&prompt, schema),
+            None => prompt.clone(),
+        };
+
+        // --- Build system prompt (agent-level + node-level) ---
+        let mut system_parts: Vec<String> = Vec::new();
+        if let Some(sp) = context.system_prompt() {
+            system_parts.push(sp.to_string());
+        }
+        if let Some(node_sp) = config.get("system_prompt").and_then(|v| v.as_str()) {
+            if !node_sp.is_empty() {
+                system_parts.push(node_sp.to_string());
+            }
+        }
+
+        // Combine system_prompt + session_context
+        let combined_context = if system_parts.is_empty() {
+            session_context
+        } else {
+            format!("{}\n\n{}", system_parts.join("\n\n"), session_context)
+        };
+
+        // --- Prepare LLM call params ---
+        let model = config
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("claude");
+        let temperature = config
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.7);
+        let max_tokens = config
+            .get("max_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1024) as u32;
+
+        let context_messages = vec![Value::String(combined_context)];
+
+        // --- Execute with optional schema validation + retries ---
+        let mut current_prompt = effective_prompt.clone();
+        let mut last_response = String::new();
+        let mut last_tokens_input = 0u32;
+        let mut last_tokens_output = 0u32;
+
+        for attempt in 0..=max_retries {
+            let result = context
+                .llm()
+                .call(model, &current_prompt, &context_messages, temperature, max_tokens)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/llm_call".into(),
+                    message: e.to_string(),
+                })?;
+
+            last_response = result.response;
+            last_tokens_input = result.tokens_used.input;
+            last_tokens_output = result.tokens_used.output;
+            let used_model = result.model;
+
+            if output_schema.is_none() {
+                // No schema -- return raw response
+                let mut out = HashMap::new();
+                out.insert("response".to_string(), json!(last_response));
+                out.insert("model".to_string(), json!(used_model));
+                out.insert("tokens_input".to_string(), json!(last_tokens_input));
+                out.insert("tokens_output".to_string(), json!(last_tokens_output));
+                out.insert("structured_output".to_string(), Value::Null);
+                out.insert("schema_valid".to_string(), json!(false));
+                return Ok(out);
+            }
+
+            // --- Validate against schema ---
+            let schema = output_schema.as_ref().unwrap();
+            let (parsed, errors) = validate_response(&last_response, schema);
+
+            if parsed.is_some() && errors.is_empty() {
+                let mut out = HashMap::new();
+                out.insert("response".to_string(), json!(last_response));
+                out.insert("model".to_string(), json!(used_model));
+                out.insert("tokens_input".to_string(), json!(last_tokens_input));
+                out.insert("tokens_output".to_string(), json!(last_tokens_output));
+                out.insert("structured_output".to_string(), parsed.unwrap());
+                out.insert("schema_valid".to_string(), json!(true));
+                return Ok(out);
+            }
+
+            // --- Retry with error feedback ---
+            if attempt < max_retries {
+                warn!(
+                    attempt = attempt + 1,
+                    total = max_retries + 1,
+                    errors = ?errors,
+                    "output_schema validation failed, retrying"
+                );
+                current_prompt =
+                    build_retry_prompt(&effective_prompt, &last_response, &errors);
+            }
+        }
+
+        // --- All retries exhausted -- return best effort ---
+        let schema = output_schema.as_ref().unwrap();
+        let (parsed, _) = validate_response(&last_response, schema);
+        let schema_valid = parsed.is_some();
+
+        let mut out = HashMap::new();
+        out.insert("response".to_string(), json!(last_response));
+        out.insert("model".to_string(), json!(model));
+        out.insert("tokens_input".to_string(), json!(last_tokens_input));
+        out.insert("tokens_output".to_string(), json!(last_tokens_output));
+        out.insert(
+            "structured_output".to_string(),
+            parsed.unwrap_or(Value::Null),
+        );
+        out.insert("schema_valid".to_string(), json!(schema_valid));
+        Ok(out)
+    }
+}
+
+// ===========================================================================
+// EmbeddingsTool
+// ===========================================================================
+
+ai_tool! {
+    struct EmbeddingsTool, factory EmbeddingsFactory;
+    tool_type = "ai/embeddings",
+    name = "Generate Embeddings",
+    description = "Generates vector embedding from text input",
+    inputs = [
+        field("text", "string", true, "Text to generate embedding for"),
+    ],
+    outputs = [
+        field("embedding", "array", true, "Embedding vector"),
+        field("dimensions", "number", true, "Vector dimension count"),
+    ],
+    config_fields = [
+        field("model", "string", false, "Embedding model to use"),
+    ]
+}
+
+#[async_trait]
+impl Tool for EmbeddingsTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let text = inputs
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "ai/embeddings".into(),
+                message: "input 'text' is required".into(),
+            })?;
+
+        let model = config
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+
+        let embedding = context
+            .llm()
+            .embed(text, model)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "ai/embeddings".into(),
+                message: e.to_string(),
+            })?;
+
+        let dimensions = embedding.len();
+
+        let mut out = HashMap::new();
+        out.insert("embedding".to_string(), json!(embedding));
+        out.insert("dimensions".to_string(), json!(dimensions));
+        Ok(out)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session context formatting
+// ---------------------------------------------------------------------------
+
+/// Format session data into structured context for the LLM.
+///
+/// If `max_length > 0` and total exceeds it, truncates values proportionally
+/// -- largest values lose the most, each keeps at least 200 chars.
+fn format_session_context(data: &HashMap<String, Value>, max_length: usize) -> String {
+    if data.is_empty() {
+        return "=== Session Context ===\n(no data)\n=== End Session Context ===".to_string();
+    }
+
+    let mut entries: Vec<(String, String)> = data
+        .iter()
+        .map(|(key, value)| {
+            let formatted = match value {
+                Value::String(s) => s.clone(),
+                other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+            };
+            (key.clone(), formatted)
+        })
+        .collect();
+
+    if max_length > 0 {
+        // Overhead: wrapper lines + key labels + separators
+        let overhead: usize = 60
+            + entries.iter().map(|(k, _)| k.len() + 6).sum::<usize>()
+            + entries.len().saturating_sub(1) * 2;
+
+        let content_budget = max_length.saturating_sub(overhead);
+        let total_content: usize = entries.iter().map(|(_, v)| v.len()).sum();
+
+        if total_content > content_budget && content_budget > 0 {
+            let ratio = content_budget as f64 / total_content as f64;
+            entries = entries
+                .into_iter()
+                .map(|(key, value)| {
+                    let cap = (value.len() as f64 * ratio).max(200.0) as usize;
+                    if value.len() > cap {
+                        info!(
+                            key = %key,
+                            from = value.len(),
+                            to = cap,
+                            "truncating session context key"
+                        );
+                        let truncated =
+                            format!("{}\n[... truncated {} -> {} chars]", &value[..cap], value.len(), cap);
+                        (key, truncated)
+                    } else {
+                        (key, value)
+                    }
+                })
+                .collect();
+        }
+    }
+
+    let parts: Vec<String> = entries
+        .iter()
+        .map(|(key, value)| format!("[{}]:\n{}", key, value))
+        .collect();
+
+    format!(
+        "=== Session Context ===\n{}\n=== End Session Context ===",
+        parts.join("\n\n")
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Output schema helpers
+// ---------------------------------------------------------------------------
+
+/// Parse output_schema from config value (JSON string or object). Returns None if empty.
+fn parse_output_schema(raw: Option<&Value>) -> Option<Value> {
+    match raw {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => {
+            let s = s.trim();
+            if s.is_empty() {
+                None
+            } else {
+                match serde_json::from_str::<Value>(s) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        warn!(error = %e, "output_schema is not valid JSON, ignoring");
+                        None
+                    }
+                }
+            }
+        }
+        Some(v @ Value::Object(_)) => Some(v.clone()),
+        _ => None,
+    }
+}
+
+/// Prepend/append JSON schema instructions to the prompt.
+fn enrich_prompt_with_schema(prompt: &str, schema: &Value) -> String {
+    let schema_str =
+        serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
+    format!(
+        "{}\n\n\
+         === OUTPUT FORMAT (MANDATORY) ===\n\
+         Respond ONLY with a valid JSON object matching this schema. \
+         No markdown, no explanation, no text before or after the JSON.\n\n\
+         {}\n\n\
+         === END OUTPUT FORMAT ===",
+        prompt, schema_str
+    )
+}
+
+/// Extract JSON from LLM response, handling markdown code blocks.
+fn extract_json_from_response(text: &str) -> Option<String> {
+    let text = text.trim();
+
+    // Try direct parse first
+    if text.starts_with('{') || text.starts_with('[') {
+        return Some(text.to_string());
+    }
+
+    // Extract from ```json ... ``` blocks
+    let code_block_re = Regex::new(r"```(?:json)?\s*\n?([\s\S]*?)\n?\s*```").expect("valid regex");
+    if let Some(caps) = code_block_re.captures(text) {
+        return Some(caps[1].trim().to_string());
+    }
+
+    // Find first balanced { ... } or [ ... ] block
+    for (opener, closer) in [('{', '}'), ('[', ']')] {
+        if let Some(start) = text.find(opener) {
+            let mut depth = 0i32;
+            let bytes = text.as_bytes();
+            for i in start..bytes.len() {
+                if bytes[i] == opener as u8 {
+                    depth += 1;
+                } else if bytes[i] == closer as u8 {
+                    depth -= 1;
+                }
+                if depth == 0 {
+                    return Some(text[start..=i].to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Validate a response against a JSON schema.
+/// Returns (parsed_value, errors). If errors is empty, validation passed.
+fn validate_response(response: &str, schema: &Value) -> (Option<Value>, Vec<String>) {
+    let mut errors: Vec<String> = Vec::new();
+
+    let json_str = match extract_json_from_response(response) {
+        Some(s) => s,
+        None => return (None, vec!["Response does not contain valid JSON".into()]),
+    };
+
+    let parsed: Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(e) => return (None, vec![format!("JSON parse error: {}", e)]),
+    };
+
+    if !parsed.is_object() {
+        let type_name = match &parsed {
+            Value::Array(_) => "array",
+            Value::String(_) => "string",
+            Value::Number(_) => "number",
+            Value::Bool(_) => "boolean",
+            Value::Null => "null",
+            _ => "unknown",
+        };
+        return (Some(parsed), vec![format!("Expected JSON object, got {}", type_name)]);
+    }
+
+    let obj = parsed.as_object().unwrap();
+
+    // Validate required fields
+    if let Some(Value::Array(required)) = schema.get("required") {
+        for req in required {
+            if let Some(field_name) = req.as_str() {
+                if !obj.contains_key(field_name) {
+                    errors.push(format!("Missing required field: '{}'", field_name));
+                }
+            }
+        }
+    }
+
+    // Validate types for present fields
+    if let Some(Value::Object(properties)) = schema.get("properties") {
+        for (field_name, field_schema) in properties {
+            if let Some(value) = obj.get(field_name) {
+                // Check type
+                if let Some(expected_type) = field_schema.get("type").and_then(|t| t.as_str()) {
+                    if !check_json_type(value, expected_type) {
+                        let actual_type = json_type_name(value);
+                        errors.push(format!(
+                            "Field '{}' expected type '{}', got '{}'",
+                            field_name, expected_type, actual_type
+                        ));
+                    }
+                }
+
+                // Check enum
+                if let Some(Value::Array(enum_values)) = field_schema.get("enum") {
+                    if !enum_values.contains(value) {
+                        errors.push(format!(
+                            "Field '{}' must be one of {:?}, got {:?}",
+                            field_name, enum_values, value
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    (Some(parsed), errors)
+}
+
+/// Check if a JSON value matches an expected JSON Schema type.
+fn check_json_type(value: &Value, expected: &str) -> bool {
+    match expected {
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "boolean" => value.is_boolean(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        "null" => value.is_null(),
+        _ => true, // Unknown type, skip validation
+    }
+}
+
+/// Get a human-readable type name for a JSON value.
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Build a retry prompt with error feedback.
+fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[String]) -> String {
+    let error_list: String = errors.iter().map(|e| format!("- {}", e)).collect::<Vec<_>>().join("\n");
+    let truncated_response = if bad_response.len() > 500 {
+        &bad_response[..500]
+    } else {
+        bad_response
+    };
+    format!(
+        "{}\n\n\
+         === RETRY -- PREVIOUS RESPONSE WAS INVALID ===\n\
+         Your previous response had these errors:\n{}\n\n\
+         Previous response (DO NOT repeat this):\n{}\n\n\
+         Fix these errors and respond ONLY with valid JSON matching the schema.\n\
+         === END RETRY ===",
+        original_prompt, error_list, truncated_response
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Registration helper
+// ---------------------------------------------------------------------------
+
+/// Register all AI tools into the given registry.
+pub fn register_ai_tools(registry: &mut ToolRegistry) {
+    registry.register("ai/llm_call", Box::new(LlmCallFactory::new()));
+    registry.register("ai/embeddings", Box::new(EmbeddingsFactory::new()));
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- Session context formatting -------------------------------------------
+
+    #[test]
+    fn format_session_context_basic() {
+        let mut data = HashMap::new();
+        data.insert("name".to_string(), json!("Alice"));
+        data.insert("age".to_string(), json!(30));
+
+        let ctx = format_session_context(&data, 0);
+        assert!(ctx.contains("=== Session Context ==="));
+        assert!(ctx.contains("=== End Session Context ==="));
+        assert!(ctx.contains("[name]"));
+        assert!(ctx.contains("[age]"));
+    }
+
+    #[test]
+    fn format_session_context_empty() {
+        let data = HashMap::new();
+        let ctx = format_session_context(&data, 0);
+        assert!(ctx.contains("(no data)"));
+    }
+
+    #[test]
+    fn format_session_context_truncation() {
+        let mut data = HashMap::new();
+        // Create a value that's much larger than the budget
+        let long_text = "x".repeat(5000);
+        data.insert("big".to_string(), json!(long_text));
+
+        let ctx = format_session_context(&data, 500);
+        assert!(ctx.contains("[... truncated"));
+        assert!(ctx.len() < 5200); // Significantly smaller than original
+    }
+
+    // -- Output schema parsing ------------------------------------------------
+
+    #[test]
+    fn parse_output_schema_none() {
+        assert!(parse_output_schema(None).is_none());
+        assert!(parse_output_schema(Some(&Value::Null)).is_none());
+        assert!(parse_output_schema(Some(&json!(""))).is_none());
+        assert!(parse_output_schema(Some(&json!("  "))).is_none());
+    }
+
+    #[test]
+    fn parse_output_schema_json_string() {
+        let raw = json!(r#"{"type": "object", "properties": {"name": {"type": "string"}}}"#);
+        let parsed = parse_output_schema(Some(&raw));
+        assert!(parsed.is_some());
+        let schema = parsed.unwrap();
+        assert_eq!(schema["type"], "object");
+    }
+
+    #[test]
+    fn parse_output_schema_object() {
+        let raw = json!({"type": "object", "properties": {"x": {"type": "number"}}});
+        let parsed = parse_output_schema(Some(&raw));
+        assert!(parsed.is_some());
+    }
+
+    #[test]
+    fn parse_output_schema_invalid_json() {
+        let raw = json!("not valid json {{{");
+        assert!(parse_output_schema(Some(&raw)).is_none());
+    }
+
+    // -- JSON extraction ------------------------------------------------------
+
+    #[test]
+    fn extract_json_direct_object() {
+        let result = extract_json_from_response(r#"{"name": "test"}"#);
+        assert_eq!(result, Some(r#"{"name": "test"}"#.to_string()));
+    }
+
+    #[test]
+    fn extract_json_direct_array() {
+        let result = extract_json_from_response("[1, 2, 3]");
+        assert_eq!(result, Some("[1, 2, 3]".to_string()));
+    }
+
+    #[test]
+    fn extract_json_from_code_block() {
+        let text = "Here is the result:\n```json\n{\"key\": \"value\"}\n```\nDone.";
+        let result = extract_json_from_response(text);
+        assert!(result.is_some());
+        let parsed: Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(parsed["key"], "value");
+    }
+
+    #[test]
+    fn extract_json_embedded_object() {
+        let text = "The answer is: {\"score\": 95} and that's it.";
+        let result = extract_json_from_response(text);
+        assert!(result.is_some());
+        let parsed: Value = serde_json::from_str(&result.unwrap()).unwrap();
+        assert_eq!(parsed["score"], 95);
+    }
+
+    #[test]
+    fn extract_json_no_json() {
+        let result = extract_json_from_response("Just plain text with no JSON.");
+        assert!(result.is_none());
+    }
+
+    // -- Schema validation ----------------------------------------------------
+
+    #[test]
+    fn validate_response_valid_object() {
+        let schema = json!({
+            "type": "object",
+            "required": ["name", "score"],
+            "properties": {
+                "name": {"type": "string"},
+                "score": {"type": "number"}
+            }
+        });
+        let response = r#"{"name": "test", "score": 42}"#;
+        let (parsed, errors) = validate_response(response, &schema);
+        assert!(parsed.is_some());
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn validate_response_missing_required() {
+        let schema = json!({
+            "type": "object",
+            "required": ["name", "score"],
+            "properties": {
+                "name": {"type": "string"},
+                "score": {"type": "number"}
+            }
+        });
+        let response = r#"{"name": "test"}"#;
+        let (parsed, errors) = validate_response(response, &schema);
+        assert!(parsed.is_some());
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("Missing required field: 'score'"));
+    }
+
+    #[test]
+    fn validate_response_wrong_type() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "score": {"type": "number"}
+            }
+        });
+        let response = r#"{"score": "not a number"}"#;
+        let (parsed, errors) = validate_response(response, &schema);
+        assert!(parsed.is_some());
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("expected type 'number'"));
+    }
+
+    #[test]
+    fn validate_response_enum_check() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["active", "inactive"]}
+            }
+        });
+        let response = r#"{"status": "unknown"}"#;
+        let (_, errors) = validate_response(response, &schema);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("must be one of"));
+    }
+
+    #[test]
+    fn validate_response_no_json() {
+        let schema = json!({"type": "object"});
+        let (parsed, errors) = validate_response("no json here", &schema);
+        assert!(parsed.is_none());
+        assert!(!errors.is_empty());
+    }
+
+    // -- Enriched prompt ------------------------------------------------------
+
+    #[test]
+    fn enrich_prompt_contains_schema() {
+        let schema = json!({"type": "object", "properties": {"x": {"type": "number"}}});
+        let enriched = enrich_prompt_with_schema("Summarize this", &schema);
+        assert!(enriched.contains("Summarize this"));
+        assert!(enriched.contains("OUTPUT FORMAT (MANDATORY)"));
+        assert!(enriched.contains("END OUTPUT FORMAT"));
+    }
+
+    // -- Retry prompt ---------------------------------------------------------
+
+    #[test]
+    fn build_retry_prompt_contains_errors() {
+        let retry = build_retry_prompt(
+            "Original prompt",
+            "Bad response",
+            &["Missing field: 'name'".into()],
+        );
+        assert!(retry.contains("Original prompt"));
+        assert!(retry.contains("RETRY"));
+        assert!(retry.contains("Missing field: 'name'"));
+        assert!(retry.contains("Bad response"));
+    }
+
+    // -- Type checking --------------------------------------------------------
+
+    #[test]
+    fn check_json_type_variants() {
+        assert!(check_json_type(&json!("hello"), "string"));
+        assert!(!check_json_type(&json!("hello"), "number"));
+        assert!(check_json_type(&json!(42), "number"));
+        assert!(check_json_type(&json!(42), "integer"));
+        assert!(check_json_type(&json!(true), "boolean"));
+        assert!(check_json_type(&json!([1, 2]), "array"));
+        assert!(check_json_type(&json!({"a": 1}), "object"));
+        assert!(check_json_type(&json!(null), "null"));
+        // Unknown type should pass
+        assert!(check_json_type(&json!("anything"), "custom_type"));
+    }
+
+    // -- Registration ---------------------------------------------------------
+
+    #[test]
+    fn register_ai_tools_adds_two() {
+        let mut reg = ToolRegistry::new();
+        register_ai_tools(&mut reg);
+        assert!(reg.get("ai/llm_call").is_some());
+        assert!(reg.get("ai/embeddings").is_some());
+        assert_eq!(reg.list_tools().len(), 2);
+    }
+}

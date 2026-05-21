@@ -5,10 +5,6 @@ edition = "2021"
 description = "Open-source agentic graph execution engine"
 license = "MIT"
 
-[[bin]]
-name = "datamirai"
-path = "src/main.rs"
-
 [lib]
 name = "datamirai_engine"
 path = "src/lib.rs"

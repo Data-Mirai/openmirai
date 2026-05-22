@@ -569,6 +569,11 @@ impl GraphRunner {
             // Resolve inputs from incoming edges' data_map.
             let mut inputs = self.resolve_inputs(node_id, graph, &state);
 
+            // Merge node.config as base layer — edge-resolved inputs take priority.
+            for (key, val) in &node.config {
+                inputs.entry(key.clone()).or_insert_with(|| val.clone());
+            }
+
             debug!(
                 node_id = %node_id,
                 tool_type = %node.tool_type,

@@ -1082,6 +1082,153 @@ fn get_scrape_state() -> Arc<ScrapeState> {
 }
 
 // ---------------------------------------------------------------------------
+// Search engine URL builders
+// ---------------------------------------------------------------------------
+
+/// Build a search engine URL for the given query.
+fn build_search_url(engine: &str, query: &str, date_range: &str) -> Option<String> {
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("q", query)
+        .finish();
+
+    match engine {
+        "google" => {
+            let mut url = format!("https://www.google.com/search?{encoded}");
+            match date_range {
+                "day" => url.push_str("&tbs=qdr:d"),
+                "week" => url.push_str("&tbs=qdr:w"),
+                "month" => url.push_str("&tbs=qdr:m"),
+                "year" => url.push_str("&tbs=qdr:y"),
+                _ => {}
+            }
+            Some(url)
+        }
+        "bing" => {
+            let mut url = format!("https://www.bing.com/search?{encoded}");
+            match date_range {
+                "day" => url.push_str("&filters=ex1%3a%22ez1%22"),
+                "week" => url.push_str("&filters=ex1%3a%22ez2%22"),
+                "month" => url.push_str("&filters=ex1%3a%22ez3%22"),
+                _ => {}
+            }
+            Some(url)
+        }
+        "duckduckgo" => {
+            let mut url = format!("https://html.duckduckgo.com/html/?{encoded}");
+            match date_range {
+                "day" => url.push_str("&df=d"),
+                "week" => url.push_str("&df=w"),
+                "month" => url.push_str("&df=m"),
+                "year" => url.push_str("&df=y"),
+                _ => {}
+            }
+            Some(url)
+        }
+        _ => None,
+    }
+}
+
+/// Fetch a single URL using stealth + cache + rate limiting + retry.
+/// Returns (body, status, cached).
+async fn fetch_single_url(
+    url_str: &str,
+    fingerprint: &SessionFingerprint,
+    state: &ScrapeState,
+    max_retries: u32,
+    timeout_secs: u64,
+    cache_ttl: Duration,
+) -> Result<(String, u16, bool), String> {
+    // Check cache
+    let normalized = normalize_url(url_str);
+    {
+        let cache = state.cache.lock().await;
+        if let Some(cached) = cache.get(&normalized) {
+            if cached.is_valid() {
+                return Ok((cached.body.clone(), cached.status, true));
+            }
+        }
+    }
+
+    // Rate limiting
+    let domain = url::Url::parse(url_str)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+        .unwrap_or_default();
+    {
+        let mut delays = state.domain_delays.lock().await;
+        let backoffs = state.domain_backoff.lock().await;
+        let base_delay = Duration::from_secs(1);
+        if let Some(last) = delays.get(&domain) {
+            let backoff_multiplier = backoffs.get(&domain).copied().unwrap_or(1.0);
+            let required_delay = base_delay.mul_f64(backoff_multiplier);
+            let elapsed = last.elapsed();
+            if elapsed < required_delay {
+                tokio::time::sleep(apply_jitter(required_delay - elapsed)).await;
+            }
+        }
+        delays.insert(domain.clone(), Instant::now());
+    }
+
+    // Build client
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let headers = fingerprint.build_headers();
+
+    // Fetch with retry
+    let mut last_status: u16 = 0;
+    let mut last_body = String::new();
+    let mut success = false;
+
+    for attempt in 0..=max_retries {
+        let result = client.get(url_str).headers(headers.clone()).send().await;
+        match result {
+            Ok(response) => {
+                last_status = response.status().as_u16();
+                let should_retry = matches!(last_status, 429 | 500 | 502 | 503 | 504);
+                if last_status == 429 || last_status == 403 {
+                    let mut backoffs = state.domain_backoff.lock().await;
+                    let current = backoffs.get(&domain).copied().unwrap_or(1.0);
+                    backoffs.insert(domain.clone(), (current * 2.0).min(30.0));
+                }
+                if should_retry && attempt < max_retries {
+                    let base = Duration::from_secs(1u64 << attempt.min(4));
+                    tokio::time::sleep(apply_jitter(base)).await;
+                    continue;
+                }
+                last_body = response.text().await.unwrap_or_default();
+                success = (200..400).contains(&(last_status as i32));
+                break;
+            }
+            Err(_) if attempt < max_retries => {
+                let base = Duration::from_secs(1u64 << attempt.min(4));
+                tokio::time::sleep(apply_jitter(base)).await;
+                continue;
+            }
+            Err(e) => {
+                return Err(format!("HTTP request failed after {max_retries} retries: {e}"));
+            }
+        }
+    }
+
+    // Cache successful response
+    if success {
+        let mut cache = state.cache.lock().await;
+        cache.insert(normalized, CachedResponse {
+            body: last_body.clone(),
+            status: last_status,
+            fetched_at: Instant::now(),
+            ttl: cache_ttl,
+        });
+    }
+
+    Ok((last_body, last_status, false))
+}
+
+// ---------------------------------------------------------------------------
 // WebScrapeTool struct and factory
 // ---------------------------------------------------------------------------
 
@@ -1089,18 +1236,24 @@ data_tool! {
     struct WebScrapeTool, factory WebScrapeFactory;
     tool_type = "data/web_scrape",
     name = "Web Scrape",
-    description = "Fetches web pages with stealth headers, caching, rate limiting, retry, and SERP link extraction",
+    description = "Searches the web or fetches URLs. Supports query-based search (Google/Bing/DuckDuckGo) and direct URL scraping.",
     inputs = [
-        field("url", "string", true, "URL to fetch"),
+        field("query", "string", false, "Search query (searches Google/Bing/DuckDuckGo)"),
+        field("url", "string", false, "Direct URL to fetch (alternative to query)"),
     ],
     outputs = [
-        field("content", "string", true, "Page content as text"),
-        field("status", "number", true, "HTTP status code"),
-        field("url", "string", true, "URL that was fetched"),
+        field("results", "array", true, "Array of {url, title, content, status_code, success, source}"),
+        field("content", "string", false, "Page content (single URL mode)"),
+        field("status", "number", false, "HTTP status code (single URL mode)"),
+        field("url", "string", false, "URL fetched (single URL mode)"),
         field("cached", "boolean", false, "Whether the response came from cache"),
         field("links", "array", false, "Extracted links if URL is a SERP"),
     ],
     config_fields = [
+        field("search_engines", "string", false, "Comma-separated engines: google,bing,duckduckgo (default google)"),
+        field("max_results_per_query", "number", false, "Max results per search engine (default 5)"),
+        field("max_content_length", "number", false, "Max chars per result content (default 10000)"),
+        field("date_range", "string", false, "Date range filter: day, week, month, year"),
         field("max_retries", "number", false, "Max retries on failure (default 3)"),
         field("timeout_seconds", "number", false, "Request timeout in seconds (default 30)"),
         field("cache_ttl_seconds", "number", false, "Cache TTL in seconds (default 300)"),
@@ -1117,145 +1270,117 @@ impl Tool for WebScrapeTool {
         config: HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let url_str = inputs
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "data/web_scrape".into(),
-                message: "input 'url' is required".into(),
-            })?;
+        let query = inputs.get("query").and_then(|v| v.as_str()).unwrap_or("");
+        let url_input = inputs.get("url").and_then(|v| v.as_str()).unwrap_or("");
 
-        let max_retries = config
-            .get("max_retries")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(3) as u32;
-        let timeout_secs = config
-            .get("timeout_seconds")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(30);
-        let cache_ttl_secs = config
-            .get("cache_ttl_seconds")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(300);
-        let extract_links = config
-            .get("extract_links")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let output_schema = config
-            .get("output_schema")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        if query.is_empty() && url_input.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "data/web_scrape".into(),
+                message: "Either 'query' or 'url' input is required".into(),
+            });
+        }
+
+        // Read config
+        let max_retries = config.get("max_retries").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
+        let timeout_secs = config.get("timeout_seconds").and_then(|v| v.as_u64()).unwrap_or(30);
+        let cache_ttl_secs = config.get("cache_ttl_seconds").and_then(|v| v.as_u64()).unwrap_or(300);
+        let cache_ttl = Duration::from_secs(cache_ttl_secs);
+        let max_results = config.get("max_results_per_query").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+        let max_content_len = config.get("max_content_length").and_then(|v| v.as_u64()).unwrap_or(10000) as usize;
+        let date_range = config.get("date_range").and_then(|v| v.as_str()).unwrap_or("");
+        let engines_str = config.get("search_engines").and_then(|v| v.as_str()).unwrap_or("google");
+        let extract_links = config.get("extract_links").and_then(|v| v.as_bool()).unwrap_or(false);
+        let output_schema = config.get("output_schema").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
         let state = get_scrape_state();
-
-        // 1) Generate fingerprint from session_id (deterministic)
         let session_id = context.session_id();
         let fingerprint = SessionFingerprint::generate(session_id);
 
-        // 2) Check cache
-        let cache_ttl = Duration::from_secs(cache_ttl_secs);
-        let normalized = normalize_url(url_str);
-        {
-            let cache = state.cache.lock().await;
-            if let Some(cached) = cache.get(&normalized) {
-                if cached.is_valid() {
-                    let mut out = HashMap::new();
-                    out.insert("content".to_string(), json!(cached.body));
-                    out.insert("status".to_string(), json!(cached.status));
-                    out.insert("url".to_string(), json!(url_str));
-                    out.insert("cached".to_string(), json!(true));
-                    return Ok(out);
-                }
-            }
-        }
+        // ---------------------------------------------------------------
+        // MODE 1: Query-based search (search engines -> extract links -> fetch)
+        // ---------------------------------------------------------------
+        if !query.is_empty() {
+            let engines: Vec<&str> = engines_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            let mut all_results: Vec<Value> = Vec::new();
 
-        // 3) Rate limiting: wait if we recently hit this domain
-        let domain = url::Url::parse(url_str)
-            .ok()
-            .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
-            .unwrap_or_default();
+            for engine in &engines {
+                let search_url = match build_search_url(engine, query, date_range) {
+                    Some(u) => u,
+                    None => continue,
+                };
 
-        {
-            let mut delays = state.domain_delays.lock().await;
-            let backoffs = state.domain_backoff.lock().await;
-            let base_delay = Duration::from_secs(1);
+                // Fetch the SERP page
+                let (serp_body, serp_status, _cached) = match fetch_single_url(
+                    &search_url, &fingerprint, &state, max_retries, timeout_secs, cache_ttl,
+                ).await {
+                    Ok(r) => r,
+                    Err(_) => continue, // skip this engine on error
+                };
 
-            if let Some(last) = delays.get(&domain) {
-                let backoff_multiplier = backoffs.get(&domain).copied().unwrap_or(1.0);
-                let required_delay = base_delay.mul_f64(backoff_multiplier);
-                let elapsed = last.elapsed();
-                if elapsed < required_delay {
-                    let wait = apply_jitter(required_delay - elapsed);
-                    tokio::time::sleep(wait).await;
-                }
-            }
-            delays.insert(domain.clone(), Instant::now());
-        }
-
-        // 4) Build HTTP client
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .map_err(|e| ToolError::ExecutionFailed {
-                tool_type: "data/web_scrape".into(),
-                message: format!("Failed to build HTTP client: {e}"),
-            })?;
-
-        let headers = fingerprint.build_headers();
-
-        // 5) Fetch with retry + exponential backoff
-        let mut last_status: u16 = 0;
-        let mut last_body = String::new();
-        let mut success = false;
-
-        for attempt in 0..=max_retries {
-            let result = client.get(url_str).headers(headers.clone()).send().await;
-
-            match result {
-                Ok(response) => {
-                    last_status = response.status().as_u16();
-
-                    // Handle rate limiting / server errors with backoff
-                    let should_retry = matches!(last_status, 429 | 500 | 502 | 503 | 504);
-
-                    if last_status == 429 || last_status == 403 {
-                        // Increase domain backoff
-                        let mut backoffs = state.domain_backoff.lock().await;
-                        let current = backoffs.get(&domain).copied().unwrap_or(1.0);
-                        let new_val = (current * 2.0).min(30.0);
-                        backoffs.insert(domain.clone(), new_val);
-                    }
-
-                    if should_retry && attempt < max_retries {
-                        let base = Duration::from_secs(1u64 << attempt.min(4));
-                        tokio::time::sleep(apply_jitter(base)).await;
-                        continue;
-                    }
-
-                    last_body = response.text().await.unwrap_or_default();
-                    success = (200..400).contains(&(last_status as i32));
-                    break;
-                }
-                Err(_) if attempt < max_retries => {
-                    let base = Duration::from_secs(1u64 << attempt.min(4));
-                    tokio::time::sleep(apply_jitter(base)).await;
+                if !(200..400).contains(&(serp_status as i32)) {
                     continue;
                 }
-                Err(e) => {
-                    return Err(ToolError::ExecutionFailed {
-                        tool_type: "data/web_scrape".into(),
-                        message: format!("HTTP request failed after {} retries: {e}", max_retries),
-                    });
+
+                // Extract real article links from SERP
+                let links = extract_serp_links(&serp_body, engine);
+                let links_to_fetch: Vec<&str> = links.iter().map(|s| s.as_str()).take(max_results).collect();
+
+                // Fetch each result page
+                for link in links_to_fetch {
+                    let (body, status, cached) = match fetch_single_url(
+                        link, &fingerprint, &state, max_retries, timeout_secs, cache_ttl,
+                    ).await {
+                        Ok(r) => r,
+                        Err(_) => (String::new(), 0u16, false),
+                    };
+
+                    let success = (200..400).contains(&(status as i32));
+                    let truncated = if body.len() > max_content_len {
+                        &body[..max_content_len]
+                    } else {
+                        &body
+                    };
+
+                    // Try to extract a title from <title> tag
+                    let title = regex::Regex::new(r"(?i)<title[^>]*>(.*?)</title>")
+                        .ok()
+                        .and_then(|re| re.captures(truncated))
+                        .map(|c| c[1].trim().to_string())
+                        .unwrap_or_default();
+
+                    all_results.push(json!({
+                        "url": link,
+                        "title": title,
+                        "content": truncated,
+                        "status_code": status,
+                        "success": success,
+                        "cached": cached,
+                        "source": *engine,
+                    }));
                 }
             }
+
+            let mut out = HashMap::new();
+            out.insert("results".to_string(), json!(all_results));
+            return Ok(out);
         }
 
-        // 6) If SERP URL: extract real links
+        // ---------------------------------------------------------------
+        // MODE 2: Direct URL fetch
+        // ---------------------------------------------------------------
+        let (last_body, last_status, cached) = fetch_single_url(
+            url_input, &fingerprint, &state, max_retries, timeout_secs, cache_ttl,
+        ).await.map_err(|e| ToolError::ExecutionFailed {
+            tool_type: "data/web_scrape".into(),
+            message: e,
+        })?;
+
+        let success = (200..400).contains(&(last_status as i32));
+
+        // SERP link extraction
         let mut extracted_links: Option<Vec<String>> = None;
-        if extract_links || detect_search_engine(url_str).is_some() {
-            if let Some(engine) = detect_search_engine(url_str) {
+        if extract_links || detect_search_engine(url_input).is_some() {
+            if let Some(engine) = detect_search_engine(url_input) {
                 let links = extract_serp_links(&last_body, engine);
                 if !links.is_empty() {
                     extracted_links = Some(links);
@@ -1263,58 +1388,50 @@ impl Tool for WebScrapeTool {
             }
         }
 
-        // 7) Cache the response
-        if success {
-            let mut cache = state.cache.lock().await;
-            cache.insert(
-                normalized,
-                CachedResponse {
-                    body: last_body.clone(),
-                    status: last_status,
-                    fetched_at: Instant::now(),
-                    ttl: cache_ttl,
-                },
-            );
-        }
-
-        // 8) If output_schema: use LLM to extract structured data
+        // LLM-based structured extraction
         if !output_schema.is_empty() && success {
             let llm = context.llm();
+            let body_slice = &last_body[..last_body.len().min(8000)];
             let prompt = format!(
                 "Extract the following fields from the content below. \
                  Return ONLY valid JSON matching this schema: {output_schema}\n\n\
-                 Content:\n{body}\n\nJSON output:",
-                body = &last_body[..last_body.len().min(8000)]
+                 Content:\n{body_slice}\n\nJSON output:",
             );
-
-            match llm.call("", &prompt, &[], 0.0, 2000).await {
-                Ok(llm_response) => {
-                    let re = regex::Regex::new(r"\{[^{}]*\}").unwrap();
-                    if let Some(m) = re.find(&llm_response.response) {
-                        if let Ok(extracted) = serde_json::from_str::<Value>(m.as_str()) {
-                            let mut out = HashMap::new();
-                            out.insert("content".to_string(), json!(last_body));
-                            out.insert("status".to_string(), json!(last_status));
-                            out.insert("url".to_string(), json!(url_str));
-                            out.insert("cached".to_string(), json!(false));
-                            out.insert("extracted".to_string(), extracted);
-                            if let Some(links) = extracted_links {
-                                out.insert("links".to_string(), json!(links));
-                            }
-                            return Ok(out);
+            if let Ok(llm_resp) = llm.call("", &prompt, &[], 0.0, 2000).await {
+                let re = regex::Regex::new(r"\{[^{}]*\}").unwrap();
+                if let Some(m) = re.find(&llm_resp.response) {
+                    if let Ok(extracted) = serde_json::from_str::<Value>(m.as_str()) {
+                        let mut out = HashMap::new();
+                        out.insert("content".to_string(), json!(last_body));
+                        out.insert("status".to_string(), json!(last_status));
+                        out.insert("url".to_string(), json!(url_input));
+                        out.insert("cached".to_string(), json!(cached));
+                        out.insert("extracted".to_string(), extracted);
+                        let truncated = &last_body[..last_body.len().min(max_content_len)];
+                        out.insert("results".to_string(), json!([{
+                            "url": url_input, "title": "", "content": truncated,
+                            "status_code": last_status, "success": success, "source": "direct",
+                        }]));
+                        if let Some(links) = extracted_links {
+                            out.insert("links".to_string(), json!(links));
                         }
+                        return Ok(out);
                     }
                 }
-                Err(_) => { /* fall through to normal response */ }
             }
         }
 
-        // 9) Build response
+        // Build response
+        let truncated = &last_body[..last_body.len().min(max_content_len)];
         let mut out = HashMap::new();
-        out.insert("content".to_string(), json!(last_body));
+        out.insert("content".to_string(), json!(truncated));
         out.insert("status".to_string(), json!(last_status));
-        out.insert("url".to_string(), json!(url_str));
-        out.insert("cached".to_string(), json!(false));
+        out.insert("url".to_string(), json!(url_input));
+        out.insert("cached".to_string(), json!(cached));
+        out.insert("results".to_string(), json!([{
+            "url": url_input, "title": "", "content": truncated,
+            "status_code": last_status, "success": success, "source": "direct",
+        }]));
         if let Some(links) = extracted_links {
             out.insert("links".to_string(), json!(links));
         }

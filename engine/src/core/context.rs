@@ -123,6 +123,35 @@ pub trait StorageResource: Send + Sync {
     async fn delete(&self, path: &str) -> Result<(), ResourceError>;
 }
 
+/// Result from a vector similarity search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorSearchResult {
+    pub id: String,
+    pub score: f64,
+    pub metadata: serde_json::Value,
+}
+
+#[async_trait]
+pub trait VectorResource: Send + Sync {
+    /// Insert or update a document in the vector store.
+    async fn upsert(
+        &self,
+        id: &str,
+        text: &str,
+        metadata: serde_json::Value,
+    ) -> Result<(), ResourceError>;
+
+    /// Search for similar documents. Returns up to `top_k` results.
+    async fn search(
+        &self,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<VectorSearchResult>, ResourceError>;
+
+    /// Delete a document by ID.
+    async fn delete(&self, id: &str) -> Result<(), ResourceError>;
+}
+
 // ---------------------------------------------------------------------------
 // ExecutionContext
 // ---------------------------------------------------------------------------
@@ -140,6 +169,9 @@ pub trait ExecutionContext: Send + Sync {
 
     /// Object storage resource, if one has been configured.
     fn storage(&self) -> Option<&dyn StorageResource>;
+
+    /// Vector search resource, if one has been configured.
+    fn vector(&self) -> Option<&dyn VectorResource>;
 
     /// Authentication / authorization context for this execution.
     fn auth(&self) -> &AuthContext;
@@ -220,6 +252,9 @@ impl ExecutionContext for InMemoryContext {
         &self.llm
     }
     fn storage(&self) -> Option<&dyn StorageResource> {
+        None
+    }
+    fn vector(&self) -> Option<&dyn VectorResource> {
         None
     }
     fn auth(&self) -> &AuthContext {

@@ -267,6 +267,115 @@ impl Tool for EventTriggerTool {
     }
 }
 
+// ===========================================================================
+// HeartbeatTriggerTool
+// ===========================================================================
+
+trigger_tool! {
+    struct HeartbeatTriggerTool, factory HeartbeatTriggerFactory;
+    tool_type = "trigger/heartbeat",
+    name = "Heartbeat",
+    description = "Periodic trigger that evaluates a condition at configurable intervals. Used for polling, health checks, and scheduled re-evaluations.",
+    inputs = [],
+    outputs = [
+        field("triggered", "boolean", true, "Whether the condition evaluated to true"),
+        field("triggered_at", "string", true, "ISO 8601 timestamp of evaluation"),
+        field("evaluation_count", "number", true, "Number of evaluations performed"),
+        field("condition_result", "object", false, "Result details from the condition evaluator"),
+    ],
+    config_fields = [
+        field("interval_seconds", "number", false, "Evaluation interval in seconds (default: 300)"),
+        field("condition_type", "string", false, "Condition evaluator: always_true, always_false, custom_expression (default: always_true)"),
+        field("condition_config", "string", false, "Configuration for the condition evaluator"),
+    ]
+}
+
+#[async_trait]
+impl Tool for HeartbeatTriggerTool {
+    async fn execute(
+        &self,
+        _inputs: HashMap<String, Value>,
+        config: HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let condition_type = config
+            .get("condition_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("always_true");
+
+        let condition_config = config
+            .get("condition_config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let evaluation_count = config
+            .get("evaluation_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            + 1;
+
+        let now = Utc::now();
+        let triggered_at = now.to_rfc3339();
+
+        // Evaluate condition
+        let (triggered, condition_result) = match condition_type {
+            "always_true" => (true, json!({"type": "always_true"})),
+            "always_false" => (false, json!({"type": "always_false"})),
+            "custom_expression" => {
+                // Safe evaluation: only support simple boolean expressions
+                // with comparison operators on numeric literals
+                let result = evaluate_simple_expression(condition_config);
+                (result, json!({"type": "custom_expression", "expression": condition_config, "result": result}))
+            }
+            other => {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "trigger/heartbeat".into(),
+                    message: format!("Unknown condition_type: {other}. Use: always_true, always_false, custom_expression"),
+                });
+            }
+        };
+
+        let mut out = HashMap::new();
+        out.insert("triggered".to_string(), json!(triggered));
+        out.insert("triggered_at".to_string(), json!(triggered_at));
+        out.insert("evaluation_count".to_string(), json!(evaluation_count));
+        out.insert("condition_result".to_string(), condition_result);
+        Ok(out)
+    }
+}
+
+/// Evaluate a simple numeric comparison expression.
+/// Supports: "N op M" where op is <, >, <=, >=, ==, !=
+/// Returns false for invalid expressions (safe default).
+fn evaluate_simple_expression(expr: &str) -> bool {
+    let expr = expr.trim();
+    if expr.is_empty() {
+        return true;
+    }
+
+    // Try each operator (longer operators first to avoid prefix conflicts)
+    for op in &["<=", ">=", "!=", "==", "<", ">"] {
+        if let Some(pos) = expr.find(op) {
+            let left = expr[..pos].trim().parse::<f64>();
+            let right = expr[pos + op.len()..].trim().parse::<f64>();
+            if let (Ok(l), Ok(r)) = (left, right) {
+                return match *op {
+                    "<" => l < r,
+                    ">" => l > r,
+                    "<=" => l <= r,
+                    ">=" => l >= r,
+                    "==" => (l - r).abs() < f64::EPSILON,
+                    "!=" => (l - r).abs() >= f64::EPSILON,
+                    _ => false,
+                };
+            }
+        }
+    }
+
+    // If we can't parse, return false (safe default)
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Registration helper
 // ---------------------------------------------------------------------------
@@ -277,6 +386,7 @@ pub fn register_trigger_tools(registry: &mut ToolRegistry) {
     registry.register("trigger/manual", Box::new(ManualTriggerFactory::new()));
     registry.register("trigger/schedule", Box::new(ScheduleTriggerFactory::new()));
     registry.register("trigger/event", Box::new(EventTriggerFactory::new()));
+    registry.register("trigger/heartbeat", Box::new(HeartbeatTriggerFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -343,14 +453,81 @@ mod tests {
         assert_eq!(result["event_type"], json!("insert"));
     }
 
+    #[tokio::test]
+    async fn heartbeat_trigger_always_true() {
+        let tool = HeartbeatTriggerTool;
+        let result = tool
+            .execute(HashMap::new(), HashMap::new(), &ctx())
+            .await
+            .unwrap();
+        assert_eq!(result["triggered"], json!(true));
+        assert!(result["triggered_at"].as_str().is_some());
+        assert_eq!(result["evaluation_count"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_trigger_always_false() {
+        let tool = HeartbeatTriggerTool;
+        let mut config = HashMap::new();
+        config.insert("condition_type".to_string(), json!("always_false"));
+        let result = tool
+            .execute(HashMap::new(), config, &ctx())
+            .await
+            .unwrap();
+        assert_eq!(result["triggered"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_trigger_custom_expression() {
+        let tool = HeartbeatTriggerTool;
+        let mut config = HashMap::new();
+        config.insert("condition_type".to_string(), json!("custom_expression"));
+        config.insert("condition_config".to_string(), json!("5 > 3"));
+        let result = tool
+            .execute(HashMap::new(), config, &ctx())
+            .await
+            .unwrap();
+        assert_eq!(result["triggered"], json!(true));
+
+        let mut config2 = HashMap::new();
+        config2.insert("condition_type".to_string(), json!("custom_expression"));
+        config2.insert("condition_config".to_string(), json!("1 > 10"));
+        let result2 = tool
+            .execute(HashMap::new(), config2, &ctx())
+            .await
+            .unwrap();
+        assert_eq!(result2["triggered"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_trigger_unknown_condition_errors() {
+        let tool = HeartbeatTriggerTool;
+        let mut config = HashMap::new();
+        config.insert("condition_type".to_string(), json!("nonexistent"));
+        let result = tool.execute(HashMap::new(), config, &ctx()).await;
+        assert!(result.is_err());
+    }
+
     #[test]
-    fn register_trigger_tools_adds_four() {
+    fn evaluate_simple_expression_cases() {
+        assert!(super::evaluate_simple_expression("5 > 3"));
+        assert!(!super::evaluate_simple_expression("3 > 5"));
+        assert!(super::evaluate_simple_expression("3 <= 3"));
+        assert!(super::evaluate_simple_expression("10 != 5"));
+        assert!(super::evaluate_simple_expression("7 == 7"));
+        assert!(!super::evaluate_simple_expression("invalid"));
+        assert!(super::evaluate_simple_expression(""));
+    }
+
+    #[test]
+    fn register_trigger_tools_adds_five() {
         let mut reg = ToolRegistry::new();
         register_trigger_tools(&mut reg);
         assert!(reg.get("trigger/webhook").is_some());
         assert!(reg.get("trigger/manual").is_some());
         assert!(reg.get("trigger/schedule").is_some());
         assert!(reg.get("trigger/event").is_some());
-        assert_eq!(reg.list_tools().len(), 4);
+        assert!(reg.get("trigger/heartbeat").is_some());
+        assert_eq!(reg.list_tools().len(), 5);
     }
 }

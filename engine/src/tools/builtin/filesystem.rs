@@ -85,7 +85,7 @@ macro_rules! fs_tool {
 
 fs_tool! {
     struct ReadFileTool, factory ReadFileFactory;
-    tool_type = "fs/read_file",
+    tool_type = "filesystem/read_file",
     name = "Read File",
     description = "Reads a file and returns its contents with numbered lines. Supports offset/limit for large files.",
     category = "filesystem",
@@ -116,24 +116,24 @@ impl Tool for ReadFileTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/read_file".into(),
+                tool_type: "filesystem/read_file".into(),
                 message: "missing required input: path".into(),
             })?;
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/read_file".into(),
+            tool_type: "filesystem/read_file".into(),
             message: format!("File not found: {raw_path} ({e})"),
         })?;
 
         if !path.is_file() {
             return Err(ToolError::ExecutionFailed {
-                tool_type: "fs/read_file".into(),
+                tool_type: "filesystem/read_file".into(),
                 message: format!("Not a file: {}", path.display()),
             });
         }
 
         let metadata = fs::metadata(&path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/read_file".into(),
+            tool_type: "filesystem/read_file".into(),
             message: format!("Cannot stat file: {e}"),
         })?;
         let size = metadata.len();
@@ -148,7 +148,7 @@ impl Tool for ReadFileTool {
             .unwrap_or(2000) as usize;
 
         let content = fs::read_to_string(&path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/read_file".into(),
+            tool_type: "filesystem/read_file".into(),
             message: format!("Cannot read file: {e}"),
         })?;
 
@@ -183,7 +183,7 @@ impl Tool for ReadFileTool {
 
 fs_tool! {
     struct WriteFileTool, factory WriteFileFactory;
-    tool_type = "fs/write_file",
+    tool_type = "filesystem/write_file",
     name = "Write File",
     description = "Creates a new file or overwrites an existing one with the provided content.",
     category = "filesystem",
@@ -211,14 +211,14 @@ impl Tool for WriteFileTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/write_file".into(),
+                tool_type: "filesystem/write_file".into(),
                 message: "missing required input: path".into(),
             })?;
         let content = inputs
             .get("content")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/write_file".into(),
+                tool_type: "filesystem/write_file".into(),
                 message: "missing required input: content".into(),
             })?;
 
@@ -236,7 +236,7 @@ impl Tool for WriteFileTool {
         if let Some(parent) = abs_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| ToolError::ExecutionFailed {
-                    tool_type: "fs/write_file".into(),
+                    tool_type: "filesystem/write_file".into(),
                     message: format!("Cannot create parent directories: {e}"),
                 })?;
             }
@@ -244,7 +244,7 @@ impl Tool for WriteFileTool {
 
         let bytes = content.as_bytes();
         fs::write(&abs_path, bytes).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/write_file".into(),
+            tool_type: "filesystem/write_file".into(),
             message: format!("Cannot write file: {e}"),
         })?;
 
@@ -265,7 +265,7 @@ impl Tool for WriteFileTool {
 
 fs_tool! {
     struct ListDirTool, factory ListDirFactory;
-    tool_type = "fs/list_dir",
+    tool_type = "filesystem/list_dir",
     name = "List Directory",
     description = "Lists the contents of a directory with file type, size, and modification time.",
     category = "filesystem",
@@ -293,7 +293,7 @@ impl Tool for ListDirTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/list_dir".into(),
+                tool_type: "filesystem/list_dir".into(),
                 message: "missing required input: path".into(),
             })?;
         let show_hidden = config
@@ -302,20 +302,20 @@ impl Tool for ListDirTool {
             .unwrap_or(false);
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/list_dir".into(),
+            tool_type: "filesystem/list_dir".into(),
             message: format!("Directory not found: {raw_path} ({e})"),
         })?;
 
         if !path.is_dir() {
             return Err(ToolError::ExecutionFailed {
-                tool_type: "fs/list_dir".into(),
+                tool_type: "filesystem/list_dir".into(),
                 message: format!("Not a directory: {}", path.display()),
             });
         }
 
         let mut entries_raw: Vec<(String, Value)> = Vec::new();
         let read_dir = fs::read_dir(&path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/list_dir".into(),
+            tool_type: "filesystem/list_dir".into(),
             message: format!("Cannot read directory: {e}"),
         })?;
 
@@ -378,7 +378,7 @@ impl Tool for ListDirTool {
 
 fs_tool! {
     struct GlobFilesTool, factory GlobFilesFactory;
-    tool_type = "fs/glob_files",
+    tool_type = "filesystem/glob_files",
     name = "Glob (Find Files)",
     description = "Finds files matching a glob pattern. Returns paths sorted by modification time (newest first).",
     category = "filesystem",
@@ -407,7 +407,7 @@ impl Tool for GlobFilesTool {
             .get("pattern")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/glob_files".into(),
+                tool_type: "filesystem/glob_files".into(),
                 message: "missing required input: pattern".into(),
             })?;
 
@@ -421,14 +421,14 @@ impl Tool for GlobFilesTool {
             .unwrap_or(200) as usize;
 
         let base_path = fs::canonicalize(base).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/glob_files".into(),
+            tool_type: "filesystem/glob_files".into(),
             message: format!("Base path not found: {base} ({e})"),
         })?;
 
         let full_pattern = format!("{}/{}", base_path.display(), pattern);
 
         let paths = glob::glob(&full_pattern).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/glob_files".into(),
+            tool_type: "filesystem/glob_files".into(),
             message: format!("Invalid glob pattern: {e}"),
         })?;
 
@@ -475,7 +475,7 @@ impl Tool for GlobFilesTool {
 
 fs_tool! {
     struct GrepFilesTool, factory GrepFilesFactory;
-    tool_type = "fs/grep_files",
+    tool_type = "filesystem/grep_files",
     name = "Grep (Search Content)",
     description = "Searches file contents using regex. Returns matching lines with file paths and line numbers.",
     category = "filesystem",
@@ -588,7 +588,7 @@ impl Tool for GrepFilesTool {
             .get("pattern")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/grep_files".into(),
+                tool_type: "filesystem/grep_files".into(),
                 message: "missing required input: pattern".into(),
             })?;
 
@@ -620,12 +620,12 @@ impl Tool for GrepFilesTool {
         };
 
         let re = Regex::new(&regex_pattern).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/grep_files".into(),
+            tool_type: "filesystem/grep_files".into(),
             message: format!("Invalid regex pattern: {e}"),
         })?;
 
         let base_path = fs::canonicalize(base).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/grep_files".into(),
+            tool_type: "filesystem/grep_files".into(),
             message: format!("Path not found: {base} ({e})"),
         })?;
 
@@ -686,7 +686,7 @@ impl Tool for GrepFilesTool {
 
 fs_tool! {
     struct EditFileTool, factory EditFileFactory;
-    tool_type = "fs/edit_file",
+    tool_type = "filesystem/edit_file",
     name = "Edit File",
     description = "Performs exact string replacement in a file. The old_string must match exactly. By default replaces only the first occurrence.",
     category = "filesystem",
@@ -717,21 +717,21 @@ impl Tool for EditFileTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/edit_file".into(),
+                tool_type: "filesystem/edit_file".into(),
                 message: "missing required input: path".into(),
             })?;
         let old_string = inputs
             .get("old_string")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/edit_file".into(),
+                tool_type: "filesystem/edit_file".into(),
                 message: "missing required input: old_string".into(),
             })?;
         let new_string = inputs
             .get("new_string")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/edit_file".into(),
+                tool_type: "filesystem/edit_file".into(),
                 message: "missing required input: new_string".into(),
             })?;
         let replace_all = config
@@ -740,25 +740,25 @@ impl Tool for EditFileTool {
             .unwrap_or(false);
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/edit_file".into(),
+            tool_type: "filesystem/edit_file".into(),
             message: format!("File not found: {raw_path} ({e})"),
         })?;
 
         if !path.is_file() {
             return Err(ToolError::ExecutionFailed {
-                tool_type: "fs/edit_file".into(),
+                tool_type: "filesystem/edit_file".into(),
                 message: format!("Not a file: {}", path.display()),
             });
         }
 
         let content = fs::read_to_string(&path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/edit_file".into(),
+            tool_type: "filesystem/edit_file".into(),
             message: format!("Cannot read file: {e}"),
         })?;
 
         if old_string == new_string {
             return Err(ToolError::ExecutionFailed {
-                tool_type: "fs/edit_file".into(),
+                tool_type: "filesystem/edit_file".into(),
                 message: "old_string and new_string are identical".into(),
             });
         }
@@ -766,14 +766,14 @@ impl Tool for EditFileTool {
         let count = content.matches(old_string).count();
         if count == 0 {
             return Err(ToolError::ExecutionFailed {
-                tool_type: "fs/edit_file".into(),
+                tool_type: "filesystem/edit_file".into(),
                 message: format!("old_string not found in {}", path.display()),
             });
         }
 
         if !replace_all && count > 1 {
             return Err(ToolError::ExecutionFailed {
-                tool_type: "fs/edit_file".into(),
+                tool_type: "filesystem/edit_file".into(),
                 message: format!(
                     "old_string found {} times in {}. Provide more context to make it unique, or set replace_all=true.",
                     count,
@@ -789,7 +789,7 @@ impl Tool for EditFileTool {
         };
 
         fs::write(&path, &new_content).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/edit_file".into(),
+            tool_type: "filesystem/edit_file".into(),
             message: format!("Cannot write file: {e}"),
         })?;
 
@@ -815,7 +815,7 @@ impl Tool for EditFileTool {
 
 fs_tool! {
     struct CopyTool, factory CopyFactory;
-    tool_type = "fs/copy",
+    tool_type = "filesystem/copy",
     name = "Copy File",
     description = "Copies a file from source to destination",
     category = "filesystem",
@@ -843,19 +843,19 @@ impl Tool for CopyTool {
             .get("source")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/copy".into(),
+                tool_type: "filesystem/copy".into(),
                 message: "missing required input: source".into(),
             })?;
         let destination = inputs
             .get("destination")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/copy".into(),
+                tool_type: "filesystem/copy".into(),
                 message: "missing required input: destination".into(),
             })?;
 
         let src_path = fs::canonicalize(source).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/copy".into(),
+            tool_type: "filesystem/copy".into(),
             message: format!("Source not found: {source} ({e})"),
         })?;
 
@@ -872,14 +872,14 @@ impl Tool for CopyTool {
         if let Some(parent) = abs_dest.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| ToolError::ExecutionFailed {
-                    tool_type: "fs/copy".into(),
+                    tool_type: "filesystem/copy".into(),
                     message: format!("Cannot create parent directories: {e}"),
                 })?;
             }
         }
 
         let bytes_copied = fs::copy(&src_path, &abs_dest).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/copy".into(),
+            tool_type: "filesystem/copy".into(),
             message: format!("Copy failed: {e}"),
         })?;
 
@@ -897,7 +897,7 @@ impl Tool for CopyTool {
 
 fs_tool! {
     struct MoveTool, factory MoveFactory;
-    tool_type = "fs/move",
+    tool_type = "filesystem/move",
     name = "Move/Rename",
     description = "Moves or renames a file or directory",
     category = "filesystem",
@@ -924,19 +924,19 @@ impl Tool for MoveTool {
             .get("source")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/move".into(),
+                tool_type: "filesystem/move".into(),
                 message: "missing required input: source".into(),
             })?;
         let destination = inputs
             .get("destination")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/move".into(),
+                tool_type: "filesystem/move".into(),
                 message: "missing required input: destination".into(),
             })?;
 
         let src_path = fs::canonicalize(source).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/move".into(),
+            tool_type: "filesystem/move".into(),
             message: format!("Source not found: {source} ({e})"),
         })?;
 
@@ -952,14 +952,14 @@ impl Tool for MoveTool {
         if let Some(parent) = abs_dest.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| ToolError::ExecutionFailed {
-                    tool_type: "fs/move".into(),
+                    tool_type: "filesystem/move".into(),
                     message: format!("Cannot create parent directories: {e}"),
                 })?;
             }
         }
 
         fs::rename(&src_path, &abs_dest).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/move".into(),
+            tool_type: "filesystem/move".into(),
             message: format!("Move failed: {e}"),
         })?;
 
@@ -976,7 +976,7 @@ impl Tool for MoveTool {
 
 fs_tool! {
     struct DeleteTool, factory DeleteFactory;
-    tool_type = "fs/delete",
+    tool_type = "filesystem/delete",
     name = "Delete",
     description = "Deletes a file or directory (recursive for directories)",
     category = "filesystem",
@@ -1002,23 +1002,23 @@ impl Tool for DeleteTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/delete".into(),
+                tool_type: "filesystem/delete".into(),
                 message: "missing required input: path".into(),
             })?;
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/delete".into(),
+            tool_type: "filesystem/delete".into(),
             message: format!("Path not found: {raw_path} ({e})"),
         })?;
 
         if path.is_dir() {
             fs::remove_dir_all(&path).map_err(|e| ToolError::ExecutionFailed {
-                tool_type: "fs/delete".into(),
+                tool_type: "filesystem/delete".into(),
                 message: format!("Cannot delete directory: {e}"),
             })?;
         } else {
             fs::remove_file(&path).map_err(|e| ToolError::ExecutionFailed {
-                tool_type: "fs/delete".into(),
+                tool_type: "filesystem/delete".into(),
                 message: format!("Cannot delete file: {e}"),
             })?;
         }
@@ -1036,7 +1036,7 @@ impl Tool for DeleteTool {
 
 fs_tool! {
     struct MkdirTool, factory MkdirFactory;
-    tool_type = "fs/mkdir",
+    tool_type = "filesystem/mkdir",
     name = "Create Directory",
     description = "Creates a directory and all parent directories as needed",
     category = "filesystem",
@@ -1062,7 +1062,7 @@ impl Tool for MkdirTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/mkdir".into(),
+                tool_type: "filesystem/mkdir".into(),
                 message: "missing required input: path".into(),
             })?;
 
@@ -1076,7 +1076,7 @@ impl Tool for MkdirTool {
         };
 
         fs::create_dir_all(&abs_path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/mkdir".into(),
+            tool_type: "filesystem/mkdir".into(),
             message: format!("Cannot create directory: {e}"),
         })?;
 
@@ -1093,7 +1093,7 @@ impl Tool for MkdirTool {
 
 fs_tool! {
     struct TreeTool, factory TreeFactory;
-    tool_type = "fs/tree",
+    tool_type = "filesystem/tree",
     name = "Directory Tree",
     description = "Displays a recursive directory listing with indentation",
     category = "filesystem",
@@ -1185,7 +1185,7 @@ impl Tool for TreeTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/tree".into(),
+                tool_type: "filesystem/tree".into(),
                 message: "missing required input: path".into(),
             })?;
         let max_depth = config
@@ -1198,13 +1198,13 @@ impl Tool for TreeTool {
             .unwrap_or(false);
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/tree".into(),
+            tool_type: "filesystem/tree".into(),
             message: format!("Path not found: {raw_path} ({e})"),
         })?;
 
         if !path.is_dir() {
             return Err(ToolError::ExecutionFailed {
-                tool_type: "fs/tree".into(),
+                tool_type: "filesystem/tree".into(),
                 message: format!("Not a directory: {}", path.display()),
             });
         }
@@ -1230,7 +1230,7 @@ impl Tool for TreeTool {
 
 fs_tool! {
     struct FileInfoTool, factory FileInfoFactory;
-    tool_type = "fs/file_info",
+    tool_type = "filesystem/file_info",
     name = "File Info",
     description = "Returns metadata about a file: size, modified time, type, permissions",
     category = "filesystem",
@@ -1260,17 +1260,17 @@ impl Tool for FileInfoTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "fs/file_info".into(),
+                tool_type: "filesystem/file_info".into(),
                 message: "missing required input: path".into(),
             })?;
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/file_info".into(),
+            tool_type: "filesystem/file_info".into(),
             message: format!("Path not found: {raw_path} ({e})"),
         })?;
 
         let metadata = fs::metadata(&path).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "fs/file_info".into(),
+            tool_type: "filesystem/file_info".into(),
             message: format!("Cannot stat path: {e}"),
         })?;
 
@@ -1310,18 +1310,33 @@ impl Tool for FileInfoTool {
 
 /// Register all filesystem tools into the given registry.
 pub fn register_filesystem_tools(registry: &mut ToolRegistry) {
-    registry.register("fs/read_file", Box::new(ReadFileFactory::new()));
-    registry.register("fs/write_file", Box::new(WriteFileFactory::new()));
-    registry.register("fs/list_dir", Box::new(ListDirFactory::new()));
-    registry.register("fs/glob_files", Box::new(GlobFilesFactory::new()));
-    registry.register("fs/grep_files", Box::new(GrepFilesFactory::new()));
-    registry.register("fs/edit_file", Box::new(EditFileFactory::new()));
-    registry.register("fs/copy", Box::new(CopyFactory::new()));
-    registry.register("fs/move", Box::new(MoveFactory::new()));
-    registry.register("fs/delete", Box::new(DeleteFactory::new()));
-    registry.register("fs/mkdir", Box::new(MkdirFactory::new()));
-    registry.register("fs/tree", Box::new(TreeFactory::new()));
-    registry.register("fs/file_info", Box::new(FileInfoFactory::new()));
+    // Canonical names (match Python: filesystem/*)
+    registry.register("filesystem/read_file", Box::new(ReadFileFactory::new()));
+    registry.register("filesystem/write_file", Box::new(WriteFileFactory::new()));
+    registry.register("filesystem/list_dir", Box::new(ListDirFactory::new()));
+    registry.register("filesystem/glob_files", Box::new(GlobFilesFactory::new()));
+    registry.register("filesystem/grep_files", Box::new(GrepFilesFactory::new()));
+    registry.register("filesystem/edit_file", Box::new(EditFileFactory::new()));
+    registry.register("filesystem/copy", Box::new(CopyFactory::new()));
+    registry.register("filesystem/move", Box::new(MoveFactory::new()));
+    registry.register("filesystem/delete", Box::new(DeleteFactory::new()));
+    registry.register("filesystem/mkdir", Box::new(MkdirFactory::new()));
+    registry.register("filesystem/tree", Box::new(TreeFactory::new()));
+    registry.register("filesystem/file_info", Box::new(FileInfoFactory::new()));
+
+    // Legacy aliases (fs/* → filesystem/*) — remove in v0.3.0
+    registry.register_alias("fs/read_file", "filesystem/read_file");
+    registry.register_alias("fs/write_file", "filesystem/write_file");
+    registry.register_alias("fs/list_dir", "filesystem/list_dir");
+    registry.register_alias("fs/glob_files", "filesystem/glob_files");
+    registry.register_alias("fs/grep_files", "filesystem/grep_files");
+    registry.register_alias("fs/edit_file", "filesystem/edit_file");
+    registry.register_alias("fs/copy", "filesystem/copy");
+    registry.register_alias("fs/move", "filesystem/move");
+    registry.register_alias("fs/delete", "filesystem/delete");
+    registry.register_alias("fs/mkdir", "filesystem/mkdir");
+    registry.register_alias("fs/tree", "filesystem/tree");
+    registry.register_alias("fs/file_info", "filesystem/file_info");
 }
 
 // ---------------------------------------------------------------------------
@@ -1752,18 +1767,31 @@ mod tests {
     fn register_filesystem_tools_adds_all() {
         let mut reg = ToolRegistry::new();
         register_filesystem_tools(&mut reg);
+        // Canonical names
+        assert!(reg.get("filesystem/read_file").is_some());
+        assert!(reg.get("filesystem/write_file").is_some());
+        assert!(reg.get("filesystem/list_dir").is_some());
+        assert!(reg.get("filesystem/glob_files").is_some());
+        assert!(reg.get("filesystem/grep_files").is_some());
+        assert!(reg.get("filesystem/edit_file").is_some());
+        assert!(reg.get("filesystem/copy").is_some());
+        assert!(reg.get("filesystem/move").is_some());
+        assert!(reg.get("filesystem/delete").is_some());
+        assert!(reg.get("filesystem/mkdir").is_some());
+        assert!(reg.get("filesystem/tree").is_some());
+        assert!(reg.get("filesystem/file_info").is_some());
+        assert_eq!(reg.list_tools().len(), 12);
+    }
+
+    #[test]
+    fn legacy_fs_aliases_resolve() {
+        let mut reg = ToolRegistry::new();
+        register_filesystem_tools(&mut reg);
+        // Legacy aliases (fs/* → filesystem/*)
         assert!(reg.get("fs/read_file").is_some());
         assert!(reg.get("fs/write_file").is_some());
         assert!(reg.get("fs/list_dir").is_some());
-        assert!(reg.get("fs/glob_files").is_some());
-        assert!(reg.get("fs/grep_files").is_some());
-        assert!(reg.get("fs/edit_file").is_some());
         assert!(reg.get("fs/copy").is_some());
-        assert!(reg.get("fs/move").is_some());
         assert!(reg.get("fs/delete").is_some());
-        assert!(reg.get("fs/mkdir").is_some());
-        assert!(reg.get("fs/tree").is_some());
-        assert!(reg.get("fs/file_info").is_some());
-        assert_eq!(reg.list_tools().len(), 12);
     }
 }

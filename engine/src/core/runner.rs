@@ -1501,6 +1501,9 @@ mod tests {
         fn storage(&self) -> Option<&dyn crate::core::context::StorageResource> {
             None
         }
+        fn vector(&self) -> Option<&dyn crate::core::context::VectorResource> {
+            None
+        }
         fn auth(&self) -> &AuthContext {
             &self.auth
         }

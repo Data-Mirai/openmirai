@@ -34,7 +34,7 @@ mod tests {
         let mut reg = ToolRegistry::new();
         register_all_builtin_tools(&mut reg);
         // 7 logic + 3 ai + 10 data + 12 filesystem + 2 system + 4 git
-        // + 1 output + 1 agent + 1 mcp + 4 trigger = 45
-        assert_eq!(reg.list_tools().len(), 45);
+        // + 1 output + 1 agent + 1 mcp + 5 trigger = 46
+        assert_eq!(reg.list_tools().len(), 46);
     }
 }

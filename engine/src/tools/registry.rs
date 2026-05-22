@@ -44,14 +44,20 @@ pub trait ToolFactory: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Central registry mapping `tool_type` strings to their factories.
+///
+/// Supports aliases for backward compatibility: legacy tool_type strings
+/// (e.g. `fs/read_file`) can map to the canonical name (e.g. `filesystem/read_file`).
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn ToolFactory>>,
+    /// Maps legacy tool_type → canonical tool_type.
+    aliases: HashMap<String, String>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -60,12 +66,25 @@ impl ToolRegistry {
         self.tools.insert(tool_type.to_string(), factory);
     }
 
-    /// Look up a factory by `tool_type`.
-    pub fn get(&self, tool_type: &str) -> Option<&dyn ToolFactory> {
-        self.tools.get(tool_type).map(|b| b.as_ref())
+    /// Register a legacy alias that resolves to a canonical tool_type.
+    pub fn register_alias(&mut self, alias: &str, canonical: &str) {
+        self.aliases.insert(alias.to_string(), canonical.to_string());
     }
 
-    /// List the specs of every registered tool.
+    /// Look up a factory by `tool_type`. Falls back to aliases if the direct
+    /// lookup misses.
+    pub fn get(&self, tool_type: &str) -> Option<&dyn ToolFactory> {
+        self.tools
+            .get(tool_type)
+            .or_else(|| {
+                self.aliases
+                    .get(tool_type)
+                    .and_then(|canonical| self.tools.get(canonical))
+            })
+            .map(|b| b.as_ref())
+    }
+
+    /// List the specs of every registered tool (aliases are not listed).
     pub fn list_tools(&self) -> Vec<&ToolSpec> {
         self.tools.values().map(|f| f.spec()).collect()
     }

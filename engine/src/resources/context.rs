@@ -3,7 +3,7 @@
 //! construction.
 
 use crate::core::context::{
-    AuthContext, DBResource, ExecutionContext, LLMResource, Role, StorageResource,
+    AuthContext, DBResource, ExecutionContext, LLMResource, Role, StorageResource, VectorResource,
 };
 
 // ---------------------------------------------------------------------------
@@ -16,6 +16,7 @@ pub struct SimpleExecutionContext {
     db: Option<Box<dyn DBResource>>,
     llm: Box<dyn LLMResource>,
     storage: Option<Box<dyn StorageResource>>,
+    vector: Option<Box<dyn VectorResource>>,
     auth: AuthContext,
     session_id: String,
     node_id: Option<String>,
@@ -33,6 +34,10 @@ impl ExecutionContext for SimpleExecutionContext {
 
     fn storage(&self) -> Option<&dyn StorageResource> {
         self.storage.as_deref()
+    }
+
+    fn vector(&self) -> Option<&dyn VectorResource> {
+        self.vector.as_deref()
     }
 
     fn auth(&self) -> &AuthContext {
@@ -59,6 +64,7 @@ impl SimpleExecutionContext {
             db: None,
             llm,
             storage: None,
+            vector: None,
             auth: AuthContext {
                 user_id: "dev".to_string(),
                 role: Role::Owner,
@@ -98,6 +104,7 @@ pub struct SimpleExecutionContextBuilder {
     db: Option<Box<dyn DBResource>>,
     llm: Box<dyn LLMResource>,
     storage: Option<Box<dyn StorageResource>>,
+    vector: Option<Box<dyn VectorResource>>,
     auth: AuthContext,
     session_id: String,
     node_id: Option<String>,
@@ -112,6 +119,11 @@ impl SimpleExecutionContextBuilder {
 
     pub fn with_storage(mut self, storage: Box<dyn StorageResource>) -> Self {
         self.storage = Some(storage);
+        self
+    }
+
+    pub fn with_vector(mut self, vector: Box<dyn VectorResource>) -> Self {
+        self.vector = Some(vector);
         self
     }
 
@@ -140,6 +152,7 @@ impl SimpleExecutionContextBuilder {
             db: self.db,
             llm: self.llm,
             storage: self.storage,
+            vector: self.vector,
             auth: self.auth,
             session_id: self.session_id,
             node_id: self.node_id,

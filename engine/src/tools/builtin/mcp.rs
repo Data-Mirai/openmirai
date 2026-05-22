@@ -80,7 +80,7 @@ macro_rules! mcp_tool {
 
 mcp_tool! {
     struct McpCallTool, factory McpCallFactory;
-    tool_type = "mcp/mcp_call",
+    tool_type = "mcp/call",
     name = "MCP Call",
     description = "Invokes a tool on a Model Context Protocol server. Placeholder until MCP client is configured.",
     inputs = [
@@ -136,7 +136,9 @@ impl Tool for McpCallTool {
 
 /// Register all MCP tools into the given registry.
 pub fn register_mcp_tools(registry: &mut ToolRegistry) {
-    registry.register("mcp/mcp_call", Box::new(McpCallFactory::new()));
+    registry.register("mcp/call", Box::new(McpCallFactory::new()));
+    // Legacy alias — remove in v0.3.0
+    registry.register_alias("mcp/mcp_call", "mcp/call");
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +177,14 @@ mod tests {
     fn register_mcp_tools_adds_one() {
         let mut reg = ToolRegistry::new();
         register_mcp_tools(&mut reg);
-        assert!(reg.get("mcp/mcp_call").is_some());
+        assert!(reg.get("mcp/call").is_some());
         assert_eq!(reg.list_tools().len(), 1);
+    }
+
+    #[test]
+    fn legacy_mcp_alias_resolves() {
+        let mut reg = ToolRegistry::new();
+        register_mcp_tools(&mut reg);
+        assert!(reg.get("mcp/mcp_call").is_some());
     }
 }

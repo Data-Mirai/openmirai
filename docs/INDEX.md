@@ -35,6 +35,7 @@ Un Universe = instancia de aplicación con environments, recursos (DB, vector, s
 - [FEAT-028.md](prd/draft/FEAT-028.md) — NVIDIA NIM Provider (100+ modelos subsidiados, OpenAI-compatible)
 - [FEAT-030.md](prd/draft/FEAT-030.md) — Content Generation MCP Servers (Imagen, Video, Audio)
 - [FEAT-031.md](prd/draft/FEAT-031.md) — Web Scraping a Escala: Apify + Scraping Infrastructure
+- [FEAT-032.md](prd/draft/FEAT-032.md) — Engine Rust: Paridad Completa con Python (tools, memory, resources)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Stack, distribución, convenciones, real-time (§9-§11)
 
 ## Producto

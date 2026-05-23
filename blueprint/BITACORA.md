@@ -4,6 +4,24 @@ Registro cronologico inverso de todas las acciones significativas en el proyecto
 
 ---
 
+**2026-05-23 · 01-INTAKE + 00-WORKBOARD · ✅ done**
+FEAT-033 "Crates.io Quality Refactor" — PRD completo + workboard creado.
+
+Cambios:
+- CREADO `docs/prd/draft/FEAT-033.md` — PRD: 5 criticos + 8 importantes + 8 mejoras
+- MODIFICADO `docs/INDEX.md` — referencia a FEAT-033
+- MODIFICADO `blueprint/workboard.db` — schema inicializado, EPIC-100, 3 bloques (BLOCK-070→072), 19 tickets (TICK-280→298), 17 tests (TEST-136→152), 13 dependencias
+- CREADO `blueprint/stacks/rust-crate-design.md` — stack skill Rust crate design (~1117 lineas, 18 fuentes)
+- MODIFICADO `blueprint/stacks/README.md` — agregado Rust Crate Design
+
+Decisiones:
+- 3 fases: Criticos (bloquean pub) → Importantes (v1.0) → Mejoras (calidad)
+- TICK-292 (ExecutionContext TypeMap) es evaluacion — puede resultar en no-implementar si breaking masivo
+- TICK-293 (missing_docs) es ultimo de Fase 2 porque depende de que todos los tipos ya esten estables
+- Mejoras M2 (LLMResource vs LLMAdapter), M5 (modulos publicos), M7 (builder &mut) fuera de alcance
+
+---
+
 **2026-05-14 · 10-CODEGEN · ✅ done**
 Fix critico: segundo db_write se colgaba indefinidamente. Reescrito SQLiteDBResource con conexiones per-operacion (sin threading.Lock). Auto-creacion de tablas y auto-migracion de columnas en _insert_sync.
 

@@ -489,14 +489,22 @@ impl GraphRunner {
         let mut visit_counts: HashMap<String, u32> = HashMap::new();
         let mut step = start_step;
 
-        let mut current_idx: Option<usize> = node_index(graph, entry_node_id);
+        // Pre-compute node-id → index mapping for O(1) lookups.
+        let node_idx: HashMap<&str, usize> = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.id.as_str(), i))
+            .collect();
+
+        let mut current_idx: Option<usize> = node_idx.get(entry_node_id).copied();
 
         let session_id = context.session_id().to_string();
 
         // Transcript: started
         transcript.push(TranscriptEntry {
             entry_type: "started".to_string(),
-            message: format!("Ejecucion iniciada"),
+            message: "Execution started".to_string(),
             timestamp: now_ts(),
             node_id: None,
             metadata: HashMap::new(),
@@ -593,7 +601,7 @@ impl GraphRunner {
                     .config
                     .get("prompt")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("Requiere decision")
+                    .unwrap_or("Decision required")
                     .to_string();
                 let options: Vec<String> = node
                     .config
@@ -680,7 +688,7 @@ impl GraphRunner {
                         current_idx = self
                             .resolve_next_node(node_id, &HashMap::new(), graph)
                             .as_deref()
-                            .and_then(|nid| node_index(graph, nid));
+                            .and_then(|nid| node_idx.get(nid).copied());
                         step += 1;
                         continue;
                     }
@@ -702,7 +710,7 @@ impl GraphRunner {
             // Transcript: block starting
             transcript.push(TranscriptEntry {
                 entry_type: "block_start".to_string(),
-                message: format!("Ejecutando {}", node.tool_type),
+                message: format!("Executing {}", node.tool_type),
                 timestamp: now_ts(),
                 node_id: Some(node_id.to_string()),
                 metadata: HashMap::new(),
@@ -779,7 +787,7 @@ impl GraphRunner {
                     transcript.push(TranscriptEntry {
                         entry_type: "block_end".to_string(),
                         message: format!(
-                            "Completado {} en {}ms",
+                            "Completed {} in {}ms",
                             node.tool_type, elapsed_ms
                         ),
                         timestamp: now_ts(),
@@ -826,7 +834,7 @@ impl GraphRunner {
                             transcript.push(TranscriptEntry {
                                 entry_type: "decision".to_string(),
                                 message: format!(
-                                    "Decision: siguiendo edge {} (condicion: {})",
+                                    "Decision: following edge {} (condition: {})",
                                     edge_id, cond_desc
                                 ),
                                 timestamp: now_ts(),
@@ -841,7 +849,7 @@ impl GraphRunner {
                     } else {
                         debug!(from = %node_id, "no outgoing edge — end of graph");
                     }
-                    next.as_deref().and_then(|nid| node_index(graph, nid))
+                    next.as_deref().and_then(|nid| node_idx.get(nid).copied())
                 }
 
                 // ---- Failure ----
@@ -864,7 +872,7 @@ impl GraphRunner {
                         transcript.push(TranscriptEntry {
                             entry_type: "error".to_string(),
                             message: format!(
-                                "Error en {}: {} (retrying via hook)",
+                                "Error in {}: {} (retrying via hook)",
                                 node.tool_type, err_msg
                             ),
                             timestamp: now_ts(),
@@ -879,7 +887,7 @@ impl GraphRunner {
                     // Transcript: error
                     transcript.push(TranscriptEntry {
                         entry_type: "error".to_string(),
-                        message: format!("Error en {}: {}", node.tool_type, err_msg),
+                        message: format!("Error in {}: {}", node.tool_type, err_msg),
                         timestamp: now_ts(),
                         node_id: Some(node_id.to_string()),
                         metadata: HashMap::new(),
@@ -955,7 +963,7 @@ impl GraphRunner {
                             // Continue with normal edge routing (empty output).
                             self.resolve_next_node(node_id, &empty_output, graph)
                                 .as_deref()
-                                .and_then(|nid| node_index(graph, nid))
+                                .and_then(|nid| node_idx.get(nid).copied())
                         }
 
                         FailureMode::RouteToError => {
@@ -991,7 +999,7 @@ impl GraphRunner {
                             // Follow edges — conditional edges can match on __error__.
                             self.resolve_next_node(node_id, &error_output, graph)
                                 .as_deref()
-                                .and_then(|nid| node_index(graph, nid))
+                                .and_then(|nid| node_idx.get(nid).copied())
                         }
                     }
                 }
@@ -1009,7 +1017,7 @@ impl GraphRunner {
         // Transcript: completed
         transcript.push(TranscriptEntry {
             entry_type: "completed".to_string(),
-            message: format!("Ejecucion completada ({} bloques)", trace.len()),
+            message: format!("Execution completed ({} blocks)", trace.len()),
             timestamp: now_ts(),
             node_id: None,
             metadata: HashMap::new(),
@@ -1342,11 +1350,6 @@ impl GraphRunner {
 // ---------------------------------------------------------------------------
 // Free helpers
 // ---------------------------------------------------------------------------
-
-/// Find the index of a node by id inside `graph.nodes`.
-fn node_index(graph: &GraphDef, node_id: &str) -> Option<usize> {
-    graph.nodes.iter().position(|n| n.id == node_id)
-}
 
 /// Try to extract f64 from two JSON values and apply a comparator.
 fn compare_numbers(a: &Value, b: &Value, cmp: fn(f64, f64) -> bool) -> bool {

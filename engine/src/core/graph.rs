@@ -84,7 +84,7 @@ pub struct NodeDef {
     pub position: Option<(f64, f64)>,
 }
 
-fn default_version() -> String {
+pub(crate) fn default_version() -> String {
     "1.0.0".to_string()
 }
 

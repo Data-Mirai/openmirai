@@ -42,12 +42,28 @@ pub enum EventType {
 
 impl std::fmt::Display for EventType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Serialize to the same snake_case string used by serde
-        let s = serde_json::to_value(self)
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-            .unwrap_or_else(|| format!("{:?}", self));
-        f.write_str(&s)
+        let s = match self {
+            Self::SessionStarted => "session_started",
+            Self::SessionCompleted => "session_completed",
+            Self::SessionFailed => "session_failed",
+            Self::SessionInterrupted => "session_interrupted",
+            Self::SessionResumed => "session_resumed",
+            Self::BlockStarted => "block_started",
+            Self::BlockCompleted => "block_completed",
+            Self::BlockError => "block_error",
+            Self::LlmToken => "llm_token",
+            Self::LlmCompleted => "llm_completed",
+            Self::CheckpointCreated => "checkpoint_created",
+            Self::HookFired => "hook_fired",
+            Self::HookBlocked => "hook_blocked",
+            Self::InterruptCreated => "interrupt_created",
+            Self::InterruptResolved => "interrupt_resolved",
+            Self::BrowserScreenshot => "browser_screenshot",
+            Self::BrowserAction => "browser_action",
+            Self::BrowserNavigation => "browser_navigation",
+            Self::BrowserCompleted => "browser_completed",
+        };
+        f.write_str(s)
     }
 }
 

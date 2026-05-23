@@ -57,16 +57,12 @@ impl Default for AgentType {
 pub struct AgentNodeSpec {
     pub id: String,
     pub tool_type: String,
-    #[serde(default = "default_version")]
+    #[serde(default = "super::graph::default_version")]
     pub version: String,
     #[serde(default)]
     pub config: HashMap<String, serde_json::Value>,
     #[serde(default = "default_position")]
     pub position: HashMap<String, f64>,
-}
-
-fn default_version() -> String {
-    "1.0.0".to_string()
 }
 
 fn default_position() -> HashMap<String, f64> {

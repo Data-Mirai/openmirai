@@ -14,8 +14,25 @@ pub mod tools;
 pub mod triggers;
 pub mod vault;
 
-pub use crate::core::*;
-// Re-export llm types under their module to avoid name collisions with core::TokenUsage.
+// Re-export core types explicitly (no glob).
+pub use crate::core::agent_spec::{
+    AgentConfig, AgentEdgeSpec, AgentGraphSpec, AgentHookSpec, AgentMcpServerSpec, AgentNodeSpec,
+    AgentResourceRef, AgentRetryConfig, AgentSpec, AgentSpecError, AgentTriggerSpec, AgentType,
+};
+pub use crate::core::auth::{AuthError, Permission, PermissionEvaluator, Resource, SingleUserAuth};
+pub use crate::core::context::{
+    AuthContext, DBResource, ExecutionContext, LLMResource, LLMResponse, ResourceError, Role,
+    StorageResource, TokenUsage,
+};
+pub use crate::core::events::{EventEmitter, EventType, ExecutionEvent};
+pub use crate::core::graph::{ComparisonOp, EdgeCondition, EdgeDef, GraphDef, GraphError, NodeDef};
+pub use crate::core::runner::{
+    BackoffStrategy, Checkpoint, CheckpointCallback, ExecutionResult, ExecutionStatus, FailureMode,
+    GraphRunner, HookHandler, HookResult, InterruptInfo, RetryPolicy, RunnerError, ToolError,
+    ToolExecutor, TraceEntry, TraceStatus, TranscriptEntry,
+};
+pub use crate::core::schema::{ColumnDef, ColumnType, SchemaError, TableSchema};
+pub use crate::core::state::{SharedState, StateError};
 
 // Re-export tool-system types for convenience.
 pub use crate::tools::{

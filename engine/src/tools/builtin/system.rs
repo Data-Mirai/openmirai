@@ -7,17 +7,17 @@ use tokio::process::Command;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -88,17 +88,17 @@ system_tool! {
     description = "Executes a shell command and returns stdout, stderr, and exit code. Dangerous commands are blocked.",
     category = "system",
     inputs = [
-        field("command", "string", true, "Shell command to execute"),
+        field("command", FieldType::String, true, "Shell command to execute"),
     ],
     outputs = [
-        field("stdout", "string", true, "Standard output"),
-        field("stderr", "string", true, "Standard error"),
-        field("exit_code", "number", true, "Process exit code (0 = success)"),
-        field("timed_out", "boolean", true, "Whether the command timed out"),
+        field("stdout", FieldType::String, true, "Standard output"),
+        field("stderr", FieldType::String, true, "Standard error"),
+        field("exit_code", FieldType::Number, true, "Process exit code (0 = success)"),
+        field("timed_out", FieldType::Boolean, true, "Whether the command timed out"),
     ],
     config_fields = [
-        field("timeout", "number", false, "Timeout in seconds (max 600)"),
-        field("cwd", "string", false, "Working directory (defaults to current)"),
+        field("timeout", FieldType::Number, false, "Timeout in seconds (max 600)"),
+        field("cwd", FieldType::String, false, "Working directory (defaults to current)"),
     ]
 }
 
@@ -239,11 +239,11 @@ system_tool! {
     category = "system",
     inputs = [],
     outputs = [
-        field("processes", "array", true, "List of running processes"),
-        field("count", "number", true, "Number of processes"),
+        field("processes", FieldType::Array, true, "List of running processes"),
+        field("count", FieldType::Number, true, "Number of processes"),
     ],
     config_fields = [
-        field("filter", "string", false, "Filter processes by name"),
+        field("filter", FieldType::String, false, "Filter processes by name"),
     ]
 }
 

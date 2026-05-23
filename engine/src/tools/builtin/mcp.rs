@@ -5,17 +5,17 @@ use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -84,18 +84,18 @@ mcp_tool! {
     name = "MCP Call",
     description = "Invokes a tool on a Model Context Protocol server. Placeholder until MCP client is configured.",
     inputs = [
-        field("arguments", "object", false, "Arguments to pass to the MCP tool"),
+        field("arguments", FieldType::Object, false, "Arguments to pass to the MCP tool"),
     ],
     outputs = [
-        field("result", "object", true, "Tool execution result"),
-        field("server_name", "string", true, "MCP server name"),
-        field("tool_name", "string", true, "MCP tool name"),
-        field("success", "boolean", true, "Whether the call succeeded"),
-        field("error", "string", false, "Error message if call failed"),
+        field("result", FieldType::Object, true, "Tool execution result"),
+        field("server_name", FieldType::String, true, "MCP server name"),
+        field("tool_name", FieldType::String, true, "MCP tool name"),
+        field("success", FieldType::Boolean, true, "Whether the call succeeded"),
+        field("error", FieldType::String, false, "Error message if call failed"),
     ],
     config_fields = [
-        field("server_name", "string", true, "Name of the MCP server"),
-        field("tool_name", "string", true, "Name of the tool on the server"),
+        field("server_name", FieldType::String, true, "Name of the MCP server"),
+        field("tool_name", FieldType::String, true, "Name of the tool on the server"),
     ]
 }
 

@@ -5,17 +5,17 @@ use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -90,19 +90,19 @@ agent_tool! {
     name = "Run Agent",
     description = "Executes another agent as a synchronous sub-task. Max nesting depth = 3.",
     inputs = [
-        field("agent_id", "string", false, "ID of the agent to execute (can come from config)"),
-        field("input_data", "object", false, "Input data for the sub-agent"),
+        field("agent_id", FieldType::String, false, "ID of the agent to execute (can come from config)"),
+        field("input_data", FieldType::Object, false, "Input data for the sub-agent"),
     ],
     outputs = [
-        field("agent_id", "string", true, "ID of the executed agent"),
-        field("session_id", "string", true, "Session ID of the child execution"),
-        field("status", "string", true, "Execution status"),
-        field("result", "object", true, "Sub-agent result"),
-        field("duration_ms", "number", true, "Total duration in ms"),
+        field("agent_id", FieldType::String, true, "ID of the executed agent"),
+        field("session_id", FieldType::String, true, "Session ID of the child execution"),
+        field("status", FieldType::String, true, "Execution status"),
+        field("result", FieldType::Object, true, "Sub-agent result"),
+        field("duration_ms", FieldType::Number, true, "Total duration in ms"),
     ],
     config_fields = [
-        field("agent_id", "string", false, "ID of the agent to execute"),
-        field("timeout_seconds", "number", false, "Timeout for sub-agent execution (default 300)"),
+        field("agent_id", FieldType::String, false, "ID of the agent to execute"),
+        field("timeout_seconds", FieldType::Number, false, "Timeout for sub-agent execution (default 300)"),
     ]
 }
 

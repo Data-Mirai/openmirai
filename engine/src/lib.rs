@@ -19,7 +19,7 @@ pub use crate::core::*;
 
 // Re-export tool-system types for convenience.
 pub use crate::tools::{
-    RegistryExecutor, Tool, ToolFactory, ToolField, ToolRegistry, ToolSpec,
+    FieldType, RegistryExecutor, Tool, ToolFactory, ToolField, ToolRegistry, ToolSpec,
 };
 
 // Re-export memory types.

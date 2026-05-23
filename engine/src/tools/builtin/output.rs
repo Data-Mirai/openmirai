@@ -5,17 +5,17 @@ use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -84,17 +84,17 @@ output_tool! {
     name = "Response",
     description = "Terminal node that formats and returns the final session result",
     inputs = [
-        field("data", "object", false, "Data from previous step (auto-connected via data_map)"),
+        field("data", FieldType::Object, false, "Data from previous step (auto-connected via data_map)"),
     ],
     outputs = [
-        field("result", "string", true, "Formatted result"),
-        field("format", "string", true, "Output format used"),
-        field("raw_data", "object", true, "Raw data received"),
+        field("result", FieldType::String, true, "Formatted result"),
+        field("format", FieldType::String, true, "Output format used"),
+        field("raw_data", FieldType::Object, true, "Raw data received"),
     ],
     config_fields = [
-        field("format", "string", false, "Output format: text, json, markdown, bullets (default: markdown)"),
-        field("template", "string", false, "Template with ${key} placeholders"),
-        field("title", "string", false, "Optional title for the result"),
+        field("format", FieldType::String, false, "Output format: text, json, markdown, bullets (default: markdown)"),
+        field("template", FieldType::String, false, "Template with ${key} placeholders"),
+        field("title", FieldType::String, false, "Optional title for the result"),
     ]
 }
 

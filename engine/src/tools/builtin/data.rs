@@ -9,17 +9,17 @@ use tokio::sync::Mutex;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder (same pattern as logic.rs)
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -88,16 +88,16 @@ data_tool! {
     name = "DB Read",
     description = "Reads data from relational database with filtering and pagination",
     inputs = [
-        field("query_params", "object", false, "Filter parameters: {column: value} for WHERE clause"),
+        field("query_params", FieldType::Object, false, "Filter parameters: {column: value} for WHERE clause"),
     ],
     outputs = [
-        field("rows", "array", false, "Array of matched rows (mode=all)"),
-        field("row", "object", false, "Single matched row (mode=one)"),
-        field("count", "number", true, "Number of rows returned"),
+        field("rows", FieldType::Array, false, "Array of matched rows (mode=all)"),
+        field("row", FieldType::Object, false, "Single matched row (mode=one)"),
+        field("count", FieldType::Number, true, "Number of rows returned"),
     ],
     config_fields = [
-        field("query", "string", true, "SQL query to execute"),
-        field("mode", "string", false, "Read mode: 'one' or 'all' (default: all)"),
+        field("query", FieldType::String, true, "SQL query to execute"),
+        field("mode", FieldType::String, false, "Read mode: 'one' or 'all' (default: all)"),
     ]
 }
 
@@ -172,16 +172,16 @@ data_tool! {
     name = "DB Write",
     description = "Writes data to relational database with automatic table creation",
     inputs = [
-        field("data", "object", true, "Row data to write"),
+        field("data", FieldType::Object, true, "Row data to write"),
     ],
     outputs = [
-        field("table", "string", true, "Target table name"),
-        field("action", "string", true, "Action performed: inserted or updated"),
-        field("id", "string", false, "Row ID of the written record"),
+        field("table", FieldType::String, true, "Target table name"),
+        field("action", FieldType::String, true, "Action performed: inserted or updated"),
+        field("id", FieldType::String, false, "Row ID of the written record"),
     ],
     config_fields = [
-        field("table", "string", true, "Target table name"),
-        field("mode", "string", false, "Write mode: 'insert' or 'upsert' (default: insert)"),
+        field("table", FieldType::String, true, "Target table name"),
+        field("mode", FieldType::String, false, "Write mode: 'insert' or 'upsert' (default: insert)"),
     ]
 }
 
@@ -259,15 +259,15 @@ data_tool! {
     name = "Storage Read",
     description = "Reads file from S3-compatible storage or generates presigned URL",
     inputs = [
-        field("path", "string", true, "Storage path/key to read"),
+        field("path", FieldType::String, true, "Storage path/key to read"),
     ],
     outputs = [
-        field("content", "string", false, "File content as text"),
-        field("path", "string", true, "Path that was read"),
-        field("found", "boolean", true, "Whether the file was found"),
+        field("content", FieldType::String, false, "File content as text"),
+        field("path", FieldType::String, true, "Path that was read"),
+        field("found", FieldType::Boolean, true, "Whether the file was found"),
     ],
     config_fields = [
-        field("mode", "string", false, "Read mode: 'read' or 'presign' (default: read)"),
+        field("mode", FieldType::String, false, "Read mode: 'read' or 'presign' (default: read)"),
     ]
 }
 
@@ -342,12 +342,12 @@ data_tool! {
     name = "Storage Write",
     description = "Writes file to S3-compatible storage",
     inputs = [
-        field("path", "string", true, "Storage path/key to write to"),
-        field("content", "string", true, "Content to write"),
+        field("path", FieldType::String, true, "Storage path/key to write to"),
+        field("content", FieldType::String, true, "Content to write"),
     ],
     outputs = [
-        field("path", "string", true, "Path that was written"),
-        field("bytes_written", "number", true, "Number of bytes written"),
+        field("path", FieldType::String, true, "Path that was written"),
+        field("bytes_written", FieldType::Number, true, "Number of bytes written"),
     ],
     config_fields = []
 }
@@ -409,16 +409,16 @@ data_tool! {
     name = "Vault Read",
     description = "Reads notes from the Knowledge Vault. Placeholder that returns empty results.",
     inputs = [
-        field("query", "string", false, "Search query for vault notes"),
-        field("path", "string", false, "Specific vault path to read"),
+        field("query", FieldType::String, false, "Search query for vault notes"),
+        field("path", FieldType::String, false, "Specific vault path to read"),
     ],
     outputs = [
-        field("notes", "array", true, "Matched vault notes"),
-        field("count", "number", true, "Number of notes returned"),
+        field("notes", FieldType::Array, true, "Matched vault notes"),
+        field("count", FieldType::Number, true, "Number of notes returned"),
     ],
     config_fields = [
-        field("folder", "string", false, "Vault folder to search in"),
-        field("limit", "number", false, "Maximum notes to return"),
+        field("folder", FieldType::String, false, "Vault folder to search in"),
+        field("limit", FieldType::Number, false, "Maximum notes to return"),
     ]
 }
 
@@ -449,16 +449,16 @@ data_tool! {
     name = "Vault Write",
     description = "Writes a note to the Knowledge Vault. Placeholder that acknowledges the write.",
     inputs = [
-        field("path", "string", true, "Vault path for the note"),
-        field("title", "string", false, "Note title"),
-        field("content", "string", true, "Note content"),
+        field("path", FieldType::String, true, "Vault path for the note"),
+        field("title", FieldType::String, false, "Note title"),
+        field("content", FieldType::String, true, "Note content"),
     ],
     outputs = [
-        field("path", "string", true, "Path where note was written"),
-        field("written", "boolean", true, "Whether write succeeded"),
+        field("path", FieldType::String, true, "Path where note was written"),
+        field("written", FieldType::Boolean, true, "Whether write succeeded"),
     ],
     config_fields = [
-        field("tags", "string", false, "Comma-separated tags"),
+        field("tags", FieldType::String, false, "Comma-separated tags"),
     ]
 }
 
@@ -492,16 +492,16 @@ data_tool! {
     name = "Entity Query",
     description = "Queries entities from the database with field extraction",
     inputs = [
-        field("entity_type", "string", true, "Entity type to query"),
-        field("filters", "object", false, "Filter conditions as {field: value}"),
+        field("entity_type", FieldType::String, true, "Entity type to query"),
+        field("filters", FieldType::Object, false, "Filter conditions as {field: value}"),
     ],
     outputs = [
-        field("entities", "array", true, "Matched entities"),
-        field("count", "number", true, "Number of entities returned"),
+        field("entities", FieldType::Array, true, "Matched entities"),
+        field("count", FieldType::Number, true, "Number of entities returned"),
     ],
     config_fields = [
-        field("limit", "number", false, "Maximum entities to return"),
-        field("order_by", "string", false, "Field to order by"),
+        field("limit", FieldType::Number, false, "Maximum entities to return"),
+        field("order_by", FieldType::String, false, "Field to order by"),
     ]
 }
 
@@ -557,13 +557,13 @@ data_tool! {
     name = "Entity Upsert",
     description = "Creates or updates an entity in the database",
     inputs = [
-        field("entity_type", "string", true, "Entity type"),
-        field("data", "object", true, "Entity field data"),
-        field("id", "string", false, "Entity ID (if updating)"),
+        field("entity_type", FieldType::String, true, "Entity type"),
+        field("data", FieldType::Object, true, "Entity field data"),
+        field("id", FieldType::String, false, "Entity ID (if updating)"),
     ],
     outputs = [
-        field("id", "string", true, "Entity ID"),
-        field("action", "string", true, "Action performed: created or updated"),
+        field("id", FieldType::String, true, "Entity ID"),
+        field("action", FieldType::String, true, "Action performed: created or updated"),
     ],
     config_fields = []
 }
@@ -1238,27 +1238,27 @@ data_tool! {
     name = "Web Scrape",
     description = "Searches the web or fetches URLs. Supports query-based search (Google/Bing/DuckDuckGo) and direct URL scraping.",
     inputs = [
-        field("query", "string", false, "Search query (searches Google/Bing/DuckDuckGo)"),
-        field("url", "string", false, "Direct URL to fetch (alternative to query)"),
+        field("query", FieldType::String, false, "Search query (searches Google/Bing/DuckDuckGo)"),
+        field("url", FieldType::String, false, "Direct URL to fetch (alternative to query)"),
     ],
     outputs = [
-        field("results", "array", true, "Array of {url, title, content, status_code, success, source}"),
-        field("content", "string", false, "Page content (single URL mode)"),
-        field("status", "number", false, "HTTP status code (single URL mode)"),
-        field("url", "string", false, "URL fetched (single URL mode)"),
-        field("cached", "boolean", false, "Whether the response came from cache"),
-        field("links", "array", false, "Extracted links if URL is a SERP"),
+        field("results", FieldType::Array, true, "Array of {url, title, content, status_code, success, source}"),
+        field("content", FieldType::String, false, "Page content (single URL mode)"),
+        field("status", FieldType::Number, false, "HTTP status code (single URL mode)"),
+        field("url", FieldType::String, false, "URL fetched (single URL mode)"),
+        field("cached", FieldType::Boolean, false, "Whether the response came from cache"),
+        field("links", FieldType::Array, false, "Extracted links if URL is a SERP"),
     ],
     config_fields = [
-        field("search_engines", "string", false, "Comma-separated engines: google,bing,duckduckgo (default google)"),
-        field("max_results_per_query", "number", false, "Max results per search engine (default 5)"),
-        field("max_content_length", "number", false, "Max chars per result content (default 10000)"),
-        field("date_range", "string", false, "Date range filter: day, week, month, year"),
-        field("max_retries", "number", false, "Max retries on failure (default 3)"),
-        field("timeout_seconds", "number", false, "Request timeout in seconds (default 30)"),
-        field("cache_ttl_seconds", "number", false, "Cache TTL in seconds (default 300)"),
-        field("output_schema", "string", false, "JSON schema for LLM-based structured extraction"),
-        field("extract_links", "boolean", false, "Whether to extract links from SERP pages (default false)"),
+        field("search_engines", FieldType::String, false, "Comma-separated engines: google,bing,duckduckgo (default google)"),
+        field("max_results_per_query", FieldType::Number, false, "Max results per search engine (default 5)"),
+        field("max_content_length", FieldType::Number, false, "Max chars per result content (default 10000)"),
+        field("date_range", FieldType::String, false, "Date range filter: day, week, month, year"),
+        field("max_retries", FieldType::Number, false, "Max retries on failure (default 3)"),
+        field("timeout_seconds", FieldType::Number, false, "Request timeout in seconds (default 30)"),
+        field("cache_ttl_seconds", FieldType::Number, false, "Cache TTL in seconds (default 300)"),
+        field("output_schema", FieldType::String, false, "JSON schema for LLM-based structured extraction"),
+        field("extract_links", FieldType::Boolean, false, "Whether to extract links from SERP pages (default false)"),
     ]
 }
 
@@ -1450,11 +1450,11 @@ data_tool! {
     name = "HTML to Markdown",
     description = "Converts HTML content to clean Markdown by stripping tags and converting semantic elements",
     inputs = [
-        field("html", "string", true, "HTML content to convert"),
+        field("html", FieldType::String, true, "HTML content to convert"),
     ],
     outputs = [
-        field("markdown", "string", true, "Converted markdown text"),
-        field("length", "number", true, "Length of markdown output"),
+        field("markdown", FieldType::String, true, "Converted markdown text"),
+        field("length", FieldType::Number, true, "Length of markdown output"),
     ],
     config_fields = []
 }

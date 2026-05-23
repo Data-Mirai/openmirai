@@ -1,5 +1,36 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+// ---------------------------------------------------------------------------
+// FieldType
+// ---------------------------------------------------------------------------
+
+/// Logical type of a tool field. Replaces free-form strings to prevent typos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldType {
+    String,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Integer,
+}
+
+impl fmt::Display for FieldType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String => write!(f, "string"),
+            Self::Number => write!(f, "number"),
+            Self::Boolean => write!(f, "boolean"),
+            Self::Array => write!(f, "array"),
+            Self::Object => write!(f, "object"),
+            Self::Integer => write!(f, "integer"),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ToolField
@@ -9,8 +40,8 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolField {
     pub name: String,
-    /// Logical type: `"string"`, `"number"`, `"boolean"`, `"object"`, `"array"`.
-    pub field_type: String,
+    /// Logical type of this field.
+    pub field_type: FieldType,
     pub required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -52,14 +83,16 @@ mod tests {
     fn tool_field_serde_roundtrip() {
         let field = ToolField {
             name: "prompt".into(),
-            field_type: "string".into(),
+            field_type: FieldType::String,
             required: true,
             description: Some("The user prompt".into()),
             default: None,
         };
         let json = serde_json::to_string(&field).unwrap();
+        assert!(json.contains("\"field_type\":\"string\""));
         let back: ToolField = serde_json::from_str(&json).unwrap();
         assert_eq!(back.name, "prompt");
+        assert_eq!(back.field_type, FieldType::String);
         assert!(back.required);
         assert!(back.default.is_none());
     }
@@ -68,7 +101,7 @@ mod tests {
     fn tool_field_with_default() {
         let field = ToolField {
             name: "temperature".into(),
-            field_type: "number".into(),
+            field_type: FieldType::Number,
             required: false,
             description: None,
             default: Some(json!(0.7)),
@@ -77,6 +110,29 @@ mod tests {
         assert!(json.contains("0.7"));
         let back: ToolField = serde_json::from_str(&json).unwrap();
         assert_eq!(back.default, Some(json!(0.7)));
+    }
+
+    #[test]
+    fn field_type_rejects_invalid() {
+        let result: Result<FieldType, _> = serde_json::from_str("\"stirng\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn field_type_all_variants_roundtrip() {
+        for (variant, expected) in [
+            (FieldType::String, "\"string\""),
+            (FieldType::Number, "\"number\""),
+            (FieldType::Boolean, "\"boolean\""),
+            (FieldType::Array, "\"array\""),
+            (FieldType::Object, "\"object\""),
+            (FieldType::Integer, "\"integer\""),
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected);
+            let back: FieldType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, variant);
+        }
     }
 
     #[test]
@@ -89,14 +145,14 @@ mod tests {
             category: "logic".into(),
             inputs: vec![ToolField {
                 name: "field".into(),
-                field_type: "string".into(),
+                field_type: FieldType::String,
                 required: true,
                 description: None,
                 default: None,
             }],
             outputs: vec![ToolField {
                 name: "result".into(),
-                field_type: "boolean".into(),
+                field_type: FieldType::Boolean,
                 required: true,
                 description: None,
                 default: None,

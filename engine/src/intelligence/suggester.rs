@@ -251,10 +251,11 @@ fn strip_code_fences(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::runner::TraceStatus;
     use crate::intelligence::tracer::TokenUsage;
     use std::collections::HashMap;
 
-    fn make_trace(node_id: &str, status: &str, duration_ms: u64) -> TraceRecord {
+    fn make_trace(node_id: &str, status: TraceStatus, duration_ms: u64) -> TraceRecord {
         TraceRecord {
             node_id: node_id.to_string(),
             tool_type: "ai/llm_call".to_string(),
@@ -266,8 +267,8 @@ mod tests {
                 input: 100,
                 output: 50,
             }),
-            status: status.to_string(),
-            error: if status == "error" {
+            status,
+            error: if status == TraceStatus::Error {
                 Some("timeout".to_string())
             } else {
                 None
@@ -388,7 +389,7 @@ mod tests {
     #[test]
     fn build_prompt_includes_graph_and_traces() {
         let graph = sample_graph();
-        let traces = vec![make_trace("n1", "ok", 100)];
+        let traces = vec![make_trace("n1", TraceStatus::Ok, 100)];
         let prompt = Suggester::build_prompt(&graph, &traces);
         assert!(prompt.contains("n1"));
         assert!(prompt.contains("GRAPH:"));

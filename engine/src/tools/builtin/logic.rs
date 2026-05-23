@@ -6,17 +6,17 @@ use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -85,12 +85,12 @@ logic_tool! {
     name = "Condition",
     description = "Evaluate a boolean condition on a field value",
     inputs = [
-        field("field", "string", true, "Field name to evaluate"),
-        field("operator", "string", true, "Comparison operator: eq, neq, gt, lt, gte, lte, in, contains"),
-        field("value", "object", true, "Value to compare against"),
+        field("field", FieldType::String, true, "Field name to evaluate"),
+        field("operator", FieldType::String, true, "Comparison operator: eq, neq, gt, lt, gte, lte, in, contains"),
+        field("value", FieldType::Object, true, "Value to compare against"),
     ],
     outputs = [
-        field("result", "boolean", true, "Evaluation result"),
+        field("result", FieldType::Boolean, true, "Evaluation result"),
     ],
     config_fields = []
 }
@@ -173,10 +173,10 @@ logic_tool! {
     description = "Pause execution for a specified duration",
     inputs = [],
     outputs = [
-        field("waited_seconds", "number", true, "Actual seconds waited"),
+        field("waited_seconds", FieldType::Number, true, "Actual seconds waited"),
     ],
     config_fields = [
-        field("delay_seconds", "number", true, "How long to wait"),
+        field("delay_seconds", FieldType::Number, true, "How long to wait"),
     ]
 }
 
@@ -213,10 +213,10 @@ logic_tool! {
     name = "Merge",
     description = "Pass-through node that forwards its input data",
     inputs = [
-        field("data", "object", false, "Data to forward"),
+        field("data", FieldType::Object, false, "Data to forward"),
     ],
     outputs = [
-        field("data", "object", true, "Forwarded data"),
+        field("data", FieldType::Object, true, "Forwarded data"),
     ],
     config_fields = []
 }
@@ -246,13 +246,13 @@ logic_tool! {
     name = "Loop",
     description = "Iterate over an array of items one at a time",
     inputs = [
-        field("items", "array", true, "Array of items to iterate"),
-        field("current_index", "number", false, "Current iteration index (default 0)"),
+        field("items", FieldType::Array, true, "Array of items to iterate"),
+        field("current_index", FieldType::Number, false, "Current iteration index (default 0)"),
     ],
     outputs = [
-        field("current_item", "object", true, "Item at current index"),
-        field("current_index", "number", true, "Index that was processed"),
-        field("done", "boolean", true, "Whether iteration is complete"),
+        field("current_item", FieldType::Object, true, "Item at current index"),
+        field("current_index", FieldType::Number, true, "Index that was processed"),
+        field("done", FieldType::Boolean, true, "Whether iteration is complete"),
     ],
     config_fields = []
 }
@@ -301,15 +301,15 @@ logic_tool! {
     name = "Switch (Router)",
     description = "Evaluates value against N cases. Routes to matched case or default",
     inputs = [
-        field("value", "object", true, "Value to match against cases"),
+        field("value", FieldType::Object, true, "Value to match against cases"),
     ],
     outputs = [
-        field("matched_case", "object", true, "The matched case value or default"),
-        field("case_index", "number", true, "Index of matched case (-1 if default)"),
+        field("matched_case", FieldType::Object, true, "The matched case value or default"),
+        field("case_index", FieldType::Number, true, "Index of matched case (-1 if default)"),
     ],
     config_fields = [
-        field("cases", "array", false, "Array of case values to match against"),
-        field("default_case", "object", false, "Default value if no case matches"),
+        field("cases", FieldType::Array, false, "Array of case values to match against"),
+        field("default_case", FieldType::Object, false, "Default value if no case matches"),
     ]
 }
 
@@ -355,17 +355,17 @@ logic_tool! {
     name = "Human Input",
     description = "Pauses execution and waits for human decision. GraphRunner intercepts this tool type.",
     inputs = [
-        field("prompt", "string", false, "Question or context for the user"),
-        field("options", "array", false, "Predefined options if applicable"),
+        field("prompt", FieldType::String, false, "Question or context for the user"),
+        field("options", FieldType::Array, false, "Predefined options if applicable"),
     ],
     outputs = [
-        field("response", "object", true, "User response"),
-        field("responded_by", "string", true, "Identifier of user who responded"),
-        field("response_time_ms", "number", true, "Time taken to respond in ms"),
+        field("response", FieldType::Object, true, "User response"),
+        field("responded_by", FieldType::String, true, "Identifier of user who responded"),
+        field("response_time_ms", FieldType::Number, true, "Time taken to respond in ms"),
     ],
     config_fields = [
-        field("prompt", "string", false, "Default prompt text"),
-        field("timeout_minutes", "number", false, "Optional timeout in minutes"),
+        field("prompt", FieldType::String, false, "Default prompt text"),
+        field("timeout_minutes", FieldType::Number, false, "Optional timeout in minutes"),
     ]
 }
 
@@ -408,16 +408,16 @@ logic_tool! {
     name = "Deadline",
     description = "Evaluates if a deadline timestamp has been exceeded",
     inputs = [
-        field("reference_time", "string", false, "ISO timestamp from which to count"),
+        field("reference_time", FieldType::String, false, "ISO timestamp from which to count"),
     ],
     outputs = [
-        field("expired", "boolean", true, "True if deadline has passed"),
-        field("remaining_hours", "number", true, "Hours remaining (negative if expired)"),
-        field("deadline_at", "string", true, "ISO timestamp of when the deadline expires"),
+        field("expired", FieldType::Boolean, true, "True if deadline has passed"),
+        field("remaining_hours", FieldType::Number, true, "Hours remaining (negative if expired)"),
+        field("deadline_at", FieldType::String, true, "ISO timestamp of when the deadline expires"),
     ],
     config_fields = [
-        field("hours", "number", false, "Deadline duration in hours (default 48)"),
-        field("static_reference_time", "string", false, "Static reference timestamp (ISO)"),
+        field("hours", FieldType::Number, false, "Deadline duration in hours (default 48)"),
+        field("static_reference_time", FieldType::String, false, "Static reference timestamp (ISO)"),
     ]
 }
 

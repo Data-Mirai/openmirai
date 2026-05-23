@@ -9,17 +9,17 @@ use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder (same pattern as logic.rs)
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -90,17 +90,17 @@ fs_tool! {
     description = "Reads a file and returns its contents with numbered lines. Supports offset/limit for large files.",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Absolute or relative path to the file"),
+        field("path", FieldType::String, true, "Absolute or relative path to the file"),
     ],
     outputs = [
-        field("content", "string", true, "File content with numbered lines"),
-        field("lines", "number", true, "Total number of lines in the file"),
-        field("size", "number", true, "File size in bytes"),
-        field("path", "string", true, "Resolved absolute path"),
+        field("content", FieldType::String, true, "File content with numbered lines"),
+        field("lines", FieldType::Number, true, "Total number of lines in the file"),
+        field("size", FieldType::Number, true, "File size in bytes"),
+        field("path", FieldType::String, true, "Resolved absolute path"),
     ],
     config_fields = [
-        field("offset", "number", false, "Line number to start reading from (0-based)"),
-        field("limit", "number", false, "Maximum number of lines to read"),
+        field("offset", FieldType::Number, false, "Line number to start reading from (0-based)"),
+        field("limit", FieldType::Number, false, "Maximum number of lines to read"),
     ]
 }
 
@@ -188,13 +188,13 @@ fs_tool! {
     description = "Creates a new file or overwrites an existing one with the provided content.",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Absolute or relative path for the file"),
-        field("content", "string", true, "Content to write"),
+        field("path", FieldType::String, true, "Absolute or relative path for the file"),
+        field("content", FieldType::String, true, "Content to write"),
     ],
     outputs = [
-        field("path", "string", true, "Resolved absolute path"),
-        field("bytes_written", "number", true, "Number of bytes written"),
-        field("created", "boolean", true, "True if the file was newly created"),
+        field("path", FieldType::String, true, "Resolved absolute path"),
+        field("bytes_written", FieldType::Number, true, "Number of bytes written"),
+        field("created", FieldType::Boolean, true, "True if the file was newly created"),
     ],
     config_fields = []
 }
@@ -270,14 +270,14 @@ fs_tool! {
     description = "Lists the contents of a directory with file type, size, and modification time.",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Directory path to list"),
+        field("path", FieldType::String, true, "Directory path to list"),
     ],
     outputs = [
-        field("entries", "array", true, "List of {name, type, size, modified} entries"),
-        field("count", "number", true, "Number of entries"),
+        field("entries", FieldType::Array, true, "List of {name, type, size, modified} entries"),
+        field("count", FieldType::Number, true, "Number of entries"),
     ],
     config_fields = [
-        field("show_hidden", "boolean", false, "Include hidden files (starting with '.')"),
+        field("show_hidden", FieldType::Boolean, false, "Include hidden files (starting with '.')"),
     ]
 }
 
@@ -383,15 +383,15 @@ fs_tool! {
     description = "Finds files matching a glob pattern. Returns paths sorted by modification time (newest first).",
     category = "filesystem",
     inputs = [
-        field("pattern", "string", true, "Glob pattern (e.g. '**/*.py')"),
+        field("pattern", FieldType::String, true, "Glob pattern (e.g. '**/*.py')"),
     ],
     outputs = [
-        field("files", "array", true, "List of matching file paths"),
-        field("count", "number", true, "Number of matches"),
+        field("files", FieldType::Array, true, "List of matching file paths"),
+        field("count", FieldType::Number, true, "Number of matches"),
     ],
     config_fields = [
-        field("path", "string", false, "Base directory to search in"),
-        field("max_results", "number", false, "Maximum number of results"),
+        field("path", FieldType::String, false, "Base directory to search in"),
+        field("max_results", FieldType::Number, false, "Maximum number of results"),
     ]
 }
 
@@ -480,19 +480,19 @@ fs_tool! {
     description = "Searches file contents using regex. Returns matching lines with file paths and line numbers.",
     category = "filesystem",
     inputs = [
-        field("pattern", "string", true, "Regex pattern to search for"),
+        field("pattern", FieldType::String, true, "Regex pattern to search for"),
     ],
     outputs = [
-        field("matches", "array", true, "List of {file, line, content} matches"),
-        field("files", "array", true, "Unique files with matches"),
-        field("count", "number", true, "Total number of matches"),
+        field("matches", FieldType::Array, true, "List of {file, line, content} matches"),
+        field("files", FieldType::Array, true, "Unique files with matches"),
+        field("count", FieldType::Number, true, "Total number of matches"),
     ],
     config_fields = [
-        field("path", "string", false, "Directory or file to search in"),
-        field("glob", "string", false, "Glob filter for files (e.g. '*.py')"),
-        field("max_results", "number", false, "Maximum matches to return"),
-        field("case_insensitive", "boolean", false, "Case-insensitive search"),
-        field("context_lines", "number", false, "Lines of context around each match"),
+        field("path", FieldType::String, false, "Directory or file to search in"),
+        field("glob", FieldType::String, false, "Glob filter for files (e.g. '*.py')"),
+        field("max_results", FieldType::Number, false, "Maximum matches to return"),
+        field("case_insensitive", FieldType::Boolean, false, "Case-insensitive search"),
+        field("context_lines", FieldType::Number, false, "Lines of context around each match"),
     ]
 }
 
@@ -691,17 +691,17 @@ fs_tool! {
     description = "Performs exact string replacement in a file. The old_string must match exactly. By default replaces only the first occurrence.",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Path to the file to edit"),
-        field("old_string", "string", true, "Exact string to find"),
-        field("new_string", "string", true, "Replacement string"),
+        field("path", FieldType::String, true, "Path to the file to edit"),
+        field("old_string", FieldType::String, true, "Exact string to find"),
+        field("new_string", FieldType::String, true, "Replacement string"),
     ],
     outputs = [
-        field("path", "string", true, "Resolved absolute path"),
-        field("replacements", "number", true, "Number of replacements made"),
-        field("diff", "string", true, "Summary of changes"),
+        field("path", FieldType::String, true, "Resolved absolute path"),
+        field("replacements", FieldType::Number, true, "Number of replacements made"),
+        field("diff", FieldType::String, true, "Summary of changes"),
     ],
     config_fields = [
-        field("replace_all", "boolean", false, "Replace all occurrences instead of just the first"),
+        field("replace_all", FieldType::Boolean, false, "Replace all occurrences instead of just the first"),
     ]
 }
 
@@ -820,13 +820,13 @@ fs_tool! {
     description = "Copies a file from source to destination",
     category = "filesystem",
     inputs = [
-        field("source", "string", true, "Source file path"),
-        field("destination", "string", true, "Destination file path"),
+        field("source", FieldType::String, true, "Source file path"),
+        field("destination", FieldType::String, true, "Destination file path"),
     ],
     outputs = [
-        field("source", "string", true, "Resolved source path"),
-        field("destination", "string", true, "Resolved destination path"),
-        field("bytes_copied", "number", true, "Number of bytes copied"),
+        field("source", FieldType::String, true, "Resolved source path"),
+        field("destination", FieldType::String, true, "Resolved destination path"),
+        field("bytes_copied", FieldType::Number, true, "Number of bytes copied"),
     ],
     config_fields = []
 }
@@ -902,12 +902,12 @@ fs_tool! {
     description = "Moves or renames a file or directory",
     category = "filesystem",
     inputs = [
-        field("source", "string", true, "Source path"),
-        field("destination", "string", true, "Destination path"),
+        field("source", FieldType::String, true, "Source path"),
+        field("destination", FieldType::String, true, "Destination path"),
     ],
     outputs = [
-        field("source", "string", true, "Original path"),
-        field("destination", "string", true, "New path"),
+        field("source", FieldType::String, true, "Original path"),
+        field("destination", FieldType::String, true, "New path"),
     ],
     config_fields = []
 }
@@ -981,11 +981,11 @@ fs_tool! {
     description = "Deletes a file or directory (recursive for directories)",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Path to delete"),
+        field("path", FieldType::String, true, "Path to delete"),
     ],
     outputs = [
-        field("path", "string", true, "Path that was deleted"),
-        field("deleted", "boolean", true, "Whether deletion succeeded"),
+        field("path", FieldType::String, true, "Path that was deleted"),
+        field("deleted", FieldType::Boolean, true, "Whether deletion succeeded"),
     ],
     config_fields = []
 }
@@ -1041,11 +1041,11 @@ fs_tool! {
     description = "Creates a directory and all parent directories as needed",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Directory path to create"),
+        field("path", FieldType::String, true, "Directory path to create"),
     ],
     outputs = [
-        field("path", "string", true, "Created directory path"),
-        field("created", "boolean", true, "Whether directory was created"),
+        field("path", FieldType::String, true, "Created directory path"),
+        field("created", FieldType::Boolean, true, "Whether directory was created"),
     ],
     config_fields = []
 }
@@ -1098,16 +1098,16 @@ fs_tool! {
     description = "Displays a recursive directory listing with indentation",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Root directory path"),
+        field("path", FieldType::String, true, "Root directory path"),
     ],
     outputs = [
-        field("tree", "string", true, "Formatted directory tree"),
-        field("files", "number", true, "Total file count"),
-        field("dirs", "number", true, "Total directory count"),
+        field("tree", FieldType::String, true, "Formatted directory tree"),
+        field("files", FieldType::Number, true, "Total file count"),
+        field("dirs", FieldType::Number, true, "Total directory count"),
     ],
     config_fields = [
-        field("max_depth", "number", false, "Maximum depth to traverse (default 5)"),
-        field("show_hidden", "boolean", false, "Include hidden files"),
+        field("max_depth", FieldType::Number, false, "Maximum depth to traverse (default 5)"),
+        field("show_hidden", FieldType::Boolean, false, "Include hidden files"),
     ]
 }
 
@@ -1235,15 +1235,15 @@ fs_tool! {
     description = "Returns metadata about a file: size, modified time, type, permissions",
     category = "filesystem",
     inputs = [
-        field("path", "string", true, "Path to get info for"),
+        field("path", FieldType::String, true, "Path to get info for"),
     ],
     outputs = [
-        field("path", "string", true, "Resolved absolute path"),
-        field("size", "number", true, "Size in bytes"),
-        field("modified", "number", true, "Last modified timestamp (seconds since epoch)"),
-        field("is_file", "boolean", true, "Whether path is a file"),
-        field("is_dir", "boolean", true, "Whether path is a directory"),
-        field("permissions", "string", true, "Permission mode (octal on unix)"),
+        field("path", FieldType::String, true, "Resolved absolute path"),
+        field("size", FieldType::Number, true, "Size in bytes"),
+        field("modified", FieldType::Number, true, "Last modified timestamp (seconds since epoch)"),
+        field("is_file", FieldType::Boolean, true, "Whether path is a file"),
+        field("is_dir", FieldType::Boolean, true, "Whether path is a directory"),
+        field("permissions", FieldType::String, true, "Permission mode (octal on unix)"),
     ],
     config_fields = []
 }

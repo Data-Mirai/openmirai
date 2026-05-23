@@ -6,17 +6,17 @@ use tokio::process::Command;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -133,15 +133,15 @@ git_tool! {
     name = "Git Status",
     description = "Shows the working tree status: staged, modified, and untracked files.",
     inputs = [
-        field("path", "string", false, "Repository path (defaults to cwd)"),
+        field("path", FieldType::String, false, "Repository path (defaults to cwd)"),
     ],
     outputs = [
-        field("branch", "string", true, "Current branch name"),
-        field("staged", "array", true, "Staged files"),
-        field("modified", "array", true, "Modified but unstaged files"),
-        field("untracked", "array", true, "Untracked files"),
-        field("clean", "boolean", true, "True if working tree is clean"),
-        field("raw", "string", true, "Raw git status output"),
+        field("branch", FieldType::String, true, "Current branch name"),
+        field("staged", FieldType::Array, true, "Staged files"),
+        field("modified", FieldType::Array, true, "Modified but unstaged files"),
+        field("untracked", FieldType::Array, true, "Untracked files"),
+        field("clean", FieldType::Boolean, true, "True if working tree is clean"),
+        field("raw", FieldType::String, true, "Raw git status output"),
     ],
     config_fields = []
 }
@@ -215,18 +215,18 @@ git_tool! {
     name = "Git Diff",
     description = "Shows differences in the working tree, staged changes, or between commits.",
     inputs = [
-        field("path", "string", false, "Repository path (defaults to cwd)"),
+        field("path", FieldType::String, false, "Repository path (defaults to cwd)"),
     ],
     outputs = [
-        field("diff", "string", true, "Diff output"),
-        field("files_changed", "number", true, "Number of files changed"),
-        field("insertions", "number", true, "Lines added"),
-        field("deletions", "number", true, "Lines removed"),
+        field("diff", FieldType::String, true, "Diff output"),
+        field("files_changed", FieldType::Number, true, "Number of files changed"),
+        field("insertions", FieldType::Number, true, "Lines added"),
+        field("deletions", FieldType::Number, true, "Lines removed"),
     ],
     config_fields = [
-        field("staged", "boolean", false, "Show staged changes (--cached)"),
-        field("ref", "string", false, "Compare against ref (e.g. 'HEAD~3', 'main')"),
-        field("file", "string", false, "Limit diff to specific file"),
+        field("staged", FieldType::Boolean, false, "Show staged changes (--cached)"),
+        field("ref", FieldType::String, false, "Compare against ref (e.g. 'HEAD~3', 'main')"),
+        field("file", FieldType::String, false, "Limit diff to specific file"),
     ]
 }
 
@@ -329,17 +329,17 @@ git_tool! {
     name = "Git Log",
     description = "Shows the commit history with hash, author, date, and message.",
     inputs = [
-        field("path", "string", false, "Repository path (defaults to cwd)"),
+        field("path", FieldType::String, false, "Repository path (defaults to cwd)"),
     ],
     outputs = [
-        field("commits", "array", true, "List of {hash, author, date, message} entries"),
-        field("count", "number", true, "Number of commits returned"),
-        field("raw", "string", true, "Raw log output"),
+        field("commits", FieldType::Array, true, "List of {hash, author, date, message} entries"),
+        field("count", FieldType::Number, true, "Number of commits returned"),
+        field("raw", FieldType::String, true, "Raw log output"),
     ],
     config_fields = [
-        field("limit", "number", false, "Maximum commits to return"),
-        field("author", "string", false, "Filter by author name"),
-        field("file", "string", false, "Show history for specific file"),
+        field("limit", FieldType::Number, false, "Maximum commits to return"),
+        field("author", FieldType::String, false, "Filter by author name"),
+        field("file", FieldType::String, false, "Show history for specific file"),
     ]
 }
 
@@ -419,17 +419,17 @@ git_tool! {
     name = "Git Commit",
     description = "Stages specified files and creates a commit. Never amends or force-pushes.",
     inputs = [
-        field("message", "string", true, "Commit message"),
-        field("files", "array", false, "Files to stage (if empty, commits already-staged files)"),
+        field("message", FieldType::String, true, "Commit message"),
+        field("files", FieldType::Array, false, "Files to stage (if empty, commits already-staged files)"),
     ],
     outputs = [
-        field("hash", "string", true, "Commit hash"),
-        field("message", "string", true, "Commit message used"),
-        field("files_committed", "number", true, "Number of files in the commit"),
-        field("success", "boolean", true, "Whether commit succeeded"),
+        field("hash", FieldType::String, true, "Commit hash"),
+        field("message", FieldType::String, true, "Commit message used"),
+        field("files_committed", FieldType::Number, true, "Number of files in the commit"),
+        field("success", FieldType::Boolean, true, "Whether commit succeeded"),
     ],
     config_fields = [
-        field("path", "string", false, "Repository path (defaults to cwd)"),
+        field("path", FieldType::String, false, "Repository path (defaults to cwd)"),
     ]
 }
 

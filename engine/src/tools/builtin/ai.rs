@@ -7,17 +7,17 @@ use tracing::{info, warn};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder (same pattern as logic.rs)
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -86,24 +86,24 @@ ai_tool! {
     name = "LLM Call",
     description = "Processes session data through an LLM to produce grounded responses",
     inputs = [
-        field("prompt", "string", false, "Instruction for the LLM on how to process the data"),
+        field("prompt", FieldType::String, false, "Instruction for the LLM on how to process the data"),
     ],
     outputs = [
-        field("response", "string", true, "Raw LLM text response"),
-        field("model", "string", true, "Model used"),
-        field("tokens_input", "number", true, "Input tokens used"),
-        field("tokens_output", "number", true, "Output tokens used"),
-        field("structured_output", "object", false, "Parsed JSON when output_schema is defined"),
-        field("schema_valid", "boolean", false, "Whether response matched output_schema"),
+        field("response", FieldType::String, true, "Raw LLM text response"),
+        field("model", FieldType::String, true, "Model used"),
+        field("tokens_input", FieldType::Number, true, "Input tokens used"),
+        field("tokens_output", FieldType::Number, true, "Output tokens used"),
+        field("structured_output", FieldType::Object, false, "Parsed JSON when output_schema is defined"),
+        field("schema_valid", FieldType::Boolean, false, "Whether response matched output_schema"),
     ],
     config_fields = [
-        field("model", "string", false, "LLM model identifier"),
-        field("temperature", "number", false, "Sampling temperature"),
-        field("max_tokens", "number", false, "Max tokens to generate"),
-        field("system_prompt", "string", false, "Node-level system prompt"),
-        field("output_schema", "string", false, "JSON Schema to enforce structured output"),
-        field("max_retries", "number", false, "Retries for schema validation (default 2)"),
-        field("max_context_length", "number", false, "Max chars for session context (default 12000)"),
+        field("model", FieldType::String, false, "LLM model identifier"),
+        field("temperature", FieldType::Number, false, "Sampling temperature"),
+        field("max_tokens", FieldType::Number, false, "Max tokens to generate"),
+        field("system_prompt", FieldType::String, false, "Node-level system prompt"),
+        field("output_schema", FieldType::String, false, "JSON Schema to enforce structured output"),
+        field("max_retries", FieldType::Number, false, "Retries for schema validation (default 2)"),
+        field("max_context_length", FieldType::Number, false, "Max chars for session context (default 12000)"),
     ]
 }
 
@@ -290,14 +290,14 @@ ai_tool! {
     name = "Generate Embeddings",
     description = "Generates vector embedding from text input",
     inputs = [
-        field("text", "string", true, "Text to generate embedding for"),
+        field("text", FieldType::String, true, "Text to generate embedding for"),
     ],
     outputs = [
-        field("embedding", "array", true, "Embedding vector"),
-        field("dimensions", "number", true, "Vector dimension count"),
+        field("embedding", FieldType::Array, true, "Embedding vector"),
+        field("dimensions", FieldType::Number, true, "Vector dimension count"),
     ],
     config_fields = [
-        field("model", "string", false, "Embedding model to use"),
+        field("model", FieldType::String, false, "Embedding model to use"),
     ]
 }
 
@@ -612,14 +612,14 @@ ai_tool! {
     name = "Transcribe Audio",
     description = "Transcribes audio content using an LLM to describe/transcribe the file",
     inputs = [
-        field("file_path", "string", true, "Path to the audio file"),
+        field("file_path", FieldType::String, true, "Path to the audio file"),
     ],
     outputs = [
-        field("text", "string", true, "Transcription text"),
-        field("duration_seconds", "number", true, "Audio duration in seconds"),
+        field("text", FieldType::String, true, "Transcription text"),
+        field("duration_seconds", FieldType::Number, true, "Audio duration in seconds"),
     ],
     config_fields = [
-        field("model", "string", false, "Model to use for transcription"),
+        field("model", FieldType::String, false, "Model to use for transcription"),
     ]
 }
 

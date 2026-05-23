@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -69,54 +69,93 @@ pub enum HookResult {
 }
 
 /// Seven interception points during graph execution.
+///
+/// All methods have default implementations that return [`HookResult::Continue`],
+/// so implementors only need to override the hooks they care about.
+///
+/// ```ignore
+/// use datamirai_engine::{HookHandler, HookResult, ToolError};
+/// use datamirai_engine::core::graph::NodeDef;
+/// use datamirai_engine::core::context::ExecutionContext;
+///
+/// struct MyHook;
+///
+/// #[async_trait::async_trait]
+/// impl HookHandler for MyHook {
+///     // Only override on_error — the other 6 methods use defaults.
+///     async fn on_error(
+///         &self,
+///         _node: &NodeDef,
+///         error: &ToolError,
+///         _ctx: &dyn ExecutionContext,
+///     ) -> HookResult {
+///         eprintln!("Error: {error}");
+///         HookResult::Continue
+///     }
+/// }
+/// ```
 #[async_trait]
 pub trait HookHandler: Send + Sync {
     async fn on_graph_start(
         &self,
-        graph: &GraphDef,
-        ctx: &dyn ExecutionContext,
-    ) -> HookResult;
+        _graph: &GraphDef,
+        _ctx: &dyn ExecutionContext,
+    ) -> HookResult {
+        HookResult::Continue
+    }
 
     async fn on_graph_end(
         &self,
-        graph: &GraphDef,
-        state: &SharedState,
-        ctx: &dyn ExecutionContext,
-    ) -> HookResult;
+        _graph: &GraphDef,
+        _state: &SharedState,
+        _ctx: &dyn ExecutionContext,
+    ) -> HookResult {
+        HookResult::Continue
+    }
 
     async fn pre_block_exec(
         &self,
-        node: &NodeDef,
-        inputs: &mut HashMap<String, Value>,
-        ctx: &dyn ExecutionContext,
-    ) -> HookResult;
+        _node: &NodeDef,
+        _inputs: &mut HashMap<String, Value>,
+        _ctx: &dyn ExecutionContext,
+    ) -> HookResult {
+        HookResult::Continue
+    }
 
     async fn post_block_exec(
         &self,
-        node: &NodeDef,
-        output: &mut HashMap<String, Value>,
-        ctx: &dyn ExecutionContext,
-    ) -> HookResult;
+        _node: &NodeDef,
+        _output: &mut HashMap<String, Value>,
+        _ctx: &dyn ExecutionContext,
+    ) -> HookResult {
+        HookResult::Continue
+    }
 
     async fn pre_llm_call(
         &self,
-        node: &NodeDef,
-        ctx: &dyn ExecutionContext,
-    ) -> HookResult;
+        _node: &NodeDef,
+        _ctx: &dyn ExecutionContext,
+    ) -> HookResult {
+        HookResult::Continue
+    }
 
     async fn post_llm_call(
         &self,
-        node: &NodeDef,
-        response: &mut Value,
-        ctx: &dyn ExecutionContext,
-    ) -> HookResult;
+        _node: &NodeDef,
+        _response: &mut Value,
+        _ctx: &dyn ExecutionContext,
+    ) -> HookResult {
+        HookResult::Continue
+    }
 
     async fn on_error(
         &self,
-        node: &NodeDef,
-        error: &ToolError,
-        ctx: &dyn ExecutionContext,
-    ) -> HookResult;
+        _node: &NodeDef,
+        _error: &ToolError,
+        _ctx: &dyn ExecutionContext,
+    ) -> HookResult {
+        HookResult::Continue
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,12 +277,30 @@ pub enum ExecutionStatus {
     Interrupted,
 }
 
+/// Status of a single node execution within a trace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceStatus {
+    Ok,
+    Error,
+    Skipped,
+}
+
+impl std::fmt::Display for TraceStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ok => write!(f, "ok"),
+            Self::Error => write!(f, "error"),
+            Self::Skipped => write!(f, "skipped"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceEntry {
     pub node_id: String,
     pub tool_type: String,
-    /// One of: "ok", "error", "skipped"
-    pub status: String,
+    pub status: TraceStatus,
     pub duration_ms: u64,
     pub retries: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -682,7 +739,7 @@ impl GraphRunner {
                     trace.push(TraceEntry {
                         node_id: node_id.to_string(),
                         tool_type: node.tool_type.clone(),
-                        status: "ok".to_string(),
+                        status: TraceStatus::Ok,
                         duration_ms: elapsed_ms,
                         retries,
                         error: None,
@@ -819,7 +876,7 @@ impl GraphRunner {
                             trace.push(TraceEntry {
                                 node_id: node_id.to_string(),
                                 tool_type: node.tool_type.clone(),
-                                status: "error".to_string(),
+                                status: TraceStatus::Error,
                                 duration_ms: elapsed_ms,
                                 retries,
                                 error: Some(err_msg.clone()),
@@ -868,7 +925,7 @@ impl GraphRunner {
                             trace.push(TraceEntry {
                                 node_id: node_id.to_string(),
                                 tool_type: node.tool_type.clone(),
-                                status: "skipped".to_string(),
+                                status: TraceStatus::Skipped,
                                 duration_ms: elapsed_ms,
                                 retries,
                                 error: Some(err_msg),
@@ -904,7 +961,7 @@ impl GraphRunner {
                             trace.push(TraceEntry {
                                 node_id: node_id.to_string(),
                                 tool_type: node.tool_type.clone(),
-                                status: "error".to_string(),
+                                status: TraceStatus::Error,
                                 duration_ms: elapsed_ms,
                                 retries,
                                 error: Some(err_msg),
@@ -1059,8 +1116,11 @@ impl GraphRunner {
 
     /// Resolve a single data_map expression against the current shared state.
     fn resolve_expression(&self, expr: &str, state: &SharedState) -> Option<Value> {
-        // Regex for template markers: ${node_id.field}
-        let template_re = Regex::new(r"\$\{([^.}]+)\.([^}]+)\}").expect("valid regex");
+        // Static regex compiled once via LazyLock (was Regex::new per-call before).
+        static TEMPLATE_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"\$\{([^.}]+)\.([^}]+)\}").expect("valid regex")
+        });
+        let template_re = &*TEMPLATE_RE;
 
         if template_re.is_match(expr) {
             // Template mode: replace all ${node.field} occurrences.
@@ -1546,7 +1606,7 @@ mod tests {
         assert_eq!(result.trace[0].node_id, "a");
         assert_eq!(result.trace[1].node_id, "b");
         assert_eq!(result.trace[2].node_id, "c");
-        assert!(result.trace.iter().all(|t| t.status == "ok"));
+        assert!(result.trace.iter().all(|t| t.status == TraceStatus::Ok));
         assert!(result.error.is_none());
     }
 
@@ -1665,7 +1725,7 @@ mod tests {
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert!(result.error.is_some());
         assert_eq!(result.trace.len(), 1);
-        assert_eq!(result.trace[0].status, "error");
+        assert_eq!(result.trace[0].status, TraceStatus::Error);
     }
 
     #[tokio::test]
@@ -1698,7 +1758,7 @@ mod tests {
         let result = runner.run(&graph, &ctx).await.unwrap();
 
         assert_eq!(result.trace[0].node_id, "a");
-        assert_eq!(result.trace[0].status, "skipped");
+        assert_eq!(result.trace[0].status, TraceStatus::Skipped);
         assert_eq!(result.trace.len(), 2);
         assert_eq!(result.trace[1].node_id, "b");
     }
@@ -1752,7 +1812,7 @@ mod tests {
         // "a" fails with RouteToError → sets __error__ → conditional edge to error_handler matches.
         // error_handler also fails (FailExecutor) with default Stop policy.
         assert_eq!(result.trace[0].node_id, "a");
-        assert_eq!(result.trace[0].status, "error");
+        assert_eq!(result.trace[0].status, TraceStatus::Error);
         assert_eq!(result.trace[1].node_id, "error_handler");
     }
 
@@ -1786,7 +1846,7 @@ mod tests {
 
         assert_eq!(result.status, ExecutionStatus::Completed);
         assert_eq!(result.trace[0].retries, 1); // succeeded on attempt index 1
-        assert_eq!(result.trace[0].status, "ok");
+        assert_eq!(result.trace[0].status, TraceStatus::Ok);
     }
 
     #[tokio::test]
@@ -2180,7 +2240,7 @@ mod tests {
         let entry = TraceEntry {
             node_id: "n1".to_string(),
             tool_type: "ai/llm_call".to_string(),
-            status: "ok".to_string(),
+            status: TraceStatus::Ok,
             duration_ms: 150,
             retries: 0,
             error: None,
@@ -2557,7 +2617,7 @@ mod tests {
 
         // The hook-triggered retry should have made it succeed on the second visit
         assert_eq!(result.status, ExecutionStatus::Completed);
-        assert!(result.trace.iter().any(|t| t.status == "ok"));
+        assert!(result.trace.iter().any(|t| t.status == TraceStatus::Ok));
     }
 
     // ===================================================================

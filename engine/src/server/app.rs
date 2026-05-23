@@ -361,7 +361,7 @@ async fn execute_agent(
         trace: vec![TraceEntry {
             node_id: req.entry_node_id.unwrap_or_else(|| "placeholder".to_string()),
             tool_type: "placeholder".to_string(),
-            status: "ok".to_string(),
+            status: crate::core::runner::TraceStatus::Ok,
             duration_ms: 0,
             retries: 0,
             error: None,

@@ -8,12 +8,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Token usage for a single trace record.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TokenUsage {
-    pub input: u32,
-    pub output: u32,
-}
+// TokenUsage is re-exported from core::context (canonical location).
+pub use crate::core::context::TokenUsage;
 
 /// A single trace record captured during node execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,8 +25,7 @@ pub struct TraceRecord {
     pub duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens: Option<TokenUsage>,
-    /// `"ok"`, `"error"`, or `"skipped"`.
-    pub status: String,
+    pub status: crate::core::runner::TraceStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub timestamp: f64,
@@ -125,20 +120,22 @@ impl ExecutionTracer {
         total
     }
 
-    /// Count of records with `status == "error"`.
+    /// Count of records with error status.
     pub fn error_count(&self) -> usize {
-        self.records.iter().filter(|r| r.status == "error").count()
+        use crate::core::runner::TraceStatus;
+        self.records.iter().filter(|r| r.status == TraceStatus::Error).count()
     }
 
     /// Produce an aggregate summary of all captured traces.
     pub fn summary(&self) -> TraceSummary {
+        use crate::core::runner::TraceStatus;
         let total_blocks = self.records.len();
-        let successful = self.records.iter().filter(|r| r.status == "ok").count();
+        let successful = self.records.iter().filter(|r| r.status == TraceStatus::Ok).count();
         let failed = self.error_count();
         let skipped = self
             .records
             .iter()
-            .filter(|r| r.status == "skipped")
+            .filter(|r| r.status == TraceStatus::Skipped)
             .count();
         TraceSummary {
             total_blocks,
@@ -159,7 +156,9 @@ impl ExecutionTracer {
 mod tests {
     use super::*;
 
-    fn make_record(node_id: &str, status: &str, duration_ms: u64) -> TraceRecord {
+    use crate::core::runner::TraceStatus;
+
+    fn make_record(node_id: &str, status: TraceStatus, duration_ms: u64) -> TraceRecord {
         TraceRecord {
             node_id: node_id.to_string(),
             tool_type: "ai/llm_call".to_string(),
@@ -171,8 +170,8 @@ mod tests {
                 input: 100,
                 output: 50,
             }),
-            status: status.to_string(),
-            error: if status == "error" {
+            status,
+            error: if status == TraceStatus::Error {
                 Some("boom".to_string())
             } else {
                 None
@@ -198,9 +197,9 @@ mod tests {
     #[test]
     fn add_and_retrieve() {
         let mut tracer = ExecutionTracer::new();
-        tracer.add(make_record("n1", "ok", 100));
-        tracer.add(make_record("n2", "error", 200));
-        tracer.add(make_record("n1", "ok", 50));
+        tracer.add(make_record("n1", TraceStatus::Ok, 100));
+        tracer.add(make_record("n2", TraceStatus::Error, 200));
+        tracer.add(make_record("n1", TraceStatus::Ok, 50));
 
         assert_eq!(tracer.get_all().len(), 3);
         assert_eq!(tracer.get_by_node("n1").len(), 2);
@@ -211,8 +210,8 @@ mod tests {
     #[test]
     fn duration_and_tokens() {
         let mut tracer = ExecutionTracer::new();
-        tracer.add(make_record("n1", "ok", 100));
-        tracer.add(make_record("n2", "ok", 200));
+        tracer.add(make_record("n1", TraceStatus::Ok, 100));
+        tracer.add(make_record("n2", TraceStatus::Ok, 200));
 
         assert_eq!(tracer.total_duration_ms(), 300);
         let tok = tracer.total_tokens();
@@ -223,10 +222,10 @@ mod tests {
     #[test]
     fn error_count() {
         let mut tracer = ExecutionTracer::new();
-        tracer.add(make_record("n1", "ok", 100));
-        tracer.add(make_record("n2", "error", 50));
-        tracer.add(make_record("n3", "skipped", 0));
-        tracer.add(make_record("n4", "error", 30));
+        tracer.add(make_record("n1", TraceStatus::Ok, 100));
+        tracer.add(make_record("n2", TraceStatus::Error, 50));
+        tracer.add(make_record("n3", TraceStatus::Skipped, 0));
+        tracer.add(make_record("n4", TraceStatus::Error, 30));
 
         assert_eq!(tracer.error_count(), 2);
     }
@@ -234,9 +233,9 @@ mod tests {
     #[test]
     fn summary_counts() {
         let mut tracer = ExecutionTracer::new();
-        tracer.add(make_record("n1", "ok", 100));
-        tracer.add(make_record("n2", "error", 50));
-        tracer.add(make_record("n3", "skipped", 10));
+        tracer.add(make_record("n1", TraceStatus::Ok, 100));
+        tracer.add(make_record("n2", TraceStatus::Error, 50));
+        tracer.add(make_record("n3", TraceStatus::Skipped, 10));
 
         let s = tracer.summary();
         assert_eq!(s.total_blocks, 3);
@@ -286,7 +285,7 @@ mod tests {
     #[test]
     fn tokens_none_handled() {
         let mut tracer = ExecutionTracer::new();
-        let mut rec = make_record("n1", "ok", 100);
+        let mut rec = make_record("n1", TraceStatus::Ok, 100);
         rec.tokens = None;
         tracer.add(rec);
 
@@ -297,11 +296,11 @@ mod tests {
 
     #[test]
     fn trace_record_serde_roundtrip() {
-        let record = make_record("n1", "ok", 100);
+        let record = make_record("n1", TraceStatus::Ok, 100);
         let json = serde_json::to_string(&record).unwrap();
         let back: TraceRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.node_id, "n1");
-        assert_eq!(back.status, "ok");
+        assert_eq!(back.status, TraceStatus::Ok);
         assert_eq!(back.duration_ms, 100);
     }
 }

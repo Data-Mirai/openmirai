@@ -22,6 +22,9 @@ pub enum AgentSpecError {
     #[error("edge '{edge_id}' references non-existent target node '{node_id}'")]
     UnknownTargetNode { edge_id: String, node_id: String },
 
+    #[error("graph error: {0}")]
+    Graph(#[from] super::graph::GraphError),
+
     #[error("yaml error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
@@ -295,9 +298,12 @@ fn default_spec_version() -> String {
 }
 
 impl AgentSpec {
-    /// Validate graph references (duplicate IDs, dangling edges).
+    /// Validate graph references, self-loops, cycles, and empty graphs.
+    ///
+    /// Delegates to [`GraphDef::validate()`] which catches self-loops, cycles,
+    /// empty graphs, duplicate IDs, and dangling edges.
     pub fn validate(&self) -> Result<(), AgentSpecError> {
-        // Duplicate node IDs
+        // Duplicate node IDs (keep for AgentSpec-specific error type)
         let mut seen_nodes = std::collections::HashSet::new();
         let mut dupe_nodes = Vec::new();
         for n in &self.graph.nodes {
@@ -336,6 +342,9 @@ impl AgentSpec {
                 });
             }
         }
+
+        // Delegate to GraphDef::validate() for self-loops, empty graph, cycles
+        self.to_graph(None).validate().map_err(AgentSpecError::Graph)?;
 
         Ok(())
     }
@@ -601,5 +610,37 @@ mod tests {
         assert_eq!(json, "\"live\"");
         let back: AgentType = serde_json::from_str(&json).unwrap();
         assert_eq!(back, AgentType::Live);
+    }
+
+    #[test]
+    fn validate_detects_self_loop() {
+        let mut spec = sample_spec();
+        spec.graph.edges.push(AgentEdgeSpec {
+            id: "self-loop".to_string(),
+            source: "n1".to_string(),
+            target: "n1".to_string(),
+            condition: None,
+            data_map: None,
+        });
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, AgentSpecError::Graph(_)), "expected Graph error for self-loop, got: {err:?}");
+    }
+
+    #[test]
+    fn validate_detects_empty_graph() {
+        let spec = AgentSpec {
+            name: "empty".to_string(),
+            description: String::new(),
+            version: "v1".to_string(),
+            agent_type: AgentType::Managed,
+            system_prompt: None,
+            graph: AgentGraphSpec::default(),
+            triggers: vec![],
+            config: AgentConfig::default(),
+            resources: Vec::new(),
+            metadata: HashMap::new(),
+        };
+        let err = spec.validate().unwrap_err();
+        assert!(matches!(err, AgentSpecError::Graph(_)), "expected Graph error for empty graph, got: {err:?}");
     }
 }

@@ -248,10 +248,11 @@ fn extract_string_array(val: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::runner::TraceStatus;
     use crate::intelligence::tracer::TokenUsage;
     use std::collections::HashMap;
 
-    fn make_trace(node_id: &str, status: &str, duration: u64) -> TraceRecord {
+    fn make_trace(node_id: &str, status: TraceStatus, duration: u64) -> TraceRecord {
         TraceRecord {
             node_id: node_id.to_string(),
             tool_type: "ai/llm_call".to_string(),
@@ -263,8 +264,8 @@ mod tests {
                 input: 100,
                 output: 50,
             }),
-            status: status.to_string(),
-            error: if status == "error" {
+            status,
+            error: if status == TraceStatus::Error {
                 Some("timeout".to_string())
             } else {
                 None
@@ -275,7 +276,7 @@ mod tests {
 
     #[test]
     fn build_batch_under_limit() {
-        let traces: Vec<TraceRecord> = (0..5).map(|i| make_trace(&format!("n{}", i), "ok", 100)).collect();
+        let traces: Vec<TraceRecord> = (0..5).map(|i| make_trace(&format!("n{}", i), TraceStatus::Ok, 100)).collect();
         let batch = Reflector::build_batch(&traces);
         assert_eq!(batch.len(), 5);
     }
@@ -283,7 +284,7 @@ mod tests {
     #[test]
     fn build_batch_over_limit() {
         let traces: Vec<TraceRecord> = (0..100)
-            .map(|i| make_trace(&format!("n{}", i), "ok", 100))
+            .map(|i| make_trace(&format!("n{}", i), TraceStatus::Ok, 100))
             .collect();
         let batch = Reflector::build_batch(&traces);
         assert_eq!(batch.len(), MAX_TRACES_PER_BATCH);
@@ -346,7 +347,7 @@ mod tests {
 
     #[test]
     fn build_prompt_includes_traces() {
-        let traces = vec![make_trace("n1", "ok", 100)];
+        let traces = vec![make_trace("n1", TraceStatus::Ok, 100)];
         let prompt = Reflector::build_prompt(&traces);
         assert!(prompt.contains("n1"));
         assert!(prompt.contains("TRACES:"));

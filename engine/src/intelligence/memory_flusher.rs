@@ -97,7 +97,7 @@ impl MemoryFlusher {
         let mut entries = Vec::new();
 
         // Collect error nodes for error_resolution entries
-        for record in trace.iter().filter(|r| r.status == "error") {
+        for record in trace.iter().filter(|r| r.status == crate::core::runner::TraceStatus::Error) {
             let content = format!(
                 "Node '{}' (type: {}) failed: {}",
                 record.node_id,
@@ -117,7 +117,7 @@ impl MemoryFlusher {
 
         // Summarize overall execution as a learning
         let total = trace.len();
-        let errors = trace.iter().filter(|r| r.status == "error").count();
+        let errors = trace.iter().filter(|r| r.status == crate::core::runner::TraceStatus::Error).count();
         let total_ms: u64 = trace.iter().map(|r| r.duration_ms).sum();
 
         if total > 0 {
@@ -153,10 +153,11 @@ impl Default for MemoryFlusher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::runner::TraceStatus;
     use crate::intelligence::tracer::TokenUsage;
     use crate::memory::InMemoryBackend;
 
-    fn make_trace(node_id: &str, status: &str) -> TraceRecord {
+    fn make_trace(node_id: &str, status: TraceStatus) -> TraceRecord {
         TraceRecord {
             node_id: node_id.to_string(),
             tool_type: "ai/llm_call".to_string(),
@@ -168,8 +169,8 @@ mod tests {
                 input: 50,
                 output: 25,
             }),
-            status: status.to_string(),
-            error: if status == "error" {
+            status,
+            error: if status == TraceStatus::Error {
                 Some("timeout".to_string())
             } else {
                 None
@@ -215,9 +216,9 @@ mod tests {
         let flusher = MemoryFlusher::new();
         let memory = LongTermMemory::new(Box::new(InMemoryBackend::new()));
         let traces = vec![
-            make_trace("n1", "ok"),
-            make_trace("n2", "error"),
-            make_trace("n3", "ok"),
+            make_trace("n1", TraceStatus::Ok),
+            make_trace("n2", TraceStatus::Error),
+            make_trace("n3", TraceStatus::Ok),
         ];
 
         let saved = flusher.flush(&traces, &memory).await.unwrap();
@@ -230,7 +231,7 @@ mod tests {
     async fn flush_respects_max() {
         let flusher = MemoryFlusher::new();
         let memory = LongTermMemory::new(Box::new(InMemoryBackend::new()));
-        let traces = vec![make_trace("n1", "ok")];
+        let traces = vec![make_trace("n1", TraceStatus::Ok)];
 
         let first = flusher.flush(&traces, &memory).await.unwrap();
         assert!(first > 0);
@@ -253,8 +254,8 @@ mod tests {
     #[test]
     fn extract_entries_errors() {
         let traces = vec![
-            make_trace("n1", "error"),
-            make_trace("n2", "ok"),
+            make_trace("n1", TraceStatus::Error),
+            make_trace("n2", TraceStatus::Ok),
         ];
         let entries = MemoryFlusher::extract_entries(&traces);
         // 1 error entry + 1 summary

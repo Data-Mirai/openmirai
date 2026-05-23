@@ -11,12 +11,8 @@ use serde_json::Value;
 // Data models
 // ---------------------------------------------------------------------------
 
-/// Token usage counters for a single LLM call.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TokenUsage {
-    pub input: u32,
-    pub output: u32,
-}
+// TokenUsage is re-exported from core::context (canonical location).
+pub use crate::core::context::TokenUsage;
 
 /// A tool/function call requested by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -49,7 +49,7 @@ pub struct AuthContext {
 // LLMResponse + TokenUsage
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input: u32,
     pub output: u32,

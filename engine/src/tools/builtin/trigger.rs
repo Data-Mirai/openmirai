@@ -6,17 +6,17 @@ use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{ToolField, ToolSpec};
+use crate::tools::base::{FieldType, ToolField, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
 // Helper: field builder
 // ---------------------------------------------------------------------------
 
-fn field(name: &str, field_type: &str, required: bool, desc: &str) -> ToolField {
+fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
-        field_type: field_type.into(),
+        field_type,
         required,
         description: if desc.is_empty() {
             None
@@ -86,12 +86,12 @@ trigger_tool! {
     description = "HTTP webhook entry point for graph execution",
     inputs = [],
     outputs = [
-        field("body", "object", true, "Request body"),
-        field("headers", "object", true, "Request headers"),
-        field("query_params", "object", true, "Query parameters"),
+        field("body", FieldType::Object, true, "Request body"),
+        field("headers", FieldType::Object, true, "Request headers"),
+        field("query_params", FieldType::Object, true, "Query parameters"),
     ],
     config_fields = [
-        field("mock_payload", "object", false, "Mock payload for testing"),
+        field("mock_payload", FieldType::Object, false, "Mock payload for testing"),
     ]
 }
 
@@ -136,12 +136,12 @@ trigger_tool! {
     description = "Manual execution entry point",
     inputs = [],
     outputs = [
-        field("user_input", "object", true, "User input data"),
-        field("triggered_by", "string", true, "Who triggered the execution"),
-        field("timestamp", "number", true, "Trigger timestamp"),
+        field("user_input", FieldType::Object, true, "User input data"),
+        field("triggered_by", FieldType::String, true, "Who triggered the execution"),
+        field("timestamp", FieldType::Number, true, "Trigger timestamp"),
     ],
     config_fields = [
-        field("mock_payload", "object", false, "Mock payload for testing"),
+        field("mock_payload", FieldType::Object, false, "Mock payload for testing"),
     ]
 }
 
@@ -186,11 +186,11 @@ trigger_tool! {
     description = "Cron/interval trigger for scheduled execution",
     inputs = [],
     outputs = [
-        field("triggered_at", "number", true, "Trigger timestamp"),
-        field("run_count", "number", true, "Number of runs so far"),
+        field("triggered_at", FieldType::Number, true, "Trigger timestamp"),
+        field("run_count", FieldType::Number, true, "Number of runs so far"),
     ],
     config_fields = [
-        field("run_count", "number", false, "Current run count"),
+        field("run_count", FieldType::Number, false, "Current run count"),
     ]
 }
 
@@ -228,13 +228,13 @@ trigger_tool! {
     description = "Resource event trigger that reacts to system events",
     inputs = [],
     outputs = [
-        field("source", "string", true, "Event source"),
-        field("event_type", "string", true, "Type of event"),
-        field("event_data", "object", true, "Event payload data"),
+        field("source", FieldType::String, true, "Event source"),
+        field("event_type", FieldType::String, true, "Type of event"),
+        field("event_data", FieldType::Object, true, "Event payload data"),
     ],
     config_fields = [
-        field("source", "string", false, "Event source identifier"),
-        field("event_type", "string", false, "Expected event type"),
+        field("source", FieldType::String, false, "Event source identifier"),
+        field("event_type", FieldType::String, false, "Expected event type"),
     ]
 }
 
@@ -278,15 +278,15 @@ trigger_tool! {
     description = "Periodic trigger that evaluates a condition at configurable intervals. Used for polling, health checks, and scheduled re-evaluations.",
     inputs = [],
     outputs = [
-        field("triggered", "boolean", true, "Whether the condition evaluated to true"),
-        field("triggered_at", "string", true, "ISO 8601 timestamp of evaluation"),
-        field("evaluation_count", "number", true, "Number of evaluations performed"),
-        field("condition_result", "object", false, "Result details from the condition evaluator"),
+        field("triggered", FieldType::Boolean, true, "Whether the condition evaluated to true"),
+        field("triggered_at", FieldType::String, true, "ISO 8601 timestamp of evaluation"),
+        field("evaluation_count", FieldType::Number, true, "Number of evaluations performed"),
+        field("condition_result", FieldType::Object, false, "Result details from the condition evaluator"),
     ],
     config_fields = [
-        field("interval_seconds", "number", false, "Evaluation interval in seconds (default: 300)"),
-        field("condition_type", "string", false, "Condition evaluator: always_true, always_false, custom_expression (default: always_true)"),
-        field("condition_config", "string", false, "Configuration for the condition evaluator"),
+        field("interval_seconds", FieldType::Number, false, "Evaluation interval in seconds (default: 300)"),
+        field("condition_type", FieldType::String, false, "Condition evaluator: always_true, always_false, custom_expression (default: always_true)"),
+        field("condition_config", FieldType::String, false, "Configuration for the condition evaluator"),
     ]
 }
 

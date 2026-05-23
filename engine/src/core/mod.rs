@@ -23,7 +23,7 @@ pub use graph::{
 pub use runner::{
     BackoffStrategy, Checkpoint, CheckpointCallback, ExecutionResult, ExecutionStatus,
     FailureMode, GraphRunner, HookHandler, HookResult, InterruptInfo, RetryPolicy, RunnerError,
-    ToolError, ToolExecutor, TraceEntry, TranscriptEntry,
+    ToolError, ToolExecutor, TraceEntry, TraceStatus, TranscriptEntry,
 };
 pub use schema::{ColumnDef, ColumnType, SchemaError, TableSchema};
 pub use state::{SharedState, StateError};

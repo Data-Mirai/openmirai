@@ -182,7 +182,7 @@ mod tests {
             inputs: vec![],
             outputs: vec![ToolField {
                 name: "ok".into(),
-                field_type: "boolean".into(),
+                field_type: crate::tools::base::FieldType::Boolean,
                 required: true,
                 description: None,
                 default: None,

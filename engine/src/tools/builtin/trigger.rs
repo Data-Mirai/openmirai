@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -65,8 +66,8 @@ macro_rules! trigger_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -100,7 +101,7 @@ impl Tool for WebhookTriggerTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let body = config
@@ -150,7 +151,7 @@ impl Tool for ManualTriggerTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let user_input = config
@@ -199,7 +200,7 @@ impl Tool for ScheduleTriggerTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let now = Utc::now();
@@ -243,7 +244,7 @@ impl Tool for EventTriggerTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let source = config
@@ -295,7 +296,7 @@ impl Tool for HeartbeatTriggerTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let condition_type = config
@@ -408,7 +409,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("body".to_string(), json!({"key": "value"}));
         let result = tool
-            .execute(HashMap::new(), config, &ctx())
+            .execute(HashMap::new(), &config, &ctx())
             .await
             .unwrap();
         assert_eq!(result["body"]["key"], json!("value"));
@@ -419,7 +420,7 @@ mod tests {
     async fn manual_trigger_returns_timestamp() {
         let tool = ManualTriggerTool;
         let result = tool
-            .execute(HashMap::new(), HashMap::new(), &ctx())
+            .execute(HashMap::new(), &HashMap::new(), &ctx())
             .await
             .unwrap();
         assert_eq!(result["triggered_by"], json!("manual"));
@@ -432,7 +433,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("run_count".to_string(), json!(5));
         let result = tool
-            .execute(HashMap::new(), config, &ctx())
+            .execute(HashMap::new(), &config, &ctx())
             .await
             .unwrap();
         assert_eq!(result["run_count"], json!(5));
@@ -446,7 +447,7 @@ mod tests {
         config.insert("source".to_string(), json!("db"));
         config.insert("event_type".to_string(), json!("insert"));
         let result = tool
-            .execute(HashMap::new(), config, &ctx())
+            .execute(HashMap::new(), &config, &ctx())
             .await
             .unwrap();
         assert_eq!(result["source"], json!("db"));
@@ -457,7 +458,7 @@ mod tests {
     async fn heartbeat_trigger_always_true() {
         let tool = HeartbeatTriggerTool;
         let result = tool
-            .execute(HashMap::new(), HashMap::new(), &ctx())
+            .execute(HashMap::new(), &HashMap::new(), &ctx())
             .await
             .unwrap();
         assert_eq!(result["triggered"], json!(true));
@@ -471,7 +472,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("condition_type".to_string(), json!("always_false"));
         let result = tool
-            .execute(HashMap::new(), config, &ctx())
+            .execute(HashMap::new(), &config, &ctx())
             .await
             .unwrap();
         assert_eq!(result["triggered"], json!(false));
@@ -484,7 +485,7 @@ mod tests {
         config.insert("condition_type".to_string(), json!("custom_expression"));
         config.insert("condition_config".to_string(), json!("5 > 3"));
         let result = tool
-            .execute(HashMap::new(), config, &ctx())
+            .execute(HashMap::new(), &config, &ctx())
             .await
             .unwrap();
         assert_eq!(result["triggered"], json!(true));
@@ -493,7 +494,7 @@ mod tests {
         config2.insert("condition_type".to_string(), json!("custom_expression"));
         config2.insert("condition_config".to_string(), json!("1 > 10"));
         let result2 = tool
-            .execute(HashMap::new(), config2, &ctx())
+            .execute(HashMap::new(), &config2, &ctx())
             .await
             .unwrap();
         assert_eq!(result2["triggered"], json!(false));
@@ -504,7 +505,7 @@ mod tests {
         let tool = HeartbeatTriggerTool;
         let mut config = HashMap::new();
         config.insert("condition_type".to_string(), json!("nonexistent"));
-        let result = tool.execute(HashMap::new(), config, &ctx()).await;
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await;
         assert!(result.is_err());
     }
 

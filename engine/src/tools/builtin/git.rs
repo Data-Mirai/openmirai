@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -65,8 +66,8 @@ macro_rules! git_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -151,7 +152,7 @@ impl Tool for GitStatusTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let cwd = resolve_cwd(&inputs, &config);
@@ -235,7 +236,7 @@ impl Tool for GitDiffTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let cwd = resolve_cwd(&inputs, &config);
@@ -350,7 +351,7 @@ impl Tool for GitLogTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let cwd = resolve_cwd(&inputs, &config);
@@ -438,7 +439,7 @@ impl Tool for GitCommitTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let cwd = config

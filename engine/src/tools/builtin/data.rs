@@ -68,8 +68,8 @@ macro_rules! data_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -106,7 +106,7 @@ impl Tool for DbReadTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let db = context.db().ok_or_else(|| ToolError::ExecutionFailed {
@@ -190,7 +190,7 @@ impl Tool for DbWriteTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let db = context.db().ok_or_else(|| ToolError::ExecutionFailed {
@@ -276,7 +276,7 @@ impl Tool for StorageReadTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let storage = context.storage().ok_or_else(|| ToolError::ExecutionFailed {
@@ -357,7 +357,7 @@ impl Tool for StorageWriteTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let storage = context.storage().ok_or_else(|| ToolError::ExecutionFailed {
@@ -427,7 +427,7 @@ impl Tool for VaultReadTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         // Placeholder: vault requires a filesystem backend.
@@ -467,7 +467,7 @@ impl Tool for VaultWriteTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let path = inputs
@@ -510,7 +510,7 @@ impl Tool for EntityQueryTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let db = context.db().ok_or_else(|| ToolError::ExecutionFailed {
@@ -573,7 +573,7 @@ impl Tool for EntityUpsertTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let db = context.db().ok_or_else(|| ToolError::ExecutionFailed {
@@ -1267,7 +1267,7 @@ impl Tool for WebScrapeTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let query = inputs.get("query").and_then(|v| v.as_str()).unwrap_or("");
@@ -1562,7 +1562,7 @@ impl Tool for HtmlToMarkdownTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let html = inputs
@@ -1804,7 +1804,7 @@ mod tests {
         config.insert("query".to_string(), json!("SELECT * FROM users"));
         config.insert("mode".to_string(), json!("all"));
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["count"], json!(2));
         assert!(result["rows"].is_array());
     }
@@ -1819,7 +1819,7 @@ mod tests {
         config.insert("query".to_string(), json!("SELECT * FROM users WHERE id = 1"));
         config.insert("mode".to_string(), json!("one"));
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["count"], json!(1));
         assert_eq!(result["row"]["name"], json!("Alice"));
     }
@@ -1834,7 +1834,7 @@ mod tests {
         config.insert("query".to_string(), json!("SELECT * FROM users WHERE id = 999"));
         config.insert("mode".to_string(), json!("one"));
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["count"], json!(0));
         assert!(result["row"].is_null());
     }
@@ -1844,7 +1844,7 @@ mod tests {
         let ctx = TestContext::empty();
         let tool = DbReadTool;
         let result = tool
-            .execute(HashMap::new(), HashMap::new(), &ctx)
+            .execute(HashMap::new(), &HashMap::new(), &ctx)
             .await;
         assert!(result.is_err());
     }
@@ -1862,7 +1862,7 @@ mod tests {
         config.insert("table".to_string(), json!("users"));
         config.insert("mode".to_string(), json!("insert"));
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["table"], json!("users"));
         assert_eq!(result["action"], json!("inserted"));
         assert_eq!(result["id"], json!("row-1"));
@@ -1879,7 +1879,7 @@ mod tests {
         config.insert("table".to_string(), json!("users"));
         config.insert("mode".to_string(), json!("upsert"));
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["action"], json!("updated"));
     }
 
@@ -1893,7 +1893,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("table".to_string(), json!("users"));
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["table"], json!("users"));
         assert_eq!(result["action"], json!("inserted"));
     }
@@ -1903,7 +1903,7 @@ mod tests {
         let ctx = TestContext::empty();
         let tool = DbWriteTool;
         let result = tool
-            .execute(HashMap::new(), HashMap::new(), &ctx)
+            .execute(HashMap::new(), &HashMap::new(), &ctx)
             .await;
         assert!(result.is_err());
     }
@@ -1919,7 +1919,7 @@ mod tests {
         inputs.insert("path".to_string(), json!("test/file.txt"));
         let config = HashMap::new();
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["found"], json!(true));
         assert_eq!(result["content"], json!("hello world"));
         assert_eq!(result["path"], json!("test/file.txt"));
@@ -1934,7 +1934,7 @@ mod tests {
         inputs.insert("path".to_string(), json!("nonexistent.txt"));
         let config = HashMap::new();
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["found"], json!(false));
         assert!(result["content"].is_null());
     }
@@ -1949,7 +1949,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("mode".to_string(), json!("presign"));
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["found"], json!(true));
     }
 
@@ -1958,7 +1958,7 @@ mod tests {
         let ctx = TestContext::with_storage();
         let tool = StorageReadTool;
         let result = tool
-            .execute(HashMap::new(), HashMap::new(), &ctx)
+            .execute(HashMap::new(), &HashMap::new(), &ctx)
             .await;
         assert!(result.is_err());
     }
@@ -1969,7 +1969,7 @@ mod tests {
         let tool = StorageReadTool;
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!("test.txt"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx).await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx).await;
         assert!(result.is_err());
     }
 
@@ -1985,7 +1985,7 @@ mod tests {
         inputs.insert("content".to_string(), json!("Hello, storage!"));
         let config = HashMap::new();
 
-        let result = tool.execute(inputs, config, &ctx).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx).await.unwrap();
         assert_eq!(result["path"], json!("output/result.txt"));
         assert_eq!(result["bytes_written"], json!(15)); // "Hello, storage!" is 15 bytes
     }
@@ -1996,7 +1996,7 @@ mod tests {
         let tool = StorageWriteTool;
         let mut inputs = HashMap::new();
         inputs.insert("content".to_string(), json!("data"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx).await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx).await;
         assert!(result.is_err());
     }
 
@@ -2006,7 +2006,7 @@ mod tests {
         let tool = StorageWriteTool;
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!("output.txt"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx).await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx).await;
         assert!(result.is_err());
     }
 
@@ -2017,7 +2017,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!("out.txt"));
         inputs.insert("content".to_string(), json!("data"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx).await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx).await;
         assert!(result.is_err());
     }
 
@@ -2028,7 +2028,7 @@ mod tests {
         let ctx = TestContext::empty();
         let tool = VaultReadTool;
         let result = tool
-            .execute(HashMap::new(), HashMap::new(), &ctx)
+            .execute(HashMap::new(), &HashMap::new(), &ctx)
             .await
             .unwrap();
         assert_eq!(result["count"], json!(0));
@@ -2045,7 +2045,7 @@ mod tests {
         inputs.insert("path".to_string(), json!("vault/test.md"));
         inputs.insert("content".to_string(), json!("hello"));
         let result = tool
-            .execute(inputs, HashMap::new(), &ctx)
+            .execute(inputs, &HashMap::new(), &ctx)
             .await
             .unwrap();
         assert_eq!(result["path"], json!("vault/test.md"));
@@ -2064,7 +2064,7 @@ mod tests {
             json!("<h1>Title</h1><p>Hello <strong>world</strong></p>"),
         );
         let result = tool
-            .execute(inputs, HashMap::new(), &ctx)
+            .execute(inputs, &HashMap::new(), &ctx)
             .await
             .unwrap();
         let md = result["markdown"].as_str().unwrap();

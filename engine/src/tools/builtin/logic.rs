@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono;
@@ -65,8 +66,8 @@ macro_rules! logic_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -100,7 +101,7 @@ impl Tool for ConditionTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let field_val = inputs.get("field").cloned().unwrap_or(Value::Null);
@@ -185,7 +186,7 @@ impl Tool for WaitTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let delay = config
@@ -226,7 +227,7 @@ impl Tool for MergeTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let data = inputs.get("data").cloned().unwrap_or(Value::Null);
@@ -262,7 +263,7 @@ impl Tool for LoopTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let items = inputs
@@ -318,7 +319,7 @@ impl Tool for SwitchTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let value = inputs.get("value").cloned().unwrap_or(Value::Null);
@@ -374,7 +375,7 @@ impl Tool for HumanInputTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         // In real execution, GraphRunner intercepts this tool_type before
@@ -426,7 +427,7 @@ impl Tool for DeadlineTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let hours = config
@@ -579,7 +580,7 @@ mod tests {
         inputs.insert("value".to_string(), json!("b"));
         let mut config = HashMap::new();
         config.insert("cases".to_string(), json!(["a", "b", "c"]));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
         assert_eq!(result["matched_case"], json!("b"));
         assert_eq!(result["case_index"], json!(1));
     }
@@ -592,7 +593,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("cases".to_string(), json!(["a", "b"]));
         config.insert("default_case".to_string(), json!("fallback"));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
         assert_eq!(result["matched_case"], json!("fallback"));
         assert_eq!(result["case_index"], json!(-1));
     }
@@ -603,7 +604,7 @@ mod tests {
     async fn human_input_returns_pending() {
         let tool = HumanInputTool;
         let inputs = HashMap::new();
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
         assert_eq!(result["response"], json!("pending"));
         assert_eq!(result["responded_by"], json!("unknown"));
     }
@@ -619,7 +620,7 @@ mod tests {
         inputs.insert("reference_time".to_string(), json!(now));
         let mut config = HashMap::new();
         config.insert("hours".to_string(), json!(48));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
         assert_eq!(result["expired"], json!(false));
         assert!(result["remaining_hours"].as_f64().unwrap() > 0.0);
     }
@@ -633,7 +634,7 @@ mod tests {
         inputs.insert("reference_time".to_string(), json!(past));
         let mut config = HashMap::new();
         config.insert("hours".to_string(), json!(48));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
         assert_eq!(result["expired"], json!(true));
         assert!(result["remaining_hours"].as_f64().unwrap() < 0.0);
     }

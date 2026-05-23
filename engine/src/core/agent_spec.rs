@@ -99,28 +99,22 @@ pub struct AgentGraphSpec {
 pub struct AgentRetryConfig {
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
-    #[serde(default = "default_backoff")]
-    pub backoff: String,
-    #[serde(default = "default_on_failure")]
-    pub on_failure: String,
+    #[serde(default)]
+    pub backoff: super::runner::BackoffStrategy,
+    #[serde(default)]
+    pub on_failure: super::runner::FailureMode,
 }
 
 fn default_max_retries() -> u32 {
     3
-}
-fn default_backoff() -> String {
-    "exponential".to_string()
-}
-fn default_on_failure() -> String {
-    "stop".to_string()
 }
 
 impl Default for AgentRetryConfig {
     fn default() -> Self {
         Self {
             max_retries: 3,
-            backoff: "exponential".to_string(),
-            on_failure: "stop".to_string(),
+            backoff: super::runner::BackoffStrategy::Exponential,
+            on_failure: super::runner::FailureMode::Stop,
         }
     }
 }
@@ -599,8 +593,8 @@ mod tests {
         assert_eq!(config.max_iterations, 50);
         assert_eq!(config.timeout_ms, 60000);
         assert_eq!(config.retry.max_retries, 3);
-        assert_eq!(config.retry.backoff, "exponential");
-        assert_eq!(config.retry.on_failure, "stop");
+        assert_eq!(config.retry.backoff, crate::core::runner::BackoffStrategy::Exponential);
+        assert_eq!(config.retry.on_failure, crate::core::runner::FailureMode::Stop);
     }
 
     #[test]

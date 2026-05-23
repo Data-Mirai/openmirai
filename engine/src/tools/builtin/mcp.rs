@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -64,8 +65,8 @@ macro_rules! mcp_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -104,7 +105,7 @@ impl Tool for McpCallTool {
     async fn execute(
         &self,
         _inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let server_name = config
@@ -161,7 +162,7 @@ mod tests {
         config.insert("server_name".to_string(), json!("my-server"));
         config.insert("tool_name".to_string(), json!("my-tool"));
         let result = tool
-            .execute(HashMap::new(), config, &ctx())
+            .execute(HashMap::new(), &config, &ctx())
             .await
             .unwrap();
         assert_eq!(result["success"], json!(false));

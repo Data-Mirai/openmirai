@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -66,8 +67,8 @@ macro_rules! ai_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -112,7 +113,7 @@ impl Tool for LlmCallTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         // --- Resolve prompt ---
@@ -306,7 +307,7 @@ impl Tool for EmbeddingsTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let text = inputs
@@ -628,7 +629,7 @@ impl Tool for TranscribeTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let file_path = inputs

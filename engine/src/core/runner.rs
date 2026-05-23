@@ -27,8 +27,12 @@ pub enum RunnerError {
     #[error("max iterations exceeded for node `{node_id}` ({visits} visits)")]
     MaxIterationsExceeded { node_id: String, visits: u32 },
 
-    #[error("execution failed at node `{node_id}`: {message}")]
-    ExecutionFailed { node_id: String, message: String },
+    #[error("execution failed at node `{node_id}`")]
+    ExecutionFailed {
+        node_id: String,
+        #[source]
+        source: ToolError,
+    },
 
     #[error("tool not found: `{tool_type}`")]
     ToolNotFound { tool_type: String },
@@ -38,6 +42,9 @@ pub enum RunnerError {
 
     #[error("execution timed out")]
     Timeout,
+
+    #[error("{context}: {message}")]
+    Internal { context: String, message: String },
 }
 
 #[derive(Debug, Error)]
@@ -212,7 +219,8 @@ pub struct TranscriptEntry {
 // RetryPolicy
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BackoffStrategy {
     None,
     Linear,
@@ -225,7 +233,8 @@ impl Default for BackoffStrategy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FailureMode {
     Stop,
     Skip,
@@ -348,13 +357,18 @@ pub trait ToolExecutor: Send + Sync {
 /// time.  Supports conditional branching, retry with backoff, template-based
 /// input resolution, real-time event emission, hooks, checkpoints,
 /// human_input interrupts, pause/resume, and transcript generation.
+/// Sequential cursor that traverses a validated DAG.
+///
+/// `GraphRunner` is `Clone` — cloning shares the executor, hook handler,
+/// and checkpoint callback via `Arc`, enabling reuse across sessions.
+#[derive(Clone)]
 pub struct GraphRunner {
-    executor: Box<dyn ToolExecutor>,
+    executor: Arc<dyn ToolExecutor>,
     event_emitter: Option<EventEmitter>,
     max_iterations: u32,
     default_retry_policy: RetryPolicy,
-    hook_handler: Option<Box<dyn HookHandler>>,
-    checkpoint_cb: Option<Box<dyn CheckpointCallback>>,
+    hook_handler: Option<Arc<dyn HookHandler>>,
+    checkpoint_cb: Option<Arc<dyn CheckpointCallback>>,
     pause_requested: Arc<AtomicBool>,
 }
 
@@ -362,7 +376,7 @@ impl GraphRunner {
     /// Create a runner with the given tool executor.
     pub fn new(executor: Box<dyn ToolExecutor>) -> Self {
         Self {
-            executor,
+            executor: Arc::from(executor),
             event_emitter: None,
             max_iterations: 100,
             default_retry_policy: RetryPolicy::default(),
@@ -393,13 +407,13 @@ impl GraphRunner {
 
     /// Attach a hook handler for execution interception.
     pub fn with_hook_handler(mut self, handler: Box<dyn HookHandler>) -> Self {
-        self.hook_handler = Some(handler);
+        self.hook_handler = Some(Arc::from(handler));
         self
     }
 
     /// Attach a checkpoint callback for state persistence.
     pub fn with_checkpoint_callback(mut self, cb: Box<dyn CheckpointCallback>) -> Self {
-        self.checkpoint_cb = Some(cb);
+        self.checkpoint_cb = Some(Arc::from(cb));
         self
     }
 

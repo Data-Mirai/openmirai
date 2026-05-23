@@ -63,19 +63,19 @@ unsafe impl Sync for SqliteBackend {}
 impl SqliteBackend {
     /// Open (or create) a SQLite database at `path` and initialise the schema.
     pub fn new(path: &str) -> Result<Self, RunnerError> {
-        let conn = Connection::open(path).map_err(|e| RunnerError::ExecutionFailed {
-            node_id: "sqlite_backend".into(),
+        let conn = Connection::open(path).map_err(|e| RunnerError::Internal {
+            context: "sqlite_backend".into(),
             message: format!("failed to open SQLite database: {e}"),
         })?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .map_err(|e| RunnerError::ExecutionFailed {
-                node_id: "sqlite_backend".into(),
+            .map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
                 message: format!("failed to set PRAGMAs: {e}"),
             })?;
 
-        conn.execute_batch(SCHEMA).map_err(|e| RunnerError::ExecutionFailed {
-            node_id: "sqlite_backend".into(),
+        conn.execute_batch(SCHEMA).map_err(|e| RunnerError::Internal {
+            context: "sqlite_backend".into(),
             message: format!("failed to initialise schema: {e}"),
         })?;
 
@@ -126,8 +126,8 @@ impl MemoryBackend for SqliteBackend {
         let id_clone = id.clone();
 
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| RunnerError::ExecutionFailed {
-                node_id: "sqlite_backend".into(),
+            let conn = conn.lock().map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
                 message: format!("mutex poisoned: {e}"),
             })?;
 
@@ -136,16 +136,16 @@ impl MemoryBackend for SqliteBackend {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![id_clone, entry_type, content, tags_json, session_id, created_at, metadata_json],
             )
-            .map_err(|e| RunnerError::ExecutionFailed {
-                node_id: "sqlite_backend".into(),
+            .map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
                 message: format!("INSERT failed: {e}"),
             })?;
 
             Ok(id_clone)
         })
         .await
-        .map_err(|e| RunnerError::ExecutionFailed {
-            node_id: "sqlite_backend".into(),
+        .map_err(|e| RunnerError::Internal {
+            context: "sqlite_backend".into(),
             message: format!("spawn_blocking join error: {e}"),
         })?
     }
@@ -160,8 +160,8 @@ impl MemoryBackend for SqliteBackend {
         let limit = limit as i64;
 
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| RunnerError::ExecutionFailed {
-                node_id: "sqlite_backend".into(),
+            let conn = conn.lock().map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
                 message: format!("mutex poisoned: {e}"),
             })?;
 
@@ -174,8 +174,8 @@ impl MemoryBackend for SqliteBackend {
                      ORDER BY m.created_at DESC
                      LIMIT ?2",
                 )
-                .map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                .map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("prepare search failed: {e}"),
                 })?;
 
@@ -183,23 +183,23 @@ impl MemoryBackend for SqliteBackend {
                 .query_map(params![fts_query, limit], |row| {
                     Ok(row_to_entry(row))
                 })
-                .map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                .map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("search query failed: {e}"),
                 })?;
 
             let mut entries = Vec::new();
             for row in rows {
-                entries.push(row.map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                entries.push(row.map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("row read failed: {e}"),
                 })?);
             }
             Ok(entries)
         })
         .await
-        .map_err(|e| RunnerError::ExecutionFailed {
-            node_id: "sqlite_backend".into(),
+        .map_err(|e| RunnerError::Internal {
+            context: "sqlite_backend".into(),
             message: format!("spawn_blocking join error: {e}"),
         })?
     }
@@ -209,8 +209,8 @@ impl MemoryBackend for SqliteBackend {
         let id = id.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| RunnerError::ExecutionFailed {
-                node_id: "sqlite_backend".into(),
+            let conn = conn.lock().map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
                 message: format!("mutex poisoned: {e}"),
             })?;
 
@@ -219,30 +219,30 @@ impl MemoryBackend for SqliteBackend {
                     "SELECT id, entry_type, content, tags, session_id, created_at, metadata
                      FROM long_term_memory WHERE id = ?1",
                 )
-                .map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                .map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("prepare get failed: {e}"),
                 })?;
 
             let mut rows = stmt
                 .query_map(params![id], |row| Ok(row_to_entry(row)))
-                .map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                .map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("get query failed: {e}"),
                 })?;
 
             match rows.next() {
                 Some(Ok(entry)) => Ok(Some(entry)),
-                Some(Err(e)) => Err(RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                Some(Err(e)) => Err(RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("row read failed: {e}"),
                 }),
                 None => Ok(None),
             }
         })
         .await
-        .map_err(|e| RunnerError::ExecutionFailed {
-            node_id: "sqlite_backend".into(),
+        .map_err(|e| RunnerError::Internal {
+            context: "sqlite_backend".into(),
             message: format!("spawn_blocking join error: {e}"),
         })?
     }
@@ -252,22 +252,22 @@ impl MemoryBackend for SqliteBackend {
         let id = id.to_string();
 
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| RunnerError::ExecutionFailed {
-                node_id: "sqlite_backend".into(),
+            let conn = conn.lock().map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
                 message: format!("mutex poisoned: {e}"),
             })?;
 
             conn.execute("DELETE FROM long_term_memory WHERE id = ?1", params![id])
-                .map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                .map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("DELETE failed: {e}"),
                 })?;
 
             Ok(())
         })
         .await
-        .map_err(|e| RunnerError::ExecutionFailed {
-            node_id: "sqlite_backend".into(),
+        .map_err(|e| RunnerError::Internal {
+            context: "sqlite_backend".into(),
             message: format!("spawn_blocking join error: {e}"),
         })?
     }
@@ -277,8 +277,8 @@ impl MemoryBackend for SqliteBackend {
         let limit = limit as i64;
 
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| RunnerError::ExecutionFailed {
-                node_id: "sqlite_backend".into(),
+            let conn = conn.lock().map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
                 message: format!("mutex poisoned: {e}"),
             })?;
 
@@ -289,30 +289,30 @@ impl MemoryBackend for SqliteBackend {
                      ORDER BY created_at DESC
                      LIMIT ?1",
                 )
-                .map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                .map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("prepare list_recent failed: {e}"),
                 })?;
 
             let rows = stmt
                 .query_map(params![limit], |row| Ok(row_to_entry(row)))
-                .map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                .map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("list_recent query failed: {e}"),
                 })?;
 
             let mut entries = Vec::new();
             for row in rows {
-                entries.push(row.map_err(|e| RunnerError::ExecutionFailed {
-                    node_id: "sqlite_backend".into(),
+                entries.push(row.map_err(|e| RunnerError::Internal {
+                    context: "sqlite_backend".into(),
                     message: format!("row read failed: {e}"),
                 })?);
             }
             Ok(entries)
         })
         .await
-        .map_err(|e| RunnerError::ExecutionFailed {
-            node_id: "sqlite_backend".into(),
+        .map_err(|e| RunnerError::Internal {
+            context: "sqlite_backend".into(),
             message: format!("spawn_blocking join error: {e}"),
         })?
     }

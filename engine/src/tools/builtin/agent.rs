@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -64,8 +65,8 @@ macro_rules! agent_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -111,7 +112,7 @@ impl Tool for RunAgentTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         // Resolve agent_id: input takes priority, fallback to config
@@ -206,7 +207,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("agent_id".to_string(), json!("agent-123"));
         let result = tool
-            .execute(inputs, HashMap::new(), &ctx())
+            .execute(inputs, &HashMap::new(), &ctx())
             .await
             .unwrap();
         assert_eq!(result["agent_id"], json!("agent-123"));
@@ -217,7 +218,7 @@ mod tests {
     async fn run_agent_missing_id_fails() {
         let tool = RunAgentTool;
         let result = tool
-            .execute(HashMap::new(), HashMap::new(), &ctx())
+            .execute(HashMap::new(), &HashMap::new(), &ctx())
             .await;
         assert!(result.is_err());
     }
@@ -232,7 +233,7 @@ mod tests {
             json!(["agent-a", "agent-b", "agent-c"]),
         );
         let result = tool
-            .execute(inputs, HashMap::new(), &ctx())
+            .execute(inputs, &HashMap::new(), &ctx())
             .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -249,7 +250,7 @@ mod tests {
             json!(["agent-a", "agent-b"]),
         );
         let result = tool
-            .execute(inputs, HashMap::new(), &ctx())
+            .execute(inputs, &HashMap::new(), &ctx())
             .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();

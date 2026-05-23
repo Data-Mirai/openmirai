@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
@@ -69,8 +70,8 @@ macro_rules! fs_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -109,7 +110,7 @@ impl Tool for ReadFileTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -204,7 +205,7 @@ impl Tool for WriteFileTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -286,7 +287,7 @@ impl Tool for ListDirTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -400,7 +401,7 @@ impl Tool for GlobFilesTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let pattern = inputs
@@ -581,7 +582,7 @@ impl Tool for GrepFilesTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let pattern_str = inputs
@@ -710,7 +711,7 @@ impl Tool for EditFileTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -836,7 +837,7 @@ impl Tool for CopyTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let source = inputs
@@ -917,7 +918,7 @@ impl Tool for MoveTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let source = inputs
@@ -995,7 +996,7 @@ impl Tool for DeleteTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -1055,7 +1056,7 @@ impl Tool for MkdirTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -1178,7 +1179,7 @@ impl Tool for TreeTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -1253,7 +1254,7 @@ impl Tool for FileInfoTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        _config: HashMap<String, Value>,
+        _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_path = inputs
@@ -1374,7 +1375,7 @@ mod tests {
             json!(file_path.display().to_string()),
         );
         let config = HashMap::new();
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["lines"], json!(3));
         let content = result["content"].as_str().unwrap();
@@ -1402,7 +1403,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("offset".to_string(), json!(2));
         config.insert("limit".to_string(), json!(3));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         let content = result["content"].as_str().unwrap();
         assert!(content.contains("line 3"));
@@ -1415,7 +1416,7 @@ mod tests {
         let tool = ReadFileTool;
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!("/nonexistent/file.txt"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await;
         assert!(result.is_err());
     }
 
@@ -1433,7 +1434,7 @@ mod tests {
             json!(file_path.display().to_string()),
         );
         inputs.insert("content".to_string(), json!("hello world"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["created"], json!(true));
         assert_eq!(result["bytes_written"], json!(11));
@@ -1452,7 +1453,7 @@ mod tests {
             json!(file_path.display().to_string()),
         );
         inputs.insert("content".to_string(), json!("deep"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["created"], json!(true));
         assert!(file_path.exists());
@@ -1474,7 +1475,7 @@ mod tests {
             "path".to_string(),
             json!(dir.path().display().to_string()),
         );
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         // Hidden excluded by default
         assert_eq!(result["count"], json!(3));
@@ -1499,7 +1500,7 @@ mod tests {
         );
         let mut config = HashMap::new();
         config.insert("show_hidden".to_string(), json!(true));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["count"], json!(2));
     }
@@ -1521,7 +1522,7 @@ mod tests {
             "path".to_string(),
             json!(dir.path().display().to_string()),
         );
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["count"], json!(2));
     }
@@ -1543,7 +1544,7 @@ mod tests {
         inputs.insert("old_string".to_string(), json!("hello"));
         inputs.insert("new_string".to_string(), json!("goodbye"));
         let result = tool
-            .execute(inputs, HashMap::new(), &ctx())
+            .execute(inputs, &HashMap::new(), &ctx())
             .await
             .unwrap();
 
@@ -1567,7 +1568,7 @@ mod tests {
         inputs.insert("new_string".to_string(), json!("ccc"));
         let mut config = HashMap::new();
         config.insert("replace_all".to_string(), json!(true));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["replacements"], json!(2));
         assert_eq!(fs::read_to_string(&file_path).unwrap(), "ccc bbb ccc");
@@ -1587,7 +1588,7 @@ mod tests {
         );
         inputs.insert("old_string".to_string(), json!("aaa"));
         inputs.insert("new_string".to_string(), json!("ccc"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await;
         assert!(result.is_err());
     }
 
@@ -1605,7 +1606,7 @@ mod tests {
         );
         inputs.insert("old_string".to_string(), json!("xyz"));
         inputs.insert("new_string".to_string(), json!("abc"));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await;
         assert!(result.is_err());
     }
 
@@ -1625,7 +1626,7 @@ mod tests {
             "path".to_string(),
             json!(dir.path().display().to_string()),
         );
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["count"], json!(2));
         let files = result["files"].as_array().unwrap();
@@ -1646,7 +1647,7 @@ mod tests {
             json!(dir.path().display().to_string()),
         );
         config.insert("case_insensitive".to_string(), json!(true));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["count"], json!(2));
     }
@@ -1664,7 +1665,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("source".to_string(), json!(src.display().to_string()));
         inputs.insert("destination".to_string(), json!(dest.display().to_string()));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["bytes_copied"], json!(7));
         assert_eq!(fs::read_to_string(&dest).unwrap(), "copy me");
@@ -1683,7 +1684,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("source".to_string(), json!(src.display().to_string()));
         inputs.insert("destination".to_string(), json!(dest.display().to_string()));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(&dest).unwrap(), "move me");
@@ -1701,7 +1702,7 @@ mod tests {
         let tool = DeleteTool;
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!(file.display().to_string()));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["deleted"], json!(true));
         assert!(!file.exists());
@@ -1717,7 +1718,7 @@ mod tests {
         let tool = MkdirTool;
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!(nested.display().to_string()));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["created"], json!(true));
         assert!(nested.is_dir());
@@ -1735,7 +1736,7 @@ mod tests {
         let tool = TreeTool;
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!(dir.path().display().to_string()));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert!(result["tree"].as_str().unwrap().contains("a.txt"));
         assert!(result["tree"].as_str().unwrap().contains("sub/"));
@@ -1754,7 +1755,7 @@ mod tests {
         let tool = FileInfoTool;
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!(file.display().to_string()));
-        let result = tool.execute(inputs, HashMap::new(), &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["size"], json!(5));
         assert_eq!(result["is_file"], json!(true));

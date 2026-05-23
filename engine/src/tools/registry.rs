@@ -21,7 +21,7 @@ pub trait Tool: Send + Sync {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError>;
 }
@@ -35,7 +35,7 @@ pub trait Tool: Send + Sync {
 /// Each registered tool type has exactly one factory. The factory owns the
 /// [`ToolSpec`] and can stamp out fresh `Tool` instances on demand.
 pub trait ToolFactory: Send + Sync {
-    fn create(&self) -> Box<dyn Tool>;
+    fn create(&self) -> Arc<dyn Tool>;
     fn spec(&self) -> &ToolSpec;
 }
 
@@ -130,7 +130,7 @@ impl ToolExecutor for RegistryExecutor {
             })?;
 
         let tool = factory.create();
-        tool.execute(inputs, node.config.clone(), context).await
+        tool.execute(inputs, &node.config, context).await
     }
 }
 
@@ -150,7 +150,7 @@ mod tests {
         async fn execute(
             &self,
             _inputs: HashMap<String, Value>,
-            _config: HashMap<String, Value>,
+            _config: &HashMap<String, Value>,
             _context: &dyn ExecutionContext,
         ) -> Result<HashMap<String, Value>, ToolError> {
             let mut out = HashMap::new();
@@ -164,8 +164,8 @@ mod tests {
     }
 
     impl ToolFactory for DummyFactory {
-        fn create(&self) -> Box<dyn Tool> {
-            Box::new(DummyTool)
+        fn create(&self) -> Arc<dyn Tool> {
+            Arc::new(DummyTool)
         }
         fn spec(&self) -> &ToolSpec {
             &self.spec

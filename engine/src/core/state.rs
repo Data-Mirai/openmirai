@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -59,10 +59,18 @@ impl SharedState {
         Ok(())
     }
 
-    /// Get the full output map for a node.
+    /// Get the full output map for a node (cloned).
     pub fn get(&self, node_id: &str) -> Option<HashMap<String, serde_json::Value>> {
         let map = self.inner.read().ok()?;
         map.get(node_id).cloned()
+    }
+
+    /// Acquire a read guard for the entire state.
+    ///
+    /// Useful when you need to read multiple fields without cloning.
+    /// The guard holds the read lock — drop it when done.
+    pub fn read(&self) -> Option<RwLockReadGuard<'_, HashMap<String, HashMap<String, serde_json::Value>>>> {
+        self.inner.read().ok()
     }
 
     /// Get a single field from a node's output.

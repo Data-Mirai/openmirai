@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -64,8 +65,8 @@ macro_rules! output_tool {
         }
 
         impl ToolFactory for $factory {
-            fn create(&self) -> Box<dyn Tool> {
-                Box::new($tool)
+            fn create(&self) -> Arc<dyn Tool> {
+                Arc::new($tool)
             }
             fn spec(&self) -> &ToolSpec {
                 &self.spec
@@ -103,7 +104,7 @@ impl Tool for ResponseTool {
     async fn execute(
         &self,
         inputs: HashMap<String, Value>,
-        config: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let raw_data = inputs.get("data").cloned().unwrap_or_else(|| json!(inputs));
@@ -248,7 +249,7 @@ mod tests {
         inputs.insert("data".to_string(), json!({"key": "value"}));
         let mut config = HashMap::new();
         config.insert("format".to_string(), json!("json"));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
         assert_eq!(result["format"], json!("json"));
         let text = result["result"].as_str().unwrap();
         assert!(text.contains("key"));
@@ -261,7 +262,7 @@ mod tests {
         inputs.insert("data".to_string(), json!("line1\nline2\nline3"));
         let mut config = HashMap::new();
         config.insert("format".to_string(), json!("bullets"));
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
         let text = result["result"].as_str().unwrap();
         assert!(text.contains("- line1"));
         assert!(text.contains("- line2"));
@@ -277,7 +278,7 @@ mod tests {
             "template".to_string(),
             json!("Hello ${name}, your score is ${score}"),
         );
-        let result = tool.execute(inputs, config, &ctx()).await.unwrap();
+        let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
         let text = result["result"].as_str().unwrap();
         assert!(text.contains("Hello Alice"));
         assert!(text.contains("95"));

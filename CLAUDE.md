@@ -1,5 +1,23 @@
 # Data Mirai Engine — Instrucciones
 
+## Estructura del repositorio
+
+```
+Engine/
+  engine/    → Crate Rust — EL MOTOR REAL. Aquí se trabaja.
+  cli/       → CLI interactivo (Rust, consume engine/)
+  legacy/    → Paquete Python LEGACY. NO TOCAR. Solo referencia histórica.
+  docs/      → Documentación del proyecto
+  blueprint/ → Blueprint Agents (workboard, config)
+```
+
+**REGLA CRITICA**: `legacy/` es código muerto. NO implementar features ahí. Todo va en `engine/` (Rust).
+
+El motor se distribuye como:
+- **Binario Rust**: FFI para Python/Swift/Go, WASM para browser, CLI directo
+- **Agente = JSON portable**: configuración que se le pasa al motor desde cualquier lenguaje
+- **Host = app que abraza motor + agente**: backend Python, app Swift, servicio Go, etc.
+
 ## Regla de testing — OBLIGATORIA
 
 **NUNCA usar mocks, placeholders, ni implementaciones falsas en tests E2E.**
@@ -25,28 +43,20 @@ Motor open source de ejecucion de grafos agentivos. Alternativa a LangGraph y Go
 
 ## Que es
 
-Data Mirai Engine es una libreria Python standalone que ejecuta grafos de bloques. Es el core del producto Data Mirai Universes, publicado como open source en el repo `datamirai-engine`.
+Data Mirai Engine es un crate Rust que ejecuta grafos de bloques. Es el core del producto Data Mirai, publicado como open source. Se consume via FFI, WASM, HTTP o CLI.
 
-## Estructura
+## Stack
 
-- `core/` — GraphDef, GraphRunner, SharedState, ExecutionContext
-- `blocks/` — BlockSpec, BlockRegistry, bloques builtin
-- `triggers/` — webhook, schedule, event, manual
-- `memory/` — short_term, long_term
-- `editor/` — React Flow + logica visual (Next.js)
-- `docs/` — documentacion del proyecto
+- Rust (motor principal — `engine/`)
+- Tokio (async runtime)
+- Axum (HTTP server)
+- SQLite / rusqlite (persistencia local)
+- Serde (serialización JSON/YAML)
 
 ## PRD y Arquitectura
 
 Toda la documentacion tecnica del engine esta en `docs/prd/draft/DATAMIRAI-ENGINE-PRD.md`.
 Leer ANTES de proponer cambios.
-
-## Stack
-
-- Python 3.12+
-- React Flow (editor visual)
-- Next.js 15 + TypeScript (editor)
-- PostgreSQL + pgvector (cuando se conecta a recursos)
 
 ## Reglas absolutas
 
@@ -56,16 +66,6 @@ Leer ANTES de proponer cambios.
 - Archivos sagrados: NUNCA editar `.env*`
 - Sin codigo en documentacion
 - Siempre leer documentacion antes de proponer cambios
-
-## Blueprint Agents
-
-Este proyecto usa **Blueprint Agents** para diseno + implementacion.
-
-Al iniciar una sesion, Claude Code DEBE cargar primero el orquestador del Core:
-
-@/Users/gabo/.blueprint/CLAUDE.md
-
----
 
 <!-- BLUEPRINT:BEGIN — no borrar estos markers; `blueprint init` los usa para actualizaciones idempotentes -->
 ## Blueprint Agents

@@ -1,1 +1,5 @@
 /target/
+legacy/**/__pycache__/
+legacy/.pytest_cache/
+legacy/.venv/
+*.pyc

@@ -1,6 +1,12 @@
-/target/
+# Rust build artifacts
+target/
+rust/target/
+
+# Python legacy
 legacy/**/__pycache__/
 legacy/.pytest_cache/
 legacy/.venv/
 *.pyc
-target/
+
+# OS
+.DS_Store

@@ -1,129 +1,74 @@
 # Data Mirai Engine
 
-Open source motor de ejecucion de grafos agentivos. Alternativa a LangGraph y Google ADK.
+Motor open source de ejecucion de grafos agentivos. Alternativa a LangGraph y Google ADK.
 
-## Instalacion
+Compilado en **Rust** — portable via FFI, WASM o CLI. El agente es un JSON, el motor es un binario.
 
-```bash
-# Solo el motor (como libreria en tu proyecto)
-pip install datamirai-engine
+## Estructura
 
-# Motor + server standalone con editor visual
-pip install datamirai-engine[server]
+```
+rust/          Motor Rust (crate principal + CLI)
+  engine/      Crate: datamirai-engine
+  cli/         CLI: mirai run, mirai validate
+legacy/        Paquete Python (referencia historica, no usar)
+docs/          Documentacion tecnica y PRDs
+blueprint/     Blueprint Agents (gestion de proyecto)
 ```
 
-## Uso como libreria
+## Quick Start
 
-```python
-from datamirai_engine import (
-    GraphDef, NodeDef, EdgeDef,
-    GraphRunner, RegistryExecutor, BlockRegistry,
-    SimpleExecutionContext, AuthContext,
-)
+```bash
+# Compilar
+cd rust && cargo build --release
 
-# 1. Registrar bloques
-registry = BlockRegistry()
-registry.discover("datamirai_engine.blocks.builtin.logic.condition")
-registry.discover("datamirai_engine.blocks.builtin.logic.merge")
-registry.discover("datamirai_engine.blocks.builtin.ai.llm_call")
-registry.discover("datamirai_engine.blocks.builtin.data.db_read")
-registry.discover("datamirai_engine.blocks.builtin.trigger.triggers")
+# Validar un agente
+mirai validate agent.json
 
-# 2. Definir grafo
-graph = GraphDef(
-    id="my-graph",
-    name="Mi primer grafo",
-    nodes=[
-        NodeDef(id="t1", block_type="trigger/webhook"),
-        NodeDef(id="n1", block_type="ai/llm_call", config={"model": "claude"}),
+# Ejecutar un agente
+mirai run agent.json
+mirai run agent.yaml --input '{"query": "hola"}'
+```
+
+## Agente = JSON
+
+```json
+{
+  "name": "mi-agente",
+  "version": "v1",
+  "graph": {
+    "nodes": [
+      {"id": "trigger", "tool_type": "trigger/manual"},
+      {"id": "llm", "tool_type": "ai/llm_call", "config": {"model": "gemma4"}}
     ],
-    edges=[
-        EdgeDef(id="e1", source="t1", target="n1"),
-    ],
-)
-
-# 3. Crear contexto con tus recursos
-context = SimpleExecutionContext.default()  # InMemory para dev
-# O con recursos reales:
-# context = SimpleExecutionContext(
-#     db=tu_postgres, vector=tu_pgvector, storage=tu_s3,
-#     llm=tu_llm_client,
-#     auth=AuthContext(user_id="user-1", role="ADMIN"),
-# )
-
-# 4. Ejecutar
-runner = GraphRunner(executor=RegistryExecutor(registry))
-result = await runner.run(graph, context=context, entry_node_id="t1")
-
-print(result.status)  # "completed"
-print(result.state.snapshot())  # outputs de cada nodo
-print(result.trace)  # pasos ejecutados
+    "edges": [
+      {"source": "trigger", "target": "llm"}
+    ]
+  }
+}
 ```
 
-## Uso standalone (con editor visual)
+Edge IDs son opcionales (auto-generados). data_map es opcional para flujos lineales.
 
-```bash
-pip install datamirai-engine[server]
-datamirai serve
-# http://localhost:8000
-```
+## Tools builtin
 
-## Uso con Docker
-
-```bash
-docker compose up
-# engine + postgres/pgvector + minio
-```
-
-## Bloques incluidos
-
-| Categoria | Bloques |
-|-----------|---------|
+| Categoria | Tools |
+|-----------|-------|
 | Trigger | webhook, manual, schedule, event |
-| Logic | condition, switch, loop, merge, wait |
+| Logic | condition, switch, loop, merge, wait, human_input |
 | AI | llm_call, transcribe, embeddings |
 | Data | db_read, db_write, storage_read, storage_write |
+| Filesystem | read_file, write_file, edit_file, glob, grep, tree |
+| System | bash, process_list |
+| Git | status, diff, log, commit |
+| Output | response |
+| Agent | run_agent |
 
-## Crear bloques custom
+## Arquitectura de 3 capas
 
-```python
-from datamirai_engine import BaseBlock, BlockSpec, BlockInput, BlockOutput
-
-class MiBloque(BaseBlock):
-    spec = BlockSpec(
-        block_type="custom/mi_bloque",
-        version="1.0.0",
-        display_name="Mi Bloque",
-        description="Hace algo custom",
-        category="custom",
-        inputs=[BlockInput(name="data", type="object", required=True)],
-        outputs=[BlockOutput(name="result", type="string")],
-    )
-
-    async def execute(self, inputs, config, context):
-        return {"result": f"procesado: {inputs['data']}"}
-
-# Registrar
-registry.register(MiBloque)
 ```
-
-## Resource Protocols
-
-Para conectar tus propios recursos, implementa estos protocols:
-
-```python
-from datamirai_engine import DBResource, VectorResource, StorageResource, LLMResource
-
-class MiPostgres:
-    """Implementa DBResource protocol."""
-    async def execute(self, query, params=None): ...
-    async def fetch_one(self, query, params=None): ...
-    async def fetch_all(self, query, params=None): ...
-
-class MiLLM:
-    """Implementa LLMResource protocol."""
-    async def call(self, *, model, prompt, context=None, **kwargs): ...
-    async def embed(self, text, *, model=None): ...
+Agente = JSON config (portable, versionable, language-agnostic)
+Motor  = Rust binary (FFI, WASM, CLI — 553 tests)
+Host   = App que abraza motor + agente (Python, Swift, Go, cualquiera)
 ```
 
 ## Licencia

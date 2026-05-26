@@ -4,14 +4,16 @@
 
 ```
 Engine/
-  engine/    → Crate Rust — EL MOTOR REAL. Aquí se trabaja.
-  cli/       → CLI interactivo (Rust, consume engine/)
-  legacy/    → Paquete Python LEGACY. NO TOCAR. Solo referencia histórica.
-  docs/      → Documentación del proyecto
-  blueprint/ → Blueprint Agents (workboard, config)
+  rust/        → TODO el código Rust vive aquí
+    engine/    → Crate principal (datamirai-engine)
+    cli/       → CLI interactivo (datamirai-cli, consume engine/)
+    Cargo.toml → Workspace Rust
+  legacy/      → Paquete Python LEGACY. NO TOCAR. Solo referencia histórica.
+  docs/        → Documentación del proyecto
+  blueprint/   → Blueprint Agents (workboard, config)
 ```
 
-**REGLA CRITICA**: `legacy/` es código muerto. NO implementar features ahí. Todo va en `engine/` (Rust).
+**REGLA CRITICA**: `legacy/` es código muerto. NO implementar features ahí. Todo va en `rust/` (Rust).
 
 El motor se distribuye como:
 - **Binario Rust**: FFI para Python/Swift/Go, WASM para browser, CLI directo

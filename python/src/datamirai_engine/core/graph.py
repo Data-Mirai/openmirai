@@ -18,9 +18,15 @@ class NodeDef(BaseModel):
 
 
 class EdgeDef(BaseModel):
-    """Connection between two nodes. Optional condition and data mapping."""
+    """Connection between two nodes. Optional condition and data mapping.
 
-    id: str
+    FEAT-034:
+    - id is optional — auto-generated as '{source}__{target}' if omitted
+    - data_map is optional — default passthrough when edge is the only
+      unconditional outgoing edge (handled in GraphRunner)
+    """
+
+    id: str = ""
     source: str
     target: str
     condition: dict | None = None
@@ -32,7 +38,7 @@ class EdgeDef(BaseModel):
     def _no_self_loop(self) -> EdgeDef:
         if self.source == self.target and self.condition is None:
             raise ValueError(
-                f"Edge '{self.id}' is an unconditional self-loop "
+                f"Edge '{self.id or '(auto)'}' is an unconditional self-loop "
                 f"(source == target == '{self.source}'). "
                 f"Self-loops require a condition to avoid infinite execution."
             )
@@ -57,7 +63,22 @@ class GraphDef(BaseModel):
         if dupes:
             raise ValueError(f"Graph has duplicate node IDs: {dupes}")
 
-        # Unique edge IDs
+        # Auto-generate missing edge IDs (FEAT-034 / API-02)
+        seen_pairs: dict[str, int] = {}
+        new_edges: list[EdgeDef] = []
+        for edge in self.edges:
+            if not edge.id:
+                pair_key = f"{edge.source}__{edge.target}"
+                count = seen_pairs.get(pair_key, 0) + 1
+                seen_pairs[pair_key] = count
+                auto_id = pair_key if count == 1 else f"{pair_key}__{count}"
+                edge = edge.model_copy(update={"id": auto_id})
+            new_edges.append(edge)
+
+        # Replace edges list with auto-ID'd version (Pydantic frozen workaround)
+        object.__setattr__(self, "edges", new_edges)
+
+        # Unique edge IDs (after auto-gen)
         edge_ids = [e.id for e in self.edges]
         edge_dupes = {eid for eid in edge_ids if edge_ids.count(eid) > 1}
         if edge_dupes:

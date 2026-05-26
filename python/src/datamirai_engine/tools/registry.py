@@ -77,3 +77,39 @@ class ToolRegistry:
                     logger.debug("Discovered tool: %s (%s)", tool_type, obj.__name__)
 
         return count
+
+    _BUILTIN_MODULES = [
+        "datamirai_engine.tools.builtin.trigger.triggers",
+        "datamirai_engine.tools.builtin.logic.condition",
+        "datamirai_engine.tools.builtin.logic.switch",
+        "datamirai_engine.tools.builtin.logic.merge",
+        "datamirai_engine.tools.builtin.logic.wait",
+        "datamirai_engine.tools.builtin.logic.loop",
+        "datamirai_engine.tools.builtin.logic.human_input",
+        "datamirai_engine.tools.builtin.ai.llm_call",
+        "datamirai_engine.tools.builtin.ai.transcribe",
+        "datamirai_engine.tools.builtin.ai.embeddings",
+        "datamirai_engine.tools.builtin.data.db_read",
+        "datamirai_engine.tools.builtin.data.db_write",
+        "datamirai_engine.tools.builtin.data.storage_read",
+        "datamirai_engine.tools.builtin.data.storage_write",
+        "datamirai_engine.tools.builtin.output.response",
+        "datamirai_engine.tools.builtin.agent.run_agent",
+    ]
+
+    @classmethod
+    def default(cls) -> ToolRegistry:
+        """Create registry with all builtin tools pre-registered.
+
+        FEAT-034 / API-06: convenience factory equivalent to manual discover().
+
+            registry = ToolRegistry.default()
+            # All builtin tools ready to use
+        """
+        registry = cls()
+        for module_path in cls._BUILTIN_MODULES:
+            try:
+                registry.discover(module_path)
+            except (ImportError, Exception) as e:
+                logger.debug("Skipping builtin %s: %s", module_path, e)
+        return registry

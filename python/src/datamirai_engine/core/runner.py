@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from datamirai_engine.core.enums import Backoff, OnFailure, Op
 from datamirai_engine.core.events import (
     CheckpointCallback,
     EventEmitter,
@@ -39,9 +40,9 @@ class InterruptRequested(Exception):
 @dataclass(frozen=True)
 class RetryPolicy:
     max_retries: int = 0
-    backoff: str = "none"  # none | linear | exponential
+    backoff: str | Backoff = Backoff.NONE
     initial_delay_seconds: float = 1.0
-    on_failure: str = "stop"  # stop | skip | route_to_error
+    on_failure: str | OnFailure = OnFailure.STOP
 
 
 @dataclass(frozen=True)
@@ -358,7 +359,8 @@ class GraphRunner:
                     # Hook wants a retry — re-execute this node
                     continue
 
-                if retry_policy.on_failure == "stop" or hook_result.get("action") == "abort":
+                on_failure = str(retry_policy.on_failure)
+                if on_failure == OnFailure.STOP or hook_result.get("action") == "abort":
                     transcript.append(TranscriptEvent(
                         type="completed",
                         message=f"Ejecucion detenida por error en '{node.id}'",
@@ -371,13 +373,13 @@ class GraphRunner:
                         status="failed", state=state, trace=trace,
                         transcript=transcript, error=str(exec_error),
                     )
-                elif retry_policy.on_failure == "skip":
+                elif on_failure == OnFailure.SKIP:
                     state.set(node.id, {})
                     step += 1
                     await self._save_checkpoint(step, node.id, state, None)
                     node = self._resolve_next_node(node, state, graph)
                     continue
-                elif retry_policy.on_failure == "route_to_error":
+                elif on_failure == OnFailure.ROUTE_TO_ERROR:
                     state.set(node.id, {"__error__": str(exec_error)})
                     error_edge = self._find_error_edge(node.id, graph)
                     if error_edge:
@@ -590,11 +592,12 @@ class GraphRunner:
         return None, last_error
 
     def _compute_delay(self, policy: RetryPolicy, attempt: int) -> float:
-        if policy.backoff == "none":
+        backoff = str(policy.backoff)
+        if backoff == Backoff.NONE:
             return 0
-        elif policy.backoff == "linear":
+        elif backoff == Backoff.LINEAR:
             return policy.initial_delay_seconds * (attempt + 1)
-        elif policy.backoff == "exponential":
+        elif backoff == Backoff.EXPONENTIAL:
             return policy.initial_delay_seconds * (2**attempt)
         return 0
 
@@ -639,25 +642,25 @@ class GraphRunner:
 
     def _evaluate_condition(self, condition: dict, output: dict[str, Any]) -> bool:
         field_name = condition["field"]
-        op = condition["op"]
+        op = str(condition["op"])  # normalize Op enum or string
         expected = condition["value"]
         actual = output.get(field_name)
 
-        if op == "eq":
+        if op == Op.EQ:
             return actual == expected
-        elif op == "neq":
+        elif op == Op.NEQ:
             return actual != expected
-        elif op == "gt":
+        elif op == Op.GT:
             return actual > expected
-        elif op == "lt":
+        elif op == Op.LT:
             return actual < expected
-        elif op == "gte":
+        elif op == Op.GTE:
             return actual >= expected
-        elif op == "lte":
+        elif op == Op.LTE:
             return actual <= expected
-        elif op == "in":
+        elif op == Op.IN:
             return actual in expected
-        elif op == "contains":
+        elif op == Op.CONTAINS:
             return expected in actual
         else:
             raise GraphExecutionError(f"Unknown condition operator: '{op}'")
@@ -691,16 +694,22 @@ class GraphRunner:
     ) -> dict[str, Any]:
         """Resolve inputs for a node from data_map of incoming edges.
 
-        Supports two modes:
+        Supports three modes:
         - Direct reference: "node.key" → maps the value directly
         - Template string: "text with ${node.key} interpolation" → builds a string
+        - Default passthrough (FEAT-034 / API-03): when an incoming edge has no
+          data_map AND is the only unconditional incoming edge, pass through the
+          entire output of the source node as inputs.
         """
         import re
 
         inputs: dict[str, Any] = {}
 
         for edge in graph.edges:
-            if edge.target == node_id and edge.data_map:
+            if edge.target != node_id:
+                continue
+
+            if edge.data_map:
                 for input_key, source_ref in edge.data_map.items():
                     # Template mode: contains ${...} patterns
                     if "${" in source_ref:
@@ -720,6 +729,12 @@ class GraphRunner:
                         value = self._resolve_ref(source_ref, state)
                         if value is not None:
                             inputs[input_key] = value
+            elif edge.condition is None and edge.source in state:
+                # Default passthrough: no data_map + unconditional edge
+                # Pass entire source output as inputs (FEAT-034 / API-03)
+                source_output = state.get(edge.source)
+                if isinstance(source_output, dict):
+                    inputs.update(source_output)
 
         return inputs
 
@@ -765,6 +780,21 @@ class GraphRunner:
             if edge.condition and edge.condition.get("type") == "on_error":
                 return edge
         return None
+
+    @classmethod
+    def default(cls, **kwargs: Any) -> GraphRunner:
+        """Convenience factory: creates a runner with all builtins pre-registered.
+
+        FEAT-034 / API-06: equivalent to manual registry+executor+runner setup.
+
+            runner = GraphRunner.default()
+            result = await runner.run(graph, context=ctx, entry_node_id="trigger")
+        """
+        from datamirai_engine.tools.registry import ToolRegistry
+
+        registry = ToolRegistry.default()
+        executor = RegistryExecutor(registry)
+        return cls(executor=executor, **kwargs)
 
 
 class RegistryExecutor:

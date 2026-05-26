@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, get_type_hints
 
 from pydantic import BaseModel, Field
 
 from datamirai_engine.core.context import ExecutionContext
+from datamirai_engine.core.enums import ConfigFieldType, DataType
 
 
 class ToolInput(BaseModel):
     """Declares an input port for a tool."""
 
     name: str
-    type: str  # string | number | boolean | object | array | any
+    type: str | DataType = DataType.STRING
     required: bool = True
     default: Any = None
     description: str = ""
@@ -26,7 +29,7 @@ class ToolOutput(BaseModel):
     """Declares an output port for a tool."""
 
     name: str
-    type: str
+    type: str | DataType = DataType.STRING
     description: str = ""
 
     model_config = {"frozen": True}
@@ -36,7 +39,7 @@ class ConfigField(BaseModel):
     """Declares a configurable field shown in editor panel."""
 
     name: str
-    type: str  # string | number | boolean | select | slider | object
+    type: str | ConfigFieldType = ConfigFieldType.STRING
     default: Any = None
     description: str = ""
     options: list[Any] | None = None  # for select type
@@ -126,3 +129,122 @@ class BaseTool(ABC):
             if key not in merged:
                 merged[key] = value
         return merged
+
+
+# --- @tool decorator (FEAT-034 / API-05) ---
+
+_PYTHON_TYPE_TO_DATATYPE: dict[type, DataType] = {
+    str: DataType.STRING,
+    int: DataType.NUMBER,
+    float: DataType.NUMBER,
+    bool: DataType.BOOLEAN,
+    dict: DataType.OBJECT,
+    list: DataType.ARRAY,
+}
+
+
+def _infer_data_type(python_type: type) -> DataType:
+    """Map a Python type hint to a DataType enum."""
+    origin = getattr(python_type, "__origin__", None)
+    if origin is list:
+        return DataType.ARRAY
+    if origin is dict:
+        return DataType.OBJECT
+    return _PYTHON_TYPE_TO_DATATYPE.get(python_type, DataType.ANY)
+
+
+def tool(
+    fn: Any = None,
+    *,
+    tool_type: str | None = None,
+    description: str | None = None,
+    category: str = "custom",
+    version: str = "1.0.0",
+) -> Any:
+    """Decorator that turns a plain function into a registrable BaseTool.
+
+    Usage:
+        @tool
+        def get_weather(city: str) -> str:
+            '''Gets weather for a city.'''
+            return f"Sunny in {city}"
+
+        # Or with explicit params:
+        @tool(tool_type="custom/weather", description="Gets weather")
+        def get_weather(city: str) -> str:
+            return f"Sunny in {city}"
+
+    The resulting object is a BaseTool subclass that can be registered:
+        registry.register(get_weather)  # or registry.register(type(get_weather))
+    """
+
+    def _wrap(func: Any) -> type[BaseTool]:
+        sig = inspect.signature(func)
+        hints = get_type_hints(func)
+        return_type = hints.pop("return", str)
+
+        # Build inputs from parameters
+        inputs: list[ToolInput] = []
+        for param_name, param in sig.parameters.items():
+            if param_name in ("self", "config", "context"):
+                continue
+            param_type = hints.get(param_name, str)
+            has_default = param.default is not inspect.Parameter.empty
+            inputs.append(ToolInput(
+                name=param_name,
+                type=_infer_data_type(param_type),
+                required=not has_default,
+                default=param.default if has_default else None,
+                description="",
+            ))
+
+        # Build output
+        out_type = _infer_data_type(return_type)
+        outputs = [ToolOutput(name="result", type=out_type)]
+
+        func_name = func.__name__
+        resolved_tool_type = tool_type or f"{category}/{func_name}"
+        resolved_description = description or func.__doc__ or func_name
+
+        spec = ToolSpec(
+            tool_type=resolved_tool_type,
+            version=version,
+            display_name=func_name.replace("_", " ").title(),
+            description=resolved_description.strip(),
+            category=category,
+            inputs=inputs,
+            outputs=outputs,
+        )
+
+        is_async = inspect.iscoroutinefunction(func)
+
+        class _DecoratedTool(BaseTool):
+            nonlocal spec
+            _spec = spec
+            # Class-level spec required by BaseTool
+            __qualname__ = f"{func_name}_Tool"
+
+            async def execute(self, inputs_dict, config, context):
+                # Pass only known params
+                kwargs = {k: v for k, v in inputs_dict.items() if k in sig.parameters}
+                if is_async:
+                    result = await func(**kwargs)
+                else:
+                    result = func(**kwargs)
+                if isinstance(result, dict):
+                    return result
+                return {"result": result}
+
+        _DecoratedTool.spec = spec
+        _DecoratedTool.__name__ = f"{func_name}_Tool"
+
+        # Preserve function metadata
+        functools.update_wrapper(_DecoratedTool, func, updated=[])
+
+        return _DecoratedTool
+
+    if fn is not None:
+        # Called as @tool without parentheses
+        return _wrap(fn)
+    # Called as @tool(...) with parentheses
+    return _wrap

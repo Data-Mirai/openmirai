@@ -1,34 +1,44 @@
 """Data Mirai Engine — Open source motor for executing agentic graphs.
 
-Usage as library (embedded in another project):
+Quick start (FEAT-034):
+
+    from datamirai_engine import AgentSpec
+
+    agent = AgentSpec.from_yaml("agent.yaml")
+    result = await agent.run({"query": "hello"})
+
+Full control:
 
     from datamirai_engine import GraphDef, GraphRunner, ToolRegistry, RegistryExecutor
     from datamirai_engine import SimpleExecutionContext, AuthContext
 
-    # 1. Registry
-    registry = ToolRegistry()
-    registry.discover("datamirai_engine.tools.builtin.logic.condition")
-    registry.discover("datamirai_engine.tools.builtin.ai.llm_call")
-    # ... discover what you need
-
-    # 2. Context (inject your own resources)
+    registry = ToolRegistry.default()  # all builtins pre-registered
+    runner = GraphRunner(executor=RegistryExecutor(registry))
     context = SimpleExecutionContext(
         db=your_db, vector=your_vector, storage=your_storage,
         llm=your_llm, auth=AuthContext(user_id="u1", role="ADMIN"),
     )
-
-    # 3. Run
-    runner = GraphRunner(executor=RegistryExecutor(registry))
     result = await runner.run(graph, context=context, entry_node_id="trigger")
 """
 
 __version__ = "0.1.0"
 
+# Enums (FEAT-034)
+from datamirai_engine.core.enums import (
+    Backoff,
+    ConfigFieldType,
+    DataType,
+    OnFailure,
+    Op,
+    SessionStatus,
+    TriggerType,
+)
+
 # Core — graph definition and execution
 from datamirai_engine.core.agent_spec import AgentSpec
 
 # Blocks — block system
-from datamirai_engine.tools.base import BaseTool, ToolInput, ToolOutput, ToolSpec, ConfigField
+from datamirai_engine.tools.base import BaseTool, ConfigField, ToolInput, ToolOutput, ToolSpec, tool
 from datamirai_engine.tools.registry import ToolRegistry
 from datamirai_engine.core.auth import Permission, PermissionEvaluator, SingleUserAuth
 from datamirai_engine.core.context import (
@@ -64,6 +74,14 @@ from datamirai_engine.runtime.agent_runtime import AgentRuntime
 from datamirai_engine.runtime.scheduler import Scheduler
 
 __all__ = [
+    # Enums (FEAT-034)
+    "Backoff",
+    "ConfigFieldType",
+    "DataType",
+    "OnFailure",
+    "Op",
+    "SessionStatus",
+    "TriggerType",
     # Runtime
     "AgentRuntime",
     # Core
@@ -77,6 +95,7 @@ __all__ = [
     "ToolRegistry",
     "ToolSpec",
     "ConfigField",
+    "tool",
     "DBResource",
     "EdgeDef",
     "ExecutionContext",

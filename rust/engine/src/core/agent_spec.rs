@@ -83,6 +83,8 @@ fn default_position() -> HashMap<String, f64> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentEdgeSpec {
+    /// Edge ID — optional in JSON/YAML. Auto-generated during validate() (FEAT-034).
+    #[serde(default)]
     pub id: String,
     pub source: String,
     pub target: String,

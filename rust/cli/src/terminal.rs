@@ -158,14 +158,14 @@ const CORE_TOOLS: &[&str] = &[
     "git/commit",
 ];
 
-fn type_map(t: &str) -> &'static str {
+fn type_map(t: &datamirai_engine::FieldType) -> &'static str {
     match t {
-        "string" => "string",
-        "number" => "number",
-        "boolean" => "boolean",
-        "object" => "object",
-        "array" => "array",
-        _ => "string",
+        datamirai_engine::FieldType::String => "string",
+        datamirai_engine::FieldType::Number => "number",
+        datamirai_engine::FieldType::Boolean => "boolean",
+        datamirai_engine::FieldType::Object => "object",
+        datamirai_engine::FieldType::Array => "array",
+        datamirai_engine::FieldType::Integer => "integer",
     }
 }
 
@@ -294,7 +294,7 @@ async fn execute_tool(
     // We need a minimal ExecutionContext for tool execution.
     let ctx = datamirai_engine::resources::SimpleExecutionContext::default_dev();
 
-    match tool.execute(inputs, config, &ctx).await {
+    match tool.execute(inputs, &config, &ctx).await {
         Ok(result) => {
             let map: serde_json::Map<String, Value> = result.into_iter().collect();
             Value::Object(map)

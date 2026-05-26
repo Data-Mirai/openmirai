@@ -37,6 +37,7 @@ Un Universe = instancia de aplicación con environments, recursos (DB, vector, s
 - [FEAT-031.md](prd/draft/FEAT-031.md) — Web Scraping a Escala: Apify + Scraping Infrastructure
 - [FEAT-032.md](prd/draft/FEAT-032.md) — Engine Rust: Paridad Completa con Python (tools, memory, resources)
 - [FEAT-033.md](prd/draft/FEAT-033.md) — Crates.io Quality Refactor: trait defaults, enums tipados, error chains, performance, docs
+- [FEAT-034.md](prd/draft/FEAT-034.md) — API Simplification & DX Overhaul: enums tipados, convenience factories, @tool decorator, JSON canónico, 3 capas (agente/motor/host)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Stack, distribución, convenciones, real-time (§9-§11)
 
 ## Producto

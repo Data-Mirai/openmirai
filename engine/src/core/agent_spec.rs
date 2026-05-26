@@ -28,8 +28,17 @@ pub enum AgentSpecError {
     #[error("yaml error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("yaml must be a mapping at the top level")]
     InvalidYamlStructure,
+
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("unsupported file extension: {0}")]
+    UnsupportedExtension(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -288,12 +297,29 @@ fn default_spec_version() -> String {
 }
 
 impl AgentSpec {
+    /// Auto-generate IDs for edges with empty `id` (FEAT-034 / API-02).
+    pub fn auto_generate_edge_ids(&mut self) {
+        let mut pair_counts: HashMap<String, usize> = HashMap::new();
+        for edge in &mut self.graph.edges {
+            if edge.id.is_empty() {
+                let pair_key = format!("{}__{}", edge.source, edge.target);
+                let count = pair_counts.entry(pair_key.clone()).or_insert(0);
+                *count += 1;
+                edge.id = if *count == 1 {
+                    pair_key
+                } else {
+                    format!("{pair_key}__{count}")
+                };
+            }
+        }
+    }
+
     /// Validate graph references, self-loops, cycles, and empty graphs.
-    ///
-    /// Delegates to [`GraphDef::validate()`] which catches self-loops, cycles,
-    /// empty graphs, duplicate IDs, and dangling edges.
-    pub fn validate(&self) -> Result<(), AgentSpecError> {
-        // Duplicate node IDs (keep for AgentSpec-specific error type)
+    pub fn validate(&mut self) -> Result<(), AgentSpecError> {
+        // Auto-generate edge IDs before validation
+        self.auto_generate_edge_ids();
+
+        // Duplicate node IDs
         let mut seen_nodes = std::collections::HashSet::new();
         let mut dupe_nodes = Vec::new();
         for n in &self.graph.nodes {
@@ -305,7 +331,7 @@ impl AgentSpec {
             return Err(AgentSpecError::DuplicateNodeIds(dupe_nodes));
         }
 
-        // Duplicate edge IDs
+        // Duplicate edge IDs (after auto-gen)
         let mut seen_edges = std::collections::HashSet::new();
         let mut dupe_edges = Vec::new();
         for e in &self.graph.edges {
@@ -333,8 +359,10 @@ impl AgentSpec {
             }
         }
 
-        // Delegate to GraphDef::validate() for self-loops, empty graph, cycles
-        self.to_graph(None).validate().map_err(AgentSpecError::Graph)?;
+        // Delegate to GraphDef::validate() for self-loops, empty graph
+        let mut graph = self.to_graph(None);
+        graph.auto_generate_edge_ids();
+        graph.validate().map_err(AgentSpecError::Graph)?;
 
         Ok(())
     }
@@ -346,9 +374,46 @@ impl AgentSpec {
 
     /// Parse YAML string into AgentSpec.
     pub fn from_yaml(yaml: &str) -> Result<Self, AgentSpecError> {
-        let spec: Self = serde_yaml::from_str(yaml)?;
+        let mut spec: Self = serde_yaml::from_str(yaml)?;
         spec.validate()?;
         Ok(spec)
+    }
+
+    /// Serialize to JSON string (FEAT-034: JSON is the canonical format).
+    pub fn to_json(&self) -> Result<String, AgentSpecError> {
+        serde_json::to_string_pretty(self).map_err(AgentSpecError::from)
+    }
+
+    /// Parse JSON string into AgentSpec.
+    pub fn from_json(json: &str) -> Result<Self, AgentSpecError> {
+        let mut spec: Self = serde_json::from_str(json)?;
+        spec.validate()?;
+        Ok(spec)
+    }
+
+    /// Load from file — auto-detects format by extension (.yaml, .yml, .json).
+    pub fn from_file(path: &str) -> Result<Self, AgentSpecError> {
+        let content = std::fs::read_to_string(path)?;
+        if path.ends_with(".json") {
+            Self::from_json(&content)
+        } else if path.ends_with(".yaml") || path.ends_with(".yml") {
+            Self::from_yaml(&content)
+        } else {
+            Err(AgentSpecError::UnsupportedExtension(
+                path.rsplit('.').next().unwrap_or("unknown").to_string(),
+            ))
+        }
+    }
+
+    /// Save to file — auto-detects format by extension.
+    pub fn to_file(&self, path: &str) -> Result<(), AgentSpecError> {
+        let content = if path.ends_with(".json") {
+            self.to_json()?
+        } else {
+            self.to_yaml()?
+        };
+        std::fs::write(path, content)?;
+        Ok(())
     }
 
     /// Convert the inline graph to a GraphDef ready for execution.
@@ -533,6 +598,55 @@ mod tests {
     }
 
     #[test]
+    fn auto_gen_edge_id() {
+        let mut spec = sample_spec();
+        spec.graph.edges[0].id = String::new(); // clear ID
+        spec.validate().unwrap();
+        assert_eq!(spec.graph.edges[0].id, "n1__n2");
+    }
+
+    #[test]
+    fn auto_gen_edge_id_collision() {
+        let mut spec = sample_spec();
+        spec.graph.edges[0].id = String::new();
+        spec.graph.edges.push(AgentEdgeSpec {
+            id: String::new(),
+            source: "n1".to_string(),
+            target: "n2".to_string(),
+            condition: Some({
+                let mut m = HashMap::new();
+                m.insert("field".to_string(), serde_json::json!("x"));
+                m
+            }),
+            data_map: None,
+        });
+        spec.validate().unwrap();
+        let ids: Vec<&str> = spec.graph.edges.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"n1__n2"));
+        assert!(ids.contains(&"n1__n2__2"));
+    }
+
+    #[test]
+    fn json_roundtrip() {
+        let spec = sample_spec();
+        let json = spec.to_json().unwrap();
+        let back = AgentSpec::from_json(&json).unwrap();
+        assert_eq!(back.name, "test-agent");
+        assert_eq!(back.graph.nodes.len(), 2);
+        assert_eq!(back.graph.edges.len(), 1);
+    }
+
+    #[test]
+    fn json_yaml_roundtrip() {
+        let spec = sample_spec();
+        let json = spec.to_json().unwrap();
+        let from_json = AgentSpec::from_json(&json).unwrap();
+        let yaml = from_json.to_yaml().unwrap();
+        let from_yaml = AgentSpec::from_yaml(&yaml).unwrap();
+        assert_eq!(from_yaml.name, "test-agent");
+    }
+
+    #[test]
     fn yaml_roundtrip() {
         let spec = sample_spec();
         let yaml = spec.to_yaml().unwrap();
@@ -618,7 +732,7 @@ mod tests {
 
     #[test]
     fn validate_detects_empty_graph() {
-        let spec = AgentSpec {
+        let mut spec = AgentSpec {
             name: "empty".to_string(),
             description: String::new(),
             version: "v1".to_string(),

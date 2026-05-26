@@ -56,12 +56,16 @@ pub struct EdgeCondition {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdgeDef {
+    /// Edge ID — optional. Auto-generated as `{source}__{target}` if empty (FEAT-034 / API-02).
+    #[serde(default)]
     pub id: String,
     pub source: String,
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<EdgeCondition>,
     /// Maps output fields from the source node to input params of the target.
+    /// When `None` and the edge is unconditional, the runner passes through
+    /// the entire source output as inputs (FEAT-034 / API-03).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_map: Option<HashMap<String, String>>,
 }
@@ -112,6 +116,24 @@ impl GraphDef {
     /// - No duplicate edge IDs
     /// - All edge sources/targets reference existing nodes
     /// - No self-loops
+    /// Auto-generate IDs for edges that have empty `id` fields (FEAT-034 / API-02).
+    /// Format: `{source}__{target}` or `{source}__{target}__{n}` for duplicates.
+    pub fn auto_generate_edge_ids(&mut self) {
+        let mut pair_counts: HashMap<String, usize> = HashMap::new();
+        for edge in &mut self.edges {
+            if edge.id.is_empty() {
+                let pair_key = format!("{}__{}", edge.source, edge.target);
+                let count = pair_counts.entry(pair_key.clone()).or_insert(0);
+                *count += 1;
+                edge.id = if *count == 1 {
+                    pair_key
+                } else {
+                    format!("{pair_key}__{count}")
+                };
+            }
+        }
+    }
+
     pub fn validate(&self) -> Result<(), GraphError> {
         if self.nodes.is_empty() {
             return Err(GraphError::EmptyGraph);
@@ -143,12 +165,18 @@ impl GraphDef {
                     node_id: edge.target.clone(),
                 });
             }
-            if edge.source == edge.target {
+            if edge.source == edge.target && edge.condition.is_none() {
                 return Err(GraphError::SelfLoop(edge.source.clone()));
             }
         }
 
         Ok(())
+    }
+
+    /// Convenience: auto-generate IDs then validate.
+    pub fn prepare(&mut self) -> Result<(), GraphError> {
+        self.auto_generate_edge_ids();
+        self.validate()
     }
 
     /// Return nodes that have no incoming edges (graph entry points).
@@ -296,6 +324,94 @@ mod tests {
         let mut ids: Vec<&str> = g.entry_nodes().iter().map(|n| n.id.as_str()).collect();
         ids.sort();
         assert_eq!(ids, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn auto_gen_edge_ids() {
+        let mut g = GraphDef {
+            id: "g".into(),
+            name: "auto".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "x"),
+                make_node("b", "y"),
+            ],
+            edges: vec![EdgeDef {
+                id: String::new(), // empty = auto-gen
+                source: "a".into(),
+                target: "b".into(),
+                condition: None,
+                data_map: None,
+            }],
+            metadata: HashMap::new(),
+        };
+        g.prepare().unwrap();
+        assert_eq!(g.edges[0].id, "a__b");
+    }
+
+    #[test]
+    fn auto_gen_edge_ids_collision() {
+        let mut g = GraphDef {
+            id: "g".into(),
+            name: "collision".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "x"),
+                make_node("b", "y"),
+            ],
+            edges: vec![
+                EdgeDef {
+                    id: String::new(),
+                    source: "a".into(),
+                    target: "b".into(),
+                    condition: Some(EdgeCondition {
+                        field: "x".into(),
+                        op: ComparisonOp::Eq,
+                        value: serde_json::json!(true),
+                    }),
+                    data_map: None,
+                },
+                EdgeDef {
+                    id: String::new(),
+                    source: "a".into(),
+                    target: "b".into(),
+                    condition: Some(EdgeCondition {
+                        field: "x".into(),
+                        op: ComparisonOp::Eq,
+                        value: serde_json::json!(false),
+                    }),
+                    data_map: None,
+                },
+            ],
+            metadata: HashMap::new(),
+        };
+        g.auto_generate_edge_ids();
+        let ids: Vec<&str> = g.edges.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"a__b"));
+        assert!(ids.contains(&"a__b__2"));
+    }
+
+    #[test]
+    fn conditional_self_loop_allowed() {
+        let g = GraphDef {
+            id: "g".into(),
+            name: "loop".into(),
+            version: "1.0.0".into(),
+            nodes: vec![make_node("a", "x")],
+            edges: vec![EdgeDef {
+                id: "e1".into(),
+                source: "a".into(),
+                target: "a".into(),
+                condition: Some(EdgeCondition {
+                    field: "done".into(),
+                    op: ComparisonOp::Eq,
+                    value: serde_json::json!(false),
+                }),
+                data_map: None,
+            }],
+            metadata: HashMap::new(),
+        };
+        assert!(g.validate().is_ok());
     }
 
     #[test]

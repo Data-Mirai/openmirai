@@ -37,11 +37,11 @@ class SimpleExecutionContext(ExecutionContext):
     def __init__(
         self,
         *,
-        db: DBResource,
-        vector: VectorResource,
-        storage: StorageResource,
-        llm: LLMResource,
-        auth: AuthContext,
+        db: DBResource | None = None,
+        vector: VectorResource | None = None,
+        storage: StorageResource | None = None,
+        llm: LLMResource | None = None,
+        auth: AuthContext | None = None,
         memory: MemoryResource | None = None,
         event_emitter: Any = None,
         session_id: str | None = None,
@@ -50,11 +50,16 @@ class SimpleExecutionContext(ExecutionContext):
         environment_id: str | None = None,
         api_base: str | None = None,
     ) -> None:
-        self._db = db
-        self._vector = vector
-        self._storage = storage
-        self._llm = llm
-        self._auth = auth
+        from datamirai_engine.resources.db import InMemoryDBResource
+        from datamirai_engine.resources.llm import MockLLMResource
+        from datamirai_engine.resources.storage import InMemoryStorageResource
+        from datamirai_engine.resources.vector import InMemoryVectorResource
+
+        self._db = db or InMemoryDBResource()
+        self._vector = vector or InMemoryVectorResource()
+        self._storage = storage or InMemoryStorageResource()
+        self._llm = llm or MockLLMResource()
+        self._auth = auth or AuthContext(user_id="dev", role="OWNER")
         self._memory = memory or _SimpleMemory()
         self._event_emitter = event_emitter
         self._session_id = session_id

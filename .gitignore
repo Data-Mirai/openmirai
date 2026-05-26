@@ -1,12 +1,15 @@
-# Rust build artifacts
+# Build
 target/
-rust/target/
-
-# Python legacy
-legacy/**/__pycache__/
-legacy/.pytest_cache/
-legacy/.venv/
-*.pyc
 
 # OS
 .DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Legacy (local only, not tracked)
+legacy/
+rust/

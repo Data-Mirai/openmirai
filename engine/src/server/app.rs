@@ -42,11 +42,15 @@ pub struct AppState {
     pub runner: GraphRunner,
     pub llm_factory: LLMFactory,
     pub start_time: std::time::Instant,
+    /// Optional API key for authentication.  When `Some`, every request
+    /// (except GET /health and GET /version) must include a matching
+    /// `X-API-Key` header — otherwise the server returns 401.
+    pub api_key: Option<String>,
 }
 
 impl AppState {
     /// Create app state with a real LLM factory. NO MOCKS.
-    pub fn new(tool_registry: ToolRegistry, llm_factory: LLMFactory) -> Self {
+    pub fn new(tool_registry: ToolRegistry, llm_factory: LLMFactory, api_key: Option<String>) -> Self {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
         let runner = GraphRunner::new(Box::new(executor));
@@ -58,6 +62,7 @@ impl AppState {
             runner,
             llm_factory,
             start_time: std::time::Instant::now(),
+            api_key,
         }
     }
 }
@@ -113,7 +118,7 @@ pub struct ErrorResponse {
 /// Build the axum router with all endpoints wired up.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
-        // Health / version
+        // Health / version — always public (no auth)
         .route("/health", get(health))
         .route("/version", get(version))
         // Graphs CRUD
@@ -149,10 +154,57 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/universe/groupchat", post(groupchat))
         // Webhooks
         .route("/webhooks/{*path}", post(webhook_handler))
-        // Middleware
+        // Middleware: API key auth (if configured)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
+        // Middleware: CORS
         .layer(CorsLayer::permissive())
         // State
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Auth middleware
+// ---------------------------------------------------------------------------
+
+/// API-key authentication middleware.
+///
+/// When `AppState.api_key` is `Some`, every request whose path does NOT
+/// start with `/health` or `/version` must carry a matching `X-API-Key`
+/// header.  When no key is configured the middleware is a pass-through.
+async fn auth_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    // No key configured → dev mode, allow everything.
+    let expected = match &state.api_key {
+        Some(k) => k,
+        None => return next.run(req).await,
+    };
+
+    // Public endpoints: /health and /version bypass auth.
+    let path = req.uri().path();
+    if path == "/health" || path == "/version" {
+        return next.run(req).await;
+    }
+
+    // Check X-API-Key header.
+    let provided = req
+        .headers()
+        .get("X-API-Key")
+        .and_then(|v| v.to_str().ok());
+
+    match provided {
+        Some(key) if key == expected => next.run(req).await,
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        )
+            .into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,21 +216,60 @@ pub fn create_router(state: AppState) -> Router {
 /// The `llm_factory` creates a new `Box<dyn LLMResource>` for each agent execution.
 /// The caller (CLI) is responsible for configuring the factory with the right
 /// provider, model, and API key based on user flags / env vars.
+///
+/// Supports graceful shutdown on SIGTERM / SIGINT (Ctrl+C).
 pub async fn serve(
     host: &str,
     port: u16,
     llm_factory: LLMFactory,
+    api_key: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Warn if no auth configured.
+    if api_key.is_none() {
+        tracing::warn!("No API key configured. Server is running without authentication.");
+        tracing::warn!("Set MIRAI_API_KEY or use --api-key to enable authentication.");
+    }
+
     let mut registry = ToolRegistry::new();
     register_all_builtin_tools(&mut registry);
-    let state = AppState::new(registry, llm_factory);
+    let state = AppState::new(registry, llm_factory, api_key);
     let app = create_router(state);
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("datamirai-engine listening on {addr}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("Server stopped.");
     Ok(())
+}
+
+/// Wait for SIGTERM or SIGINT (Ctrl+C) and log the shutdown.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("Shutdown signal received, finishing in-flight requests...");
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,7 +1297,7 @@ mod tests {
     }
 
     fn test_app() -> Router {
-        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
         create_router(state)
     }
 
@@ -1244,7 +1335,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_crud_lifecycle() {
-        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
         let app = create_router(state.clone());
 
         // Create
@@ -1315,7 +1406,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_crud_lifecycle() {
-        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
         let app = create_router(state.clone());
 
         // First create a graph
@@ -1383,7 +1474,7 @@ mod tests {
     async fn execute_agent_from_spec() {
         let mut registry = ToolRegistry::new();
         register_all_builtin_tools(&mut registry);
-        let state = AppState::new(registry, test_llm_factory());
+        let state = AppState::new(registry, test_llm_factory(), None);
         let app = create_router(state.clone());
 
         // Create agent via from-spec with a simple trigger→response graph
@@ -1438,7 +1529,7 @@ mod tests {
     async fn list_tools_returns_all_builtins() {
         let mut registry = ToolRegistry::new();
         register_all_builtin_tools(&mut registry);
-        let state = AppState::new(registry, test_llm_factory());
+        let state = AppState::new(registry, test_llm_factory(), None);
         let app = create_router(state);
 
         let resp = app

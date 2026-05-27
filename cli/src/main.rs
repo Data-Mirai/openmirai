@@ -490,7 +490,11 @@ async fn run_serve(args: &[String]) {
         })
     };
 
-    if let Err(e) = datamirai_engine::server::app::serve(&host, port, llm_factory).await {
+    // Read API key from env or flag.
+    let server_api_key = parse_flag(args, "--api-key")
+        .or_else(|| std::env::var("MIRAI_API_KEY").ok());
+
+    if let Err(e) = datamirai_engine::server::app::serve(&host, port, llm_factory, server_api_key).await {
         eprintln!(
             "{}Server error: {e}{}",
             colors::RED,

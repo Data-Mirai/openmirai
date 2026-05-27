@@ -74,9 +74,26 @@ impl SharedState {
     }
 
     /// Get a single field from a node's output.
+    ///
+    /// Supports nested traversal via dot-separated paths:
+    /// - `get_field("trigger", "payload")` → direct key lookup
+    /// - `get_field("trigger", "payload.question")` → traverses into nested JSON
+    /// - `get_field("n1", "a.b.c.d")` → N levels deep, returns None if any level missing
     pub fn get_field(&self, node_id: &str, field: &str) -> Option<serde_json::Value> {
         let map = self.inner.read().ok()?;
-        map.get(node_id)?.get(field).cloned()
+        let node_output = map.get(node_id)?;
+
+        let parts: Vec<&str> = field.split('.').collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        let mut current = node_output.get(parts[0])?.clone();
+        for part in &parts[1..] {
+            current = current.get(part)?.clone();
+        }
+
+        Some(current)
     }
 
     /// Deep-clone the entire state into a plain HashMap.
@@ -220,6 +237,63 @@ mod tests {
 
         s1.set("n1", output(&[("a", json!(1))]), false).unwrap();
         assert_eq!(s2.get_field("n1", "a"), Some(json!(1)));
+    }
+
+    // --- PRD-004: Nested field traversal ---
+
+    #[test]
+    fn get_field_nested_traversal() {
+        let s = SharedState::new();
+        s.set(
+            "trigger",
+            output(&[("payload", json!({"question": "hola", "context": "sobre IA"}))]),
+            false,
+        )
+        .unwrap();
+
+        // Nested: trigger.payload.question
+        assert_eq!(
+            s.get_field("trigger", "payload.question"),
+            Some(json!("hola"))
+        );
+        assert_eq!(
+            s.get_field("trigger", "payload.context"),
+            Some(json!("sobre IA"))
+        );
+        // Direct (no dots) still works
+        assert_eq!(
+            s.get_field("trigger", "payload"),
+            Some(json!({"question": "hola", "context": "sobre IA"}))
+        );
+    }
+
+    #[test]
+    fn get_field_deep_nesting() {
+        let s = SharedState::new();
+        s.set("n1", output(&[("a", json!({"b": {"c": {"d": "deep"}}}))]), false)
+            .unwrap();
+        assert_eq!(s.get_field("n1", "a.b.c.d"), Some(json!("deep")));
+        assert_eq!(s.get_field("n1", "a.b.c"), Some(json!({"d": "deep"})));
+        assert_eq!(s.get_field("n1", "a.b"), Some(json!({"c": {"d": "deep"}})));
+    }
+
+    #[test]
+    fn get_field_nested_missing_returns_none() {
+        let s = SharedState::new();
+        s.set("n1", output(&[("data", json!("just a string"))]), false)
+            .unwrap();
+        // Path goes through a non-object → None, no panic
+        assert_eq!(s.get_field("n1", "data.subfield"), None);
+    }
+
+    #[test]
+    fn get_field_nested_nonexistent_intermediate() {
+        let s = SharedState::new();
+        s.set("n1", output(&[("a", json!({"b": 42}))]), false).unwrap();
+        // b is a number, can't traverse into it
+        assert_eq!(s.get_field("n1", "a.b.c"), None);
+        // x doesn't exist at all
+        assert_eq!(s.get_field("n1", "a.x.y"), None);
     }
 
     #[test]

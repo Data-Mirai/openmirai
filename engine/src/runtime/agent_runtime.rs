@@ -304,6 +304,8 @@ mod tests {
             agent_type: AgentType::Managed,
             system_prompt: None,
             soul: None,
+            inputs: None,
+            outputs: None,
             graph: AgentGraphSpec::default(),
             triggers: vec![],
             config: AgentConfig::default(),

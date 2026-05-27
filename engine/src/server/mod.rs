@@ -45,16 +45,39 @@ use self::state::AppState;
 /// Build the axum router with all endpoints wired up.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
-        // Health / version — always public (no auth)
+        // Health / version — always public (no auth, no version prefix)
         .route("/health", get(health))
         .route("/version", get(version))
+        // ---- API v1 ----
         // Graphs CRUD
-        .route("/api/graphs", post(create_graph).get(list_graphs))
-        .route(
-            "/api/graphs/{id}",
-            get(get_graph).delete(delete_graph),
-        )
+        .route("/api/v1/graphs", post(create_graph).get(list_graphs))
+        .route("/api/v1/graphs/{id}", get(get_graph).delete(delete_graph))
         // Agents CRUD
+        .route("/api/v1/agents", post(create_agent).get(list_agents))
+        .route("/api/v1/agents/from-spec", post(create_agent_from_spec))
+        .route("/api/v1/agents/{id}", get(get_agent))
+        .route("/api/v1/agents/{id}/execute", post(execute_agent))
+        .route("/api/v1/agents/{id}/stream", post(stream_agent))
+        .route("/api/v1/agents/{id}/spec", get(get_agent_spec))
+        .route("/api/v1/agents/{id}/schema", get(get_agent_schema))
+        // Tools
+        .route("/api/v1/tools", get(list_tools))
+        // Templates
+        .route("/api/v1/templates", get(list_templates_handler))
+        // Sessions
+        .route("/api/v1/sessions", get(list_sessions))
+        .route("/api/v1/sessions/{id}", get(get_session))
+        // Universe
+        .route("/api/v1/universe/message", post(universe_message))
+        .route("/api/v1/universe/groupchat", post(groupchat))
+        // Metrics
+        .route("/api/v1/metrics", get(get_metrics))
+        // RAG + Eval
+        .route("/api/v1/rag/search", post(rag_search))
+        .route("/api/v1/eval", post(eval_session))
+        // ---- Backward-compat: unversioned /api/ aliases ----
+        .route("/api/graphs", post(create_graph).get(list_graphs))
+        .route("/api/graphs/{id}", get(get_graph).delete(delete_graph))
         .route("/api/agents", post(create_agent).get(list_agents))
         .route("/api/agents/from-spec", post(create_agent_from_spec))
         .route("/api/agents/{id}", get(get_agent))
@@ -62,24 +85,16 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/agents/{id}/stream", post(stream_agent))
         .route("/api/agents/{id}/spec", get(get_agent_spec))
         .route("/api/agents/{id}/schema", get(get_agent_schema))
-        // Tools
         .route("/api/tools", get(list_tools))
-        // Templates
         .route("/api/templates", get(list_templates_handler))
-        // Sessions
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
-        // Universe
         .route("/api/universe/message", post(universe_message))
-        // Metrics
-        .route("/api/metrics", get(get_metrics))
-        // RAG
-        .route("/api/rag/search", post(rag_search))
-        // Eval
-        .route("/api/eval", post(eval_session))
-        // GroupChat
         .route("/api/universe/groupchat", post(groupchat))
-        // Webhooks
+        .route("/api/metrics", get(get_metrics))
+        .route("/api/rag/search", post(rag_search))
+        .route("/api/eval", post(eval_session))
+        // Webhooks (no version prefix)
         .route("/webhooks/{*path}", post(webhook_handler))
         // Middleware: API key auth (if configured)
         .layer(axum::middleware::from_fn_with_state(

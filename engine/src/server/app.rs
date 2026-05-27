@@ -1071,7 +1071,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp.into_body()).await;
-        assert_eq!(json["version"], "0.1.0");
+        assert_eq!(json["version"], "0.2.0");
         assert_eq!(json["engine"], "datamirai-engine-rs");
     }
 

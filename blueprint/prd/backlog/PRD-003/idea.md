@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | PRD-003 |
 | **Fecha** | 2026-05-27 |
-| **Estado** | backlog |
+| **Estado** | in_progress |
 | **Branch** | prd/PRD-003 |
 | **Target** | v0.2.0 (incluir en PRD-002) |
 

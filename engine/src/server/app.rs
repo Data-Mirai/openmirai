@@ -545,6 +545,16 @@ async fn run_agent_spec(
         }
     }
 
+    // Inject MCP server configs into mcp/call nodes.
+    if !spec.config.mcp_servers.is_empty() {
+        let mcp_val = serde_json::to_value(&spec.config.mcp_servers).unwrap_or_default();
+        for node in &mut graph.nodes {
+            if node.tool_type == "mcp/call" {
+                node.config.insert("__mcp_servers".to_string(), mcp_val.clone());
+            }
+        }
+    }
+
     // Resolve system prompt from Soul or spec.
     let system_prompt = if let Some(ref soul_path) = spec.soul {
         crate::soul::load_from_file(std::path::Path::new(soul_path))

@@ -1,0 +1,22 @@
+{
+  "name": "datamirai",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Mirai Engine — agentic graph execution",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest"
+  },
+  "keywords": ["ai", "agents", "graph", "llm", "orchestration"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/datamirai/engine"
+  },
+  "files": ["dist/", "README.md"],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

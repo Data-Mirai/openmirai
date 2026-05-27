@@ -22,6 +22,18 @@ use crate::core::well_known as wk;
 use super::helpers::{now_ts, run_hook_with_timeout, compare_numbers};
 use super::traits::{CheckpointCallback, HookHandler, ToolExecutor};
 use super::types::*;
+
+/// Outcome of handling a node failure — used by `handle_node_failure`.
+enum NodeFailureOutcome {
+    /// Execution stopped — return this result immediately.
+    Stop(ExecutionResult),
+    /// Hook requested retry — re-execute the same node.
+    Retry,
+    /// Advance cursor to the next node (may be None = end of graph).
+    Advance(Option<usize>),
+}
+
+// ---------------------------------------------------------------------------
 // GraphRunner
 // ---------------------------------------------------------------------------
 
@@ -157,6 +169,17 @@ impl GraphRunner {
     }
 
     /// Internal: execute the main loop starting from a specific node/state.
+    ///
+    /// # Algorithm (readable at a glance)
+    ///
+    /// 1. Build node index, emit graph-started events.
+    /// 2. Call on_graph_start hook (may abort).
+    /// 3. Walk the cursor node-by-node:
+    ///    a. Check pause / max-iterations / human-input interrupts.
+    ///    b. Resolve inputs, call pre_block hook, execute with retry.
+    ///    c. On success → record, advance cursor (fan-out or sequential).
+    ///    d. On failure → apply failure mode (stop / skip / route-to-error).
+    /// 4. Call on_graph_end hook, emit completed, return result.
     async fn run_from(
         &self,
         graph: &GraphDef,
@@ -169,632 +192,487 @@ impl GraphRunner {
         let mut transcript: Vec<TranscriptEntry> = Vec::new();
         let mut visit_counts: HashMap<String, u32> = HashMap::new();
         let mut step = start_step;
-
-        // Pre-compute node-id → index mapping for O(1) lookups.
-        let node_idx: HashMap<&str, usize> = graph
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (n.id.as_str(), i))
-            .collect();
-
+        let node_idx: HashMap<&str, usize> = graph.nodes.iter().enumerate()
+            .map(|(i, n)| (n.id.as_str(), i)).collect();
         let mut current_idx: Option<usize> = node_idx.get(entry_node_id).copied();
-
         let session_id = context.session_id().to_string();
 
-        // Transcript: started
-        transcript.push(TranscriptEntry {
-            entry_type: wk::TRANSCRIPT_STARTED.to_string(),
-            message: "Execution started".to_string(),
-            timestamp: now_ts(),
-            node_id: None,
-            metadata: HashMap::new(),
-        });
+        // Phase 1: Start
+        self.emit_graph_started(graph, &session_id, entry_node_id, &mut transcript);
 
-        // Emit SessionStarted.
-        self.emit_event(
-            EventType::SessionStarted,
-            &session_id,
-            None,
-            HashMap::new(),
-        );
-
-        info!(
-            session_id = %session_id,
-            graph_id = %graph.id,
-            entry = %entry_node_id,
-            "graph execution started"
-        );
-
-        // Stream: graph started
-        self.stream_event(crate::streaming::StreamEvent::GraphStarted {
-            graph_name: graph.name.clone(),
-            node_count: graph.nodes.len(),
-        });
-
-        // Hook: on_graph_start (with 30s timeout)
-        if let Some(ref hook) = self.hook_handler {
-            let hook_result = run_hook_with_timeout(
-                hook.on_graph_start(graph, context),
-            )
-            .await;
-            match hook_result {
-                HookResult::Abort(reason) => {
-                    return Ok(ExecutionResult {
-                        status: ExecutionStatus::Failed,
-                        state,
-                        trace,
-                        transcript,
-                        error: Some(format!("Hook on_graph_start aborted: {}", reason)),
-                        interrupt_node_id: None,
-                        interrupt_info: None,
-                    });
-                }
-                _ => {}
-            }
+        if let Some(result) = self.call_hook_graph_start(
+            graph, context, &state, &trace, &transcript,
+        ).await {
+            return Ok(result);
         }
 
-        // Main loop — walk the cursor until we run out of edges.
+        // Phase 2: Walk the graph node by node
         while let Some(idx) = current_idx {
             let node = &graph.nodes[idx];
             let node_id = node.id.as_str();
 
-            // Check for pause request.
-            if self.pause_requested.swap(false, Ordering::SeqCst) {
-                self.save_checkpoint(&session_id, step, node_id, &state, Some(node_id))
-                    .await;
-                self.emit_event(
-                    EventType::SessionInterrupted,
-                    &session_id,
-                    Some(node_id),
-                    HashMap::new(),
-                );
-                return Ok(ExecutionResult {
-                    status: ExecutionStatus::Interrupted,
-                    state,
-                    trace,
-                    transcript,
-                    error: None,
-                    interrupt_node_id: Some(node_id.to_string()),
-                    interrupt_info: None,
-                });
+            // --- Interrupts ---
+            if let Some(result) = self.check_pause_interrupt(
+                node_id, &session_id, step, &state, &trace, &transcript,
+            ).await {
+                return Ok(result);
             }
 
-            // Guard: max iterations per node.
             let visits = visit_counts.entry(node.id.clone()).or_insert(0);
             *visits += 1;
-
             if *visits > self.max_iterations {
-                error!(
-                    node_id = %node_id,
-                    visits = *visits,
-                    "max iterations exceeded"
-                );
-                self.emit_event(
-                    EventType::SessionFailed,
-                    &session_id,
-                    Some(node_id),
-                    HashMap::new(),
-                );
+                self.emit_event(EventType::SessionFailed, &session_id, Some(node_id), HashMap::new());
                 return Err(RunnerError::MaxIterationsExceeded {
-                    node_id: node_id.to_string(),
-                    visits: *visits,
+                    node_id: node_id.to_string(), visits: *visits,
                 });
             }
 
-            // Check if this is a human_input block — interrupt BEFORE execution.
-            if node.tool_type == wk::HUMAN_INPUT_TOOL {
-                let prompt = node
-                    .config
-                    .get("prompt")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Decision required")
-                    .to_string();
-                let options: Vec<String> = node
-                    .config
-                    .get("options")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let timeout_minutes = node
-                    .config
-                    .get("timeout_minutes")
-                    .and_then(|v| v.as_f64());
-
-                let info = InterruptInfo {
-                    node_id: node_id.to_string(),
-                    prompt,
-                    options,
-                    timeout_minutes,
-                };
-
-                self.save_checkpoint(&session_id, step, node_id, &state, Some(node_id))
-                    .await;
-                self.emit_event(
-                    EventType::InterruptCreated,
-                    &session_id,
-                    Some(node_id),
-                    HashMap::new(),
-                );
-
-                return Ok(ExecutionResult {
-                    status: ExecutionStatus::Interrupted,
-                    state,
-                    trace,
-                    transcript,
-                    error: None,
-                    interrupt_node_id: Some(node_id.to_string()),
-                    interrupt_info: Some(info),
-                });
+            if let Some(result) = self.check_human_input_interrupt(
+                node, &session_id, step, &state, &trace, &transcript,
+            ).await {
+                return Ok(result);
             }
 
-            // Resolve inputs from incoming edges' data_map.
-            let mut inputs = self.resolve_inputs(node_id, graph, &state);
+            // --- Prepare inputs ---
+            let mut inputs = self.resolve_and_merge_inputs(node, graph, &state);
 
-            // Merge node.config as base layer — edge-resolved inputs take priority.
-            for (key, val) in &node.config {
-                inputs.entry(key.clone()).or_insert_with(|| val.clone());
-            }
-
-            debug!(
-                node_id = %node_id,
-                tool_type = %node.tool_type,
-                input_keys = ?inputs.keys().collect::<Vec<_>>(),
-                visit = *visits,
-                "executing node"
-            );
-
-            // Hook: pre_block_exec (with 30s timeout)
+            // --- Pre-block hook ---
             if let Some(ref hook) = self.hook_handler {
-                let hook_result = run_hook_with_timeout(
-                    hook.pre_block_exec(node, &mut inputs, context),
-                )
-                .await;
-                match hook_result {
+                let hr = run_hook_with_timeout(hook.pre_block_exec(node, &mut inputs, context)).await;
+                match hr {
                     HookResult::Abort(reason) => {
-                        return Ok(ExecutionResult {
-                            status: ExecutionStatus::Failed,
-                            state,
-                            trace,
-                            transcript,
-                            error: Some(format!(
-                                "Hook pre_block_exec aborted at '{}': {}",
-                                node_id, reason
-                            )),
-                            interrupt_node_id: None,
-                            interrupt_info: None,
-                        });
+                        return Ok(self.make_failed_result(
+                            state, trace, transcript,
+                            format!("Hook pre_block_exec aborted at '{}': {}", node_id, reason),
+                        ));
                     }
                     HookResult::Skip => {
-                        let empty: HashMap<String, Value> = HashMap::new();
-                        let _ = state.set(node_id, empty, true);
-                        current_idx = self
-                            .resolve_next_node(node_id, &HashMap::new(), graph)
-                            .as_deref()
-                            .and_then(|nid| node_idx.get(nid).copied());
+                        let _ = state.set(node_id, HashMap::new(), true);
+                        current_idx = self.resolve_next_node(node_id, &HashMap::new(), graph)
+                            .as_deref().and_then(|nid| node_idx.get(nid).copied());
                         step += 1;
                         continue;
                     }
-                    HookResult::ModifiedInputs(new_inputs) => {
-                        inputs = new_inputs;
-                    }
+                    HookResult::ModifiedInputs(new) => { inputs = new; }
                     _ => {}
                 }
             }
 
-            // Emit BlockStarted.
-            self.emit_event(
-                EventType::BlockStarted,
-                &session_id,
-                Some(node_id),
-                HashMap::new(),
-            );
-
-            // Stream: node started
-            self.stream_event(crate::streaming::StreamEvent::NodeStarted {
-                node_id: node_id.to_string(),
-                tool_type: node.tool_type.clone(),
-            });
-
-            // Transcript: block starting
-            transcript.push(TranscriptEntry {
-                entry_type: wk::TRANSCRIPT_BLOCK_START.to_string(),
-                message: format!("Executing {}", node.tool_type),
-                timestamp: now_ts(),
-                node_id: Some(node_id.to_string()),
-                metadata: HashMap::new(),
-            });
-
-            // Record start time.
-            let start = Instant::now();
-
-            // Hook: pre_llm_call for AI blocks
+            // --- Execute node ---
+            self.emit_block_started(node, &session_id, &mut transcript);
             if node.tool_type.starts_with(wk::AI_TOOL_PREFIX) {
                 if let Some(ref hook) = self.hook_handler {
-                    let _ = run_hook_with_timeout(
-                        hook.pre_llm_call(node, context),
-                    )
-                    .await;
+                    let _ = run_hook_with_timeout(hook.pre_llm_call(node, context)).await;
                 }
             }
 
-            // Execute node with retry logic.
+            let start = Instant::now();
             let retry_policy = self.retry_policy_for(node);
-            let exec_result = self
-                .execute_with_retry(node, inputs, context, &retry_policy)
-                .await;
-
+            let exec_result = self.execute_with_retry(node, inputs, context, &retry_policy).await;
             let elapsed_ms = start.elapsed().as_millis() as u64;
 
-            // Branch on success / failure.
+            // --- Handle result ---
             current_idx = match exec_result {
-                // ---- Success ----
-                Ok((mut output, retries)) => {
-                    // Hook: post_llm_call for AI blocks
-                    if node.tool_type.starts_with(wk::AI_TOOL_PREFIX) {
-                        if let Some(ref hook) = self.hook_handler {
-                            let mut response_val =
-                                serde_json::to_value(&output).unwrap_or(Value::Null);
-                            let _ = run_hook_with_timeout(
-                                hook.post_llm_call(node, &mut response_val, context),
-                            )
-                            .await;
-                        }
-                    }
-
-                    // Store output in shared state (overwrite for looping nodes).
-                    if let Err(e) = state.set(node_id, output.clone(), true) {
-                        warn!(node_id = %node_id, error = %e, "failed to set state");
-                    }
-
-                    trace.push(TraceEntry {
-                        node_id: node_id.to_string(),
-                        tool_type: node.tool_type.clone(),
-                        status: TraceStatus::Ok,
-                        duration_ms: elapsed_ms,
-                        retries,
-                        error: None,
-                    });
-
-                    // Hook: post_block_exec
-                    if let Some(ref hook) = self.hook_handler {
-                        let _ = run_hook_with_timeout(
-                            hook.post_block_exec(node, &mut output, context),
-                        )
-                        .await;
-                    }
-
-                    // Emit BlockCompleted.
-                    self.emit_event(
-                        EventType::BlockCompleted,
-                        &session_id,
-                        Some(node_id),
-                        HashMap::new(),
-                    );
-
-                    // Stream: node completed
-                    self.stream_event(crate::streaming::StreamEvent::NodeCompleted {
-                        node_id: node_id.to_string(),
-                        tool_type: node.tool_type.clone(),
-                        duration_ms: elapsed_ms,
-                        output_keys: output.keys().cloned().collect(),
-                    });
-
-                    // Transcript: block completed
-                    transcript.push(TranscriptEntry {
-                        entry_type: wk::TRANSCRIPT_BLOCK_END.to_string(),
-                        message: format!(
-                            "Completed {} in {}ms",
-                            node.tool_type, elapsed_ms
-                        ),
-                        timestamp: now_ts(),
-                        node_id: Some(node_id.to_string()),
-                        metadata: HashMap::new(),
-                    });
-
-                    // Checkpoint after successful execution (REGLA-12).
-                    step += 1;
-
-                    // Resolve ALL next nodes to detect fan-out.
-                    let next_nodes = self.resolve_all_next_nodes(node_id, &output, graph);
-
-                    if next_nodes.len() > 1 {
-                        // ---- FAN-OUT: parallel execution ----
-                        debug!(
-                            from = %node_id,
-                            targets = ?next_nodes,
-                            "fan-out detected — executing {} nodes in parallel",
-                            next_nodes.len()
-                        );
-
-                        let (fo_trace, fo_transcript) = self
-                            .execute_fanout(&next_nodes, graph, context, &state, &session_id)
-                            .await?;
-                        trace.extend(fo_trace);
-                        transcript.extend(fo_transcript);
-
-                        // Find join node (common successor of all parallel nodes).
-                        let join_id = self.find_fanout_join(&next_nodes, graph);
-
-                        self.save_checkpoint(
-                            &session_id,
-                            step,
-                            node_id,
-                            &state,
-                            join_id.as_deref(),
-                        )
-                        .await;
-
-                        if let Some(ref jid) = join_id {
-                            debug!(from = %node_id, join = %jid, "fan-in at join node");
-                        } else {
-                            debug!(from = %node_id, "fan-out paths terminate without join");
-                        }
-                        join_id.as_deref().and_then(|nid| node_idx.get(nid).copied())
-                    } else {
-                        // ---- NORMAL: sequential execution ----
-                        let next = next_nodes.into_iter().next();
-
-                        self.save_checkpoint(
-                            &session_id,
-                            step,
-                            node_id,
-                            &state,
-                            next.as_deref(),
-                        )
-                        .await;
-
-                        // Transcript: decision at conditional edges
-                        let outgoing = graph.outgoing_edges(node_id);
-                        let conditional: Vec<_> = outgoing
-                            .iter()
-                            .filter(|e| e.condition.is_some())
-                            .collect();
-                        if conditional.len() > 1 {
-                            if let Some(ref next_id) = next {
-                                let edge_id = outgoing
-                                    .iter()
-                                    .find(|e| e.target == *next_id)
-                                    .map(|e| e.id.as_str())
-                                    .unwrap_or("unknown");
-                                let cond_desc = outgoing
-                                    .iter()
-                                    .find(|e| e.target == *next_id)
-                                    .and_then(|e| e.condition.as_ref())
-                                    .map(|c| {
-                                        format!("{} {:?} {}", c.field, c.op, c.value)
-                                    })
-                                    .unwrap_or_default();
-
-                                transcript.push(TranscriptEntry {
-                                    entry_type: wk::TRANSCRIPT_DECISION.to_string(),
-                                    message: format!(
-                                        "Decision: following edge {} (condition: {})",
-                                        edge_id, cond_desc
-                                    ),
-                                    timestamp: now_ts(),
-                                    node_id: Some(node_id.to_string()),
-                                    metadata: HashMap::new(),
-                                });
-                            }
-                        }
-
-                        if let Some(ref nid) = next {
-                            debug!(from = %node_id, to = %nid, "advancing to next node");
-                        } else {
-                            debug!(from = %node_id, "no outgoing edge — end of graph");
-                        }
-                        next.as_deref().and_then(|nid| node_idx.get(nid).copied())
-                    }
+                Ok((output, retries)) => {
+                    self.handle_node_success(
+                        node, output, retries, elapsed_ms, &session_id,
+                        context, graph, &state, &mut trace, &mut transcript,
+                        &mut step, &node_idx,
+                    ).await?
                 }
-
-                // ---- Failure ----
                 Err((tool_err, retries)) => {
-                    let err_msg = tool_err.to_string();
-
-                    // Hook: on_error
-                    let hook_action = if let Some(ref hook) = self.hook_handler {
-                        run_hook_with_timeout(
-                            hook.on_error(node, &tool_err, context),
-                        )
-                        .await
-                    } else {
-                        HookResult::Continue
-                    };
-
-                    // If hook says Retry, re-execute this node.
-                    if matches!(hook_action, HookResult::Retry) {
-                        // Transcript: error noted but retrying via hook
-                        transcript.push(TranscriptEntry {
-                            entry_type: wk::TRANSCRIPT_ERROR.to_string(),
-                            message: format!(
-                                "Error in {}: {} (retrying via hook)",
-                                node.tool_type, err_msg
-                            ),
-                            timestamp: now_ts(),
-                            node_id: Some(node_id.to_string()),
-                            metadata: HashMap::new(),
-                        });
-                        // Do NOT advance current_idx — re-enter the loop for this node.
-                        current_idx = Some(idx);
-                        continue;
-                    }
-
-                    // Transcript: error
-                    transcript.push(TranscriptEntry {
-                        entry_type: wk::TRANSCRIPT_ERROR.to_string(),
-                        message: format!("Error in {}: {}", node.tool_type, err_msg),
-                        timestamp: now_ts(),
-                        node_id: Some(node_id.to_string()),
-                        metadata: HashMap::new(),
-                    });
-
-                    match retry_policy.on_failure {
-                        FailureMode::Stop => {
-                            trace.push(TraceEntry {
-                                node_id: node_id.to_string(),
-                                tool_type: node.tool_type.clone(),
-                                status: TraceStatus::Error,
-                                duration_ms: elapsed_ms,
-                                retries,
-                                error: Some(err_msg.clone()),
-                            });
-
-                            self.emit_event(
-                                EventType::BlockError,
-                                &session_id,
-                                Some(node_id),
-                                HashMap::new(),
-                            );
-                            self.emit_event(
-                                EventType::SessionFailed,
-                                &session_id,
-                                None,
-                                HashMap::new(),
-                            );
-
-                            error!(
-                                node_id = %node_id,
-                                error = %err_msg,
-                                "node execution failed — stopping"
-                            );
-
-                            return Ok(ExecutionResult {
-                                status: ExecutionStatus::Failed,
-                                state,
-                                trace,
-                                transcript,
-                                error: Some(err_msg),
-                                interrupt_node_id: None,
-                                interrupt_info: None,
-                            });
-                        }
-
-                        FailureMode::Skip => {
-                            warn!(
-                                node_id = %node_id,
-                                error = %err_msg,
-                                "node execution failed — skipping"
-                            );
-
-                            let empty_output: HashMap<String, Value> = HashMap::new();
-                            let _ = state.set(node_id, empty_output.clone(), true);
-
-                            trace.push(TraceEntry {
-                                node_id: node_id.to_string(),
-                                tool_type: node.tool_type.clone(),
-                                status: TraceStatus::Skipped,
-                                duration_ms: elapsed_ms,
-                                retries,
-                                error: Some(err_msg),
-                            });
-
-                            self.emit_event(
-                                EventType::BlockCompleted,
-                                &session_id,
-                                Some(node_id),
-                                HashMap::new(),
-                            );
-
-                            // Continue with normal edge routing (empty output).
-                            self.resolve_next_node(node_id, &empty_output, graph)
-                                .as_deref()
-                                .and_then(|nid| node_idx.get(nid).copied())
-                        }
-
-                        FailureMode::RouteToError => {
-                            warn!(
-                                node_id = %node_id,
-                                error = %err_msg,
-                                "node execution failed — routing to error path"
-                            );
-
-                            let mut error_output: HashMap<String, Value> = HashMap::new();
-                            error_output.insert(
-                                wk::ERROR_FIELD.to_string(),
-                                Value::String(err_msg.clone()),
-                            );
-                            let _ = state.set(node_id, error_output.clone(), true);
-
-                            trace.push(TraceEntry {
-                                node_id: node_id.to_string(),
-                                tool_type: node.tool_type.clone(),
-                                status: TraceStatus::Error,
-                                duration_ms: elapsed_ms,
-                                retries,
-                                error: Some(err_msg),
-                            });
-
-                            self.emit_event(
-                                EventType::BlockError,
-                                &session_id,
-                                Some(node_id),
-                                HashMap::new(),
-                            );
-
-                            // Follow edges — conditional edges can match on __error__.
-                            self.resolve_next_node(node_id, &error_output, graph)
-                                .as_deref()
-                                .and_then(|nid| node_idx.get(nid).copied())
-                        }
+                    let next = self.handle_node_failure(
+                        node, idx, tool_err, retries, elapsed_ms,
+                        &session_id, &retry_policy, context, graph,
+                        &state, &mut trace, &mut transcript, &node_idx,
+                    ).await;
+                    match next {
+                        NodeFailureOutcome::Stop(result) => return Ok(result),
+                        NodeFailureOutcome::Retry => { current_idx = Some(idx); continue; }
+                        NodeFailureOutcome::Advance(next_idx) => next_idx,
                     }
                 }
             };
         }
 
-        // Hook: on_graph_end
+        // Phase 3: Finalize
+        Ok(self.finalize_graph_execution(
+            graph, context, &session_id, state, trace, transcript,
+        ).await)
+    }
+
+    // -----------------------------------------------------------------------
+    // run_from sub-methods — each handles one concern
+    // -----------------------------------------------------------------------
+
+    fn emit_graph_started(
+        &self,
+        graph: &GraphDef,
+        session_id: &str,
+        entry_node_id: &str,
+        transcript: &mut Vec<TranscriptEntry>,
+    ) {
+        transcript.push(TranscriptEntry {
+            entry_type: wk::TRANSCRIPT_STARTED.to_string(),
+            message: "Execution started".to_string(),
+            timestamp: now_ts(), node_id: None, metadata: HashMap::new(),
+        });
+        self.emit_event(EventType::SessionStarted, session_id, None, HashMap::new());
+        info!(session_id = %session_id, graph_id = %graph.id, entry = %entry_node_id, "graph execution started");
+        self.stream_event(crate::streaming::StreamEvent::GraphStarted {
+            graph_name: graph.name.clone(), node_count: graph.nodes.len(),
+        });
+    }
+
+    async fn call_hook_graph_start(
+        &self,
+        graph: &GraphDef,
+        context: &dyn ExecutionContext,
+        state: &SharedState,
+        trace: &[TraceEntry],
+        transcript: &[TranscriptEntry],
+    ) -> Option<ExecutionResult> {
         if let Some(ref hook) = self.hook_handler {
-            let _ = run_hook_with_timeout(
-                hook.on_graph_end(graph, &state, context),
-            )
-            .await;
+            if let HookResult::Abort(reason) = run_hook_with_timeout(hook.on_graph_start(graph, context)).await {
+                return Some(ExecutionResult {
+                    status: ExecutionStatus::Failed, state: state.clone(),
+                    trace: trace.to_vec(), transcript: transcript.to_vec(),
+                    error: Some(format!("Hook on_graph_start aborted: {}", reason)),
+                    interrupt_node_id: None, interrupt_info: None,
+                });
+            }
+        }
+        None
+    }
+
+    async fn check_pause_interrupt(
+        &self,
+        node_id: &str,
+        session_id: &str,
+        step: u32,
+        state: &SharedState,
+        trace: &[TraceEntry],
+        transcript: &[TranscriptEntry],
+    ) -> Option<ExecutionResult> {
+        if self.pause_requested.swap(false, Ordering::SeqCst) {
+            self.save_checkpoint(session_id, step, node_id, state, Some(node_id)).await;
+            self.emit_event(EventType::SessionInterrupted, session_id, Some(node_id), HashMap::new());
+            return Some(ExecutionResult {
+                status: ExecutionStatus::Interrupted, state: state.clone(),
+                trace: trace.to_vec(), transcript: transcript.to_vec(),
+                error: None, interrupt_node_id: Some(node_id.to_string()),
+                interrupt_info: None,
+            });
+        }
+        None
+    }
+
+    async fn check_human_input_interrupt(
+        &self,
+        node: &NodeDef,
+        session_id: &str,
+        step: u32,
+        state: &SharedState,
+        trace: &[TraceEntry],
+        transcript: &[TranscriptEntry],
+    ) -> Option<ExecutionResult> {
+        if node.tool_type != wk::HUMAN_INPUT_TOOL {
+            return None;
+        }
+        let prompt = node.config.get("prompt").and_then(|v| v.as_str())
+            .unwrap_or("Decision required").to_string();
+        let options: Vec<String> = node.config.get("options")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let timeout_minutes = node.config.get("timeout_minutes").and_then(|v| v.as_f64());
+
+        let info = InterruptInfo {
+            node_id: node.id.clone(), prompt, options, timeout_minutes,
+        };
+
+        self.save_checkpoint(session_id, step, &node.id, state, Some(&node.id)).await;
+        self.emit_event(EventType::InterruptCreated, session_id, Some(&node.id), HashMap::new());
+
+        Some(ExecutionResult {
+            status: ExecutionStatus::Interrupted, state: state.clone(),
+            trace: trace.to_vec(), transcript: transcript.to_vec(),
+            error: None, interrupt_node_id: Some(node.id.clone()),
+            interrupt_info: Some(info),
+        })
+    }
+
+    fn resolve_and_merge_inputs(
+        &self,
+        node: &NodeDef,
+        graph: &GraphDef,
+        state: &SharedState,
+    ) -> HashMap<String, Value> {
+        let mut inputs = self.resolve_inputs(&node.id, graph, state);
+        for (key, val) in &node.config {
+            inputs.entry(key.clone()).or_insert_with(|| val.clone());
+        }
+        debug!(
+            node_id = %node.id, tool_type = %node.tool_type,
+            input_keys = ?inputs.keys().collect::<Vec<_>>(), "executing node"
+        );
+        inputs
+    }
+
+    fn emit_block_started(
+        &self,
+        node: &NodeDef,
+        session_id: &str,
+        transcript: &mut Vec<TranscriptEntry>,
+    ) {
+        self.emit_event(EventType::BlockStarted, session_id, Some(&node.id), HashMap::new());
+        self.stream_event(crate::streaming::StreamEvent::NodeStarted {
+            node_id: node.id.clone(), tool_type: node.tool_type.clone(),
+        });
+        transcript.push(TranscriptEntry {
+            entry_type: wk::TRANSCRIPT_BLOCK_START.to_string(),
+            message: format!("Executing {}", node.tool_type),
+            timestamp: now_ts(), node_id: Some(node.id.clone()), metadata: HashMap::new(),
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_node_success(
+        &self,
+        node: &NodeDef,
+        mut output: HashMap<String, Value>,
+        retries: u32,
+        elapsed_ms: u64,
+        session_id: &str,
+        context: &dyn ExecutionContext,
+        graph: &GraphDef,
+        state: &SharedState,
+        trace: &mut Vec<TraceEntry>,
+        transcript: &mut Vec<TranscriptEntry>,
+        step: &mut u32,
+        node_idx: &HashMap<&str, usize>,
+    ) -> Result<Option<usize>, RunnerError> {
+        let node_id = node.id.as_str();
+
+        // Hook: post_llm_call
+        if node.tool_type.starts_with(wk::AI_TOOL_PREFIX) {
+            if let Some(ref hook) = self.hook_handler {
+                let mut rv = serde_json::to_value(&output).unwrap_or(Value::Null);
+                let _ = run_hook_with_timeout(hook.post_llm_call(node, &mut rv, context)).await;
+            }
         }
 
-        // Transcript: completed
+        // Store output + trace
+        if let Err(e) = state.set(node_id, output.clone(), true) {
+            warn!(node_id = %node_id, error = %e, "failed to set state");
+        }
+        trace.push(TraceEntry {
+            node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
+            status: TraceStatus::Ok, duration_ms: elapsed_ms, retries, error: None,
+        });
+
+        // Hook: post_block_exec
+        if let Some(ref hook) = self.hook_handler {
+            let _ = run_hook_with_timeout(hook.post_block_exec(node, &mut output, context)).await;
+        }
+
+        // Events
+        self.emit_event(EventType::BlockCompleted, session_id, Some(node_id), HashMap::new());
+        self.stream_event(crate::streaming::StreamEvent::NodeCompleted {
+            node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
+            duration_ms: elapsed_ms, output_keys: output.keys().cloned().collect(),
+        });
+        transcript.push(TranscriptEntry {
+            entry_type: wk::TRANSCRIPT_BLOCK_END.to_string(),
+            message: format!("Completed {} in {}ms", node.tool_type, elapsed_ms),
+            timestamp: now_ts(), node_id: Some(node_id.to_string()), metadata: HashMap::new(),
+        });
+
+        *step += 1;
+
+        // Advance cursor: fan-out or sequential
+        let next_nodes = self.resolve_all_next_nodes(node_id, &output, graph);
+
+        if next_nodes.len() > 1 {
+            debug!(from = %node_id, targets = ?next_nodes,
+                "fan-out detected — executing {} nodes in parallel", next_nodes.len());
+            let (fo_trace, fo_transcript) = self
+                .execute_fanout(&next_nodes, graph, context, state, session_id).await?;
+            trace.extend(fo_trace);
+            transcript.extend(fo_transcript);
+            let join_id = self.find_fanout_join(&next_nodes, graph);
+            self.save_checkpoint(session_id, *step, node_id, state, join_id.as_deref()).await;
+            Ok(join_id.as_deref().and_then(|nid| node_idx.get(nid).copied()))
+        } else {
+            let next = next_nodes.into_iter().next();
+            self.save_checkpoint(session_id, *step, node_id, state, next.as_deref()).await;
+            self.record_decision_transcript(node_id, &next, graph, transcript);
+            Ok(next.as_deref().and_then(|nid| node_idx.get(nid).copied()))
+        }
+    }
+
+    fn record_decision_transcript(
+        &self,
+        node_id: &str,
+        next: &Option<String>,
+        graph: &GraphDef,
+        transcript: &mut Vec<TranscriptEntry>,
+    ) {
+        let outgoing = graph.outgoing_edges(node_id);
+        let conditional: Vec<_> = outgoing.iter().filter(|e| e.condition.is_some()).collect();
+        if conditional.len() > 1 {
+            if let Some(ref next_id) = next {
+                let edge_id = outgoing.iter().find(|e| e.target == *next_id)
+                    .map(|e| e.id.as_str()).unwrap_or("unknown");
+                let cond_desc = outgoing.iter().find(|e| e.target == *next_id)
+                    .and_then(|e| e.condition.as_ref())
+                    .map(|c| format!("{} {:?} {}", c.field, c.op, c.value))
+                    .unwrap_or_default();
+                transcript.push(TranscriptEntry {
+                    entry_type: wk::TRANSCRIPT_DECISION.to_string(),
+                    message: format!("Decision: following edge {} (condition: {})", edge_id, cond_desc),
+                    timestamp: now_ts(), node_id: Some(node_id.to_string()), metadata: HashMap::new(),
+                });
+            }
+        }
+        if let Some(ref nid) = next {
+            debug!(from = %node_id, to = %nid, "advancing to next node");
+        } else {
+            debug!(from = %node_id, "no outgoing edge — end of graph");
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_node_failure(
+        &self,
+        node: &NodeDef,
+        idx: usize,
+        tool_err: ToolError,
+        retries: u32,
+        elapsed_ms: u64,
+        session_id: &str,
+        retry_policy: &RetryPolicy,
+        context: &dyn ExecutionContext,
+        graph: &GraphDef,
+        state: &SharedState,
+        trace: &mut Vec<TraceEntry>,
+        transcript: &mut Vec<TranscriptEntry>,
+        node_idx: &HashMap<&str, usize>,
+    ) -> NodeFailureOutcome {
+        let node_id = node.id.as_str();
+        let err_msg = tool_err.to_string();
+
+        // Hook: on_error
+        let hook_action = if let Some(ref hook) = self.hook_handler {
+            run_hook_with_timeout(hook.on_error(node, &tool_err, context)).await
+        } else {
+            HookResult::Continue
+        };
+
+        if matches!(hook_action, HookResult::Retry) {
+            transcript.push(TranscriptEntry {
+                entry_type: wk::TRANSCRIPT_ERROR.to_string(),
+                message: format!("Error in {}: {} (retrying via hook)", node.tool_type, err_msg),
+                timestamp: now_ts(), node_id: Some(node_id.to_string()), metadata: HashMap::new(),
+            });
+            return NodeFailureOutcome::Retry;
+        }
+
+        transcript.push(TranscriptEntry {
+            entry_type: wk::TRANSCRIPT_ERROR.to_string(),
+            message: format!("Error in {}: {}", node.tool_type, err_msg),
+            timestamp: now_ts(), node_id: Some(node_id.to_string()), metadata: HashMap::new(),
+        });
+
+        match retry_policy.on_failure {
+            FailureMode::Stop => {
+                trace.push(TraceEntry {
+                    node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
+                    status: TraceStatus::Error, duration_ms: elapsed_ms, retries,
+                    error: Some(err_msg.clone()),
+                });
+                self.emit_event(EventType::BlockError, session_id, Some(node_id), HashMap::new());
+                self.emit_event(EventType::SessionFailed, session_id, None, HashMap::new());
+                error!(node_id = %node_id, error = %err_msg, "node execution failed — stopping");
+                NodeFailureOutcome::Stop(ExecutionResult {
+                    status: ExecutionStatus::Failed, state: state.clone(),
+                    trace: trace.clone(), transcript: transcript.clone(),
+                    error: Some(err_msg), interrupt_node_id: None, interrupt_info: None,
+                })
+            }
+            FailureMode::Skip => {
+                warn!(node_id = %node_id, error = %err_msg, "node execution failed — skipping");
+                let empty: HashMap<String, Value> = HashMap::new();
+                let _ = state.set(node_id, empty.clone(), true);
+                trace.push(TraceEntry {
+                    node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
+                    status: TraceStatus::Skipped, duration_ms: elapsed_ms, retries,
+                    error: Some(err_msg),
+                });
+                self.emit_event(EventType::BlockCompleted, session_id, Some(node_id), HashMap::new());
+                let next = self.resolve_next_node(node_id, &empty, graph)
+                    .as_deref().and_then(|nid| node_idx.get(nid).copied());
+                NodeFailureOutcome::Advance(next)
+            }
+            FailureMode::RouteToError => {
+                warn!(node_id = %node_id, error = %err_msg, "node execution failed — routing to error path");
+                let mut err_output: HashMap<String, Value> = HashMap::new();
+                err_output.insert(wk::ERROR_FIELD.to_string(), Value::String(err_msg.clone()));
+                let _ = state.set(node_id, err_output.clone(), true);
+                trace.push(TraceEntry {
+                    node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
+                    status: TraceStatus::Error, duration_ms: elapsed_ms, retries,
+                    error: Some(err_msg),
+                });
+                self.emit_event(EventType::BlockError, session_id, Some(node_id), HashMap::new());
+                let next = self.resolve_next_node(node_id, &err_output, graph)
+                    .as_deref().and_then(|nid| node_idx.get(nid).copied());
+                NodeFailureOutcome::Advance(next)
+            }
+        }
+    }
+
+    fn make_failed_result(
+        &self,
+        state: SharedState,
+        trace: Vec<TraceEntry>,
+        transcript: Vec<TranscriptEntry>,
+        error: String,
+    ) -> ExecutionResult {
+        ExecutionResult {
+            status: ExecutionStatus::Failed, state, trace, transcript,
+            error: Some(error), interrupt_node_id: None, interrupt_info: None,
+        }
+    }
+
+    async fn finalize_graph_execution(
+        &self,
+        graph: &GraphDef,
+        context: &dyn ExecutionContext,
+        session_id: &str,
+        state: SharedState,
+        mut trace: Vec<TraceEntry>,
+        mut transcript: Vec<TranscriptEntry>,
+    ) -> ExecutionResult {
+        if let Some(ref hook) = self.hook_handler {
+            let _ = run_hook_with_timeout(hook.on_graph_end(graph, &state, context)).await;
+        }
         transcript.push(TranscriptEntry {
             entry_type: wk::TRANSCRIPT_COMPLETED.to_string(),
             message: format!("Execution completed ({} blocks)", trace.len()),
-            timestamp: now_ts(),
-            node_id: None,
-            metadata: HashMap::new(),
+            timestamp: now_ts(), node_id: None, metadata: HashMap::new(),
         });
-
-        // Emit SessionCompleted.
-        self.emit_event(
-            EventType::SessionCompleted,
-            &session_id,
-            None,
-            HashMap::new(),
-        );
-
-        // Stream: graph completed
+        self.emit_event(EventType::SessionCompleted, session_id, None, HashMap::new());
         let total_ms: u64 = trace.iter().map(|t| t.duration_ms).sum();
         self.stream_event(crate::streaming::StreamEvent::GraphCompleted {
             status: format!("{:?}", ExecutionStatus::Completed),
-            total_duration_ms: total_ms,
-            nodes_executed: trace.len(),
+            total_duration_ms: total_ms, nodes_executed: trace.len(),
         });
-
-        info!(
-            session_id = %session_id,
-            nodes_executed = trace.len(),
-            "graph execution completed"
-        );
-
-        // Return final result.
-        Ok(ExecutionResult {
-            status: ExecutionStatus::Completed,
-            state,
-            trace,
-            transcript,
-            error: None,
-            interrupt_node_id: None,
-            interrupt_info: None,
-        })
+        info!(session_id = %session_id, nodes_executed = trace.len(), "graph execution completed");
+        ExecutionResult {
+            status: ExecutionStatus::Completed, state, trace, transcript,
+            error: None, interrupt_node_id: None, interrupt_info: None,
+        }
     }
 
     /// Internal: save checkpoint if callback is configured.

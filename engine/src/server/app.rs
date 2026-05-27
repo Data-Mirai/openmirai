@@ -193,7 +193,7 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
 
     Json(json!({
         "status": "ok",
-        "version": "0.2.0",
+        "version": "0.3.1",
         "engine": "datamirai-engine-rs",
         "uptime_seconds": uptime_secs,
         "agents_loaded": agents_count,
@@ -204,7 +204,7 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
 
 async fn version() -> Json<Value> {
     Json(json!({
-        "version": "0.2.0",
+        "version": "0.3.1",
         "engine": "datamirai-engine-rs"
     }))
 }

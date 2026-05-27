@@ -1,6 +1,6 @@
 {
   "name": "datamirai",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "TypeScript SDK for Mirai Engine — agentic graph execution",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

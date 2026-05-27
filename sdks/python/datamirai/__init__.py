@@ -16,7 +16,7 @@ Usage:
         print(event.type, event.data)
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.1"
 
 from datamirai.engine import Engine
 from datamirai.agent import Agent

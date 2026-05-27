@@ -103,6 +103,7 @@ ai_tool! {
         field("max_tokens", FieldType::Number, false, "Max tokens to generate"),
         field("system_prompt", FieldType::String, false, "Node-level system prompt"),
         field("output_schema", FieldType::String, false, "JSON Schema to enforce structured output"),
+        field("output_schema_strict", FieldType::Boolean, false, "Fail hard if schema validation fails after retries (default true)"),
         field("max_retries", FieldType::Number, false, "Retries for schema validation (default 2)"),
         field("max_context_length", FieldType::Number, false, "Max chars for session context (default 12000)"),
     ]
@@ -262,11 +263,29 @@ impl Tool for LlmCallTool {
             }
         }
 
-        // --- All retries exhausted -- return best effort ---
+        // --- All retries exhausted ---
         let schema = output_schema.as_ref().unwrap();
-        let (parsed, _) = validate_response(&last_response, schema);
-        let schema_valid = parsed.is_some();
+        let (parsed, final_errors) = validate_response(&last_response, schema);
+        let schema_valid = parsed.is_some() && final_errors.is_empty();
 
+        // If strict mode is enabled, fail hard when schema validation fails.
+        let strict = config
+            .get("output_schema_strict")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if strict && !schema_valid {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/llm_call".into(),
+                message: format!(
+                    "Output validation failed after {} retries. Errors: {}",
+                    max_retries,
+                    final_errors.join("; ")
+                ),
+            });
+        }
+
+        // Non-strict: return best effort.
         let mut out = HashMap::new();
         out.insert("response".to_string(), json!(last_response));
         out.insert("model".to_string(), json!(model));

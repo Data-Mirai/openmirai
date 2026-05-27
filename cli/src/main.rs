@@ -302,6 +302,16 @@ async fn run_agent(args: &[String]) {
         }
     }
 
+    // Inject MCP server configs into all mcp/call nodes
+    if !spec.config.mcp_servers.is_empty() {
+        let mcp_servers_val = serde_json::to_value(&spec.config.mcp_servers).unwrap_or_default();
+        for node in &mut graph.nodes {
+            if node.tool_type == "mcp/call" {
+                node.config.insert("__mcp_servers".to_string(), mcp_servers_val.clone());
+            }
+        }
+    }
+
     // Record cold start
     if benchmark_enabled {
         datamirai_engine::benchmark::record_cold_start();

@@ -421,12 +421,19 @@ async fn execute_agent(
 }
 
 /// Execute an agent with SSE streaming response.
+/// Execute an agent with REAL-TIME SSE streaming.
+///
+/// Events are emitted DURING execution via an mpsc channel.
+/// The response streams events as they arrive — not post-execution replay.
 async fn stream_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    use axum::body::Body;
     use axum::response::IntoResponse;
+    use tokio_stream::wrappers::ReceiverStream;
+    use tokio_stream::StreamExt;
 
     let agents = state.agents.read().await;
     let spec = match agents.get(&id) {
@@ -442,16 +449,34 @@ async fn stream_agent(
     };
     drop(agents);
 
-    // Run the agent and convert result to SSE events.
-    let result = run_agent_spec(&spec, &req.trigger_data, &state).await;
-    let node_count = spec.graph.nodes.len();
-    let events = crate::streaming::trace_to_events(&result, &spec.name, node_count);
+    // Create channel for real-time events.
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<crate::streaming::StreamEvent>(256);
 
-    // Build SSE response body.
-    let mut body = String::new();
-    for event in &events {
-        body.push_str(&event.to_sse());
-    }
+    // Create a byte-stream channel for the HTTP response.
+    let (byte_tx, byte_rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(256);
+
+    // Spawn a task that drains events and converts to SSE text.
+    let drain_handle = tokio::spawn(async move {
+        let mut rx = event_rx;
+        while let Some(event) = rx.recv().await {
+            let sse_text = event.to_sse();
+            if byte_tx.send(Ok(sse_text)).await.is_err() {
+                break; // Client disconnected
+            }
+        }
+    });
+
+    // Spawn the actual agent execution with the stream channel.
+    let state_clone = state.clone();
+    let spec_clone = spec.clone();
+    let trigger_data = req.trigger_data.clone();
+    tokio::spawn(async move {
+        run_agent_spec_streaming(&spec_clone, &trigger_data, &state_clone, event_tx).await;
+    });
+
+    // Stream the byte channel as the HTTP response body.
+    let stream = ReceiverStream::new(byte_rx);
+    let body = Body::from_stream(stream);
 
     Ok((
         StatusCode::OK,
@@ -603,6 +628,72 @@ async fn run_agent_spec(
             interrupt_info: None,
         },
     }
+}
+
+/// Internal: run an AgentSpec with real-time streaming via mpsc channel.
+async fn run_agent_spec_streaming(
+    spec: &AgentSpec,
+    trigger_data: &HashMap<String, Value>,
+    state: &AppState,
+    event_tx: tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>,
+) {
+    let mut graph = spec.to_graph(Some(&spec.name));
+    graph.auto_generate_edge_ids();
+
+    if let Err(e) = graph.validate() {
+        let _ = event_tx.send(crate::streaming::StreamEvent::GraphError {
+            error: format!("Graph validation failed: {e}"),
+        }).await;
+        return;
+    }
+
+    // Same injections as run_agent_spec.
+    if !trigger_data.is_empty() {
+        if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
+            if let Ok(val) = serde_json::to_value(trigger_data) {
+                entry.config.insert("mock_payload".to_string(), val);
+            }
+        }
+    }
+    if !spec.config.mcp_servers.is_empty() {
+        let mcp_val = serde_json::to_value(&spec.config.mcp_servers).unwrap_or_default();
+        for node in &mut graph.nodes {
+            if node.tool_type == "mcp/call" {
+                node.config.insert("__mcp_servers".to_string(), mcp_val.clone());
+            }
+        }
+    }
+
+    let system_prompt = if let Some(ref soul_path) = spec.soul {
+        crate::soul::load_from_file(std::path::Path::new(soul_path))
+            .ok()
+            .map(|s| s.to_system_prompt())
+            .or(spec.system_prompt.clone())
+    } else {
+        spec.system_prompt.clone()
+    };
+
+    let llm = (state.llm_factory)();
+    let mut ctx_builder = SimpleExecutionContext::builder(llm)
+        .with_db(Box::new(InMemoryDBResource::new()))
+        .with_storage(Box::new(InMemoryStorageResource::new()));
+    if let Some(ref prompt) = system_prompt {
+        ctx_builder = ctx_builder.with_system_prompt(prompt);
+    }
+    let context = ctx_builder.build();
+
+    // Create a runner WITH the stream channel for real-time events.
+    let streaming_runner = state.runner.clone().with_stream_tx(event_tx.clone());
+
+    match streaming_runner.run(&graph, &context).await {
+        Ok(_) => {} // GraphCompleted already sent by runner
+        Err(e) => {
+            let _ = event_tx.send(crate::streaming::StreamEvent::GraphError {
+                error: e.to_string(),
+            }).await;
+        }
+    }
+    // Channel drops when event_tx is dropped → receiver gets None → stream ends
 }
 
 async fn get_agent_spec(

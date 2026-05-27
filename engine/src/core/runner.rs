@@ -370,6 +370,8 @@ pub struct GraphRunner {
     hook_handler: Option<Arc<dyn HookHandler>>,
     checkpoint_cb: Option<Arc<dyn CheckpointCallback>>,
     pause_requested: Arc<AtomicBool>,
+    /// Optional channel for real-time streaming events (SSE).
+    stream_tx: Option<tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>>,
 }
 
 impl GraphRunner {
@@ -383,12 +385,19 @@ impl GraphRunner {
             hook_handler: None,
             checkpoint_cb: None,
             pause_requested: Arc::new(AtomicBool::new(false)),
+            stream_tx: None,
         }
     }
 
     /// Attach an event emitter (builder pattern).
     pub fn with_event_emitter(mut self, emitter: EventEmitter) -> Self {
         self.event_emitter = Some(emitter);
+        self
+    }
+
+    /// Attach a streaming channel sender for real-time SSE events.
+    pub fn with_stream_tx(mut self, tx: tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>) -> Self {
+        self.stream_tx = Some(tx);
         self
     }
 
@@ -524,6 +533,12 @@ impl GraphRunner {
             entry = %entry_node_id,
             "graph execution started"
         );
+
+        // Stream: graph started
+        self.stream_event(crate::streaming::StreamEvent::GraphStarted {
+            graph_name: graph.name.clone(),
+            node_count: graph.nodes.len(),
+        });
 
         // Hook: on_graph_start (with 30s timeout)
         if let Some(ref hook) = self.hook_handler {
@@ -707,6 +722,12 @@ impl GraphRunner {
                 HashMap::new(),
             );
 
+            // Stream: node started
+            self.stream_event(crate::streaming::StreamEvent::NodeStarted {
+                node_id: node_id.to_string(),
+                tool_type: node.tool_type.clone(),
+            });
+
             // Transcript: block starting
             transcript.push(TranscriptEntry {
                 entry_type: "block_start".to_string(),
@@ -782,6 +803,14 @@ impl GraphRunner {
                         Some(node_id),
                         HashMap::new(),
                     );
+
+                    // Stream: node completed
+                    self.stream_event(crate::streaming::StreamEvent::NodeCompleted {
+                        node_id: node_id.to_string(),
+                        tool_type: node.tool_type.clone(),
+                        duration_ms: elapsed_ms,
+                        output_keys: output.keys().cloned().collect(),
+                    });
 
                     // Transcript: block completed
                     transcript.push(TranscriptEntry {
@@ -1069,6 +1098,14 @@ impl GraphRunner {
             None,
             HashMap::new(),
         );
+
+        // Stream: graph completed
+        let total_ms: u64 = trace.iter().map(|t| t.duration_ms).sum();
+        self.stream_event(crate::streaming::StreamEvent::GraphCompleted {
+            status: format!("{:?}", ExecutionStatus::Completed),
+            total_duration_ms: total_ms,
+            nodes_executed: trace.len(),
+        });
 
         info!(
             session_id = %session_id,
@@ -1562,6 +1599,13 @@ impl GraphRunner {
                 node_id.map(String::from),
                 data,
             );
+        }
+    }
+
+    /// Send a stream event for real-time SSE. Non-blocking — drops if full.
+    fn stream_event(&self, event: crate::streaming::StreamEvent) {
+        if let Some(ref tx) = self.stream_tx {
+            let _ = tx.try_send(event);
         }
     }
 }

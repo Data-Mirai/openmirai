@@ -1,76 +1,141 @@
 # Data Mirai Engine
 
-Motor open source de ejecucion de grafos agentivos. Alternativa a LangGraph y Google ADK.
+Open-source agent execution engine. One binary. Any LLM. Your rules.
 
-Compilado en **Rust** — portable via FFI, WASM o CLI. El agente es un JSON, el motor es un binario.
+A Rust-native engine that runs agentic workflows defined as simple YAML graphs. Alternative to LangGraph, CrewAI, and Google ADK — compiled to a single portable binary with zero runtime dependencies.
 
-## Estructura
-
-```
-rust/          Motor Rust (crate principal + CLI)
-  engine/      Crate: datamirai-engine
-  cli/         CLI: mirai run, mirai validate
-legacy/        Paquete Python (referencia historica, no usar)
-docs/          Documentacion tecnica y PRDs
-blueprint/     Blueprint Agents (gestion de proyecto)
-```
+**48+ built-in tools** | **7 LLM providers** | **650+ tests** | **MIT license**
 
 ## Quick Start
 
 ```bash
-# Compilar
-cd rust && cargo build --release
+# Build from source
+cargo build --release
 
-# Validar un agente
-mirai validate agent.json
+# Run an agent
+./target/release/mirai run examples/hello-world.yaml
 
-# Ejecutar un agente
-mirai run agent.json
-mirai run agent.yaml --input '{"query": "hola"}'
+# With a specific provider
+./target/release/mirai run examples/hello-world.yaml --provider claude --api-key $ANTHROPIC_API_KEY
+
+# Start the HTTP server
+./target/release/mirai serve --port 3000
 ```
 
-## Agente = JSON
+## How It Works
 
-```json
-{
-  "name": "mi-agente",
-  "version": "v1",
-  "graph": {
-    "nodes": [
-      {"id": "trigger", "tool_type": "trigger/manual"},
-      {"id": "llm", "tool_type": "ai/llm_call", "config": {"model": "gemma4"}}
-    ],
-    "edges": [
-      {"source": "trigger", "target": "llm"}
-    ]
-  }
-}
+An agent is a YAML file. The engine executes it.
+
+```yaml
+name: hello-world
+version: v1
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+    - id: think
+      tool_type: ai/llm_call
+      config:
+        prompt: "Answer the user's question concisely."
+    - id: respond
+      tool_type: output/response
+  edges:
+    - source: start
+      target: think
+    - source: think
+      target: respond
 ```
 
-Edge IDs son opcionales (auto-generados). data_map es opcional para flujos lineales.
-
-## Tools builtin
-
-| Categoria | Tools |
-|-----------|-------|
-| Trigger | webhook, manual, schedule, event |
-| Logic | condition, switch, loop, merge, wait, human_input |
-| AI | llm_call, transcribe, embeddings |
-| Data | db_read, db_write, storage_read, storage_write |
-| Filesystem | read_file, write_file, edit_file, glob, grep, tree |
-| System | bash, process_list |
-| Git | status, diff, log, commit |
-| Output | response |
-| Agent | run_agent |
-
-## Arquitectura de 3 capas
-
-```
-Agente = JSON config (portable, versionable, language-agnostic)
-Motor  = Rust binary (FFI, WASM, CLI — 553 tests)
-Host   = App que abraza motor + agente (Python, Swift, Go, cualquiera)
+```bash
+mirai run hello.yaml --input '{"query": "What is Rust?"}'
 ```
 
-## Licencia
+## Architecture
+
+```
+Agent  = YAML config  (portable, versionable, language-agnostic)
+Engine = Rust binary   (FFI, WASM, CLI — 650+ tests)
+Host   = Your app      (Python, Swift, Go, JavaScript — anything)
+```
+
+The agent defines **what** to do. The engine decides **how** to run it.
+
+## Built-in Tools
+
+| Category | Tools |
+|----------|-------|
+| **Trigger** | webhook, manual, schedule, event, heartbeat |
+| **AI** | llm_call, embeddings, transcribe |
+| **Logic** | condition, switch, loop, merge, wait, human_input, deadline |
+| **Data** | db_read, db_write, db_query, storage_read, storage_write, storage_delete, vault_read, vault_write, entity_store, web_scrape, rag_search |
+| **Filesystem** | read_file, write_file, edit_file, glob, grep, list_dir, tree, copy, move, delete, mkdir, file_info |
+| **System** | bash, process_list, sandbox_exec |
+| **Git** | status, diff, log, commit |
+| **Output** | response |
+| **Agent** | run_agent |
+| **MCP** | mcp_call, mcp_discover |
+
+## LLM Providers
+
+| Provider | Config |
+|----------|--------|
+| **Ollama** (default) | Local, no API key needed |
+| **Claude** | `--provider claude --api-key $ANTHROPIC_API_KEY` |
+| **OpenAI** | `--provider openai --api-key $OPENAI_API_KEY` |
+| **Gemini** | `--provider gemini --api-key $GOOGLE_API_KEY` |
+| **Groq** | `--provider groq --api-key $GROQ_API_KEY` |
+| **NVIDIA NIM** | `--provider nvidia --api-key $NVIDIA_API_KEY` |
+| **OpenRouter** | `--provider openrouter --api-key $OPENROUTER_API_KEY` |
+
+## Python SDK
+
+```bash
+pip install datamirai
+```
+
+```python
+from datamirai import Engine, Agent
+
+engine = Engine(provider="ollama")
+agent = Agent.from_file("my-agent.yaml")
+result = engine.run(agent, input={"query": "hello"})
+print(result.output)
+```
+
+## Project Structure
+
+```
+engine/        Core library (datamirai-engine crate)
+cli/           CLI binary (mirai)
+sdks/python/   Python SDK (datamirai)
+examples/      Ready-to-run agent examples
+docs/          Technical documentation
+```
+
+## Key Features
+
+- **Graph execution** with conditional branching, fan-out/fan-in, and retry with backoff
+- **Soul system** — give agents personality via SOUL.md files
+- **Universe** — multi-agent routing with keyword, round-robin, or LLM-based strategies
+- **Energy tracking** — metered cost accounting per operation
+- **Hook system** — 7 interception points for execution control
+- **Checkpoint/resume** — pause and resume agent execution
+- **SSE streaming** — real-time execution events via Server-Sent Events
+- **Security scanner** — prompt injection detection with configurable sensitivity
+- **MCP support** — Model Context Protocol for external tool servers
+
+## HTTP Server
+
+```bash
+# Start with auth (recommended for production)
+MIRAI_API_KEY=your-secret mirai serve --port 3000
+
+# Or without auth (development only)
+mirai serve --port 3000
+```
+
+API endpoints: `/api/agents`, `/api/graphs`, `/api/sessions`, `/api/tools`, `/health`
+
+## License
 
 MIT

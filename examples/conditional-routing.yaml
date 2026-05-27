@@ -1,0 +1,87 @@
+# Conditional Routing — Branching based on LLM classification
+#
+# The LLM classifies the user's input into a category, then the agent
+# routes to different handlers based on the classification result.
+# Demonstrates edge conditions and exclusive routing.
+#
+# Run:
+#   mirai run examples/conditional-routing.yaml --input '{"query": "My order hasn't arrived"}'
+#   mirai run examples/conditional-routing.yaml --input '{"query": "How do I reset my password?"}'
+
+name: conditional-router
+version: v1
+description: "Classify input and route to the right handler"
+
+graph:
+  nodes:
+    # Entry point
+    - id: start
+      tool_type: trigger/manual
+
+    # Step 1: Classify the user's intent
+    - id: classify
+      tool_type: ai/llm_call
+      config:
+        prompt: |
+          Classify the following user message into exactly one category.
+          Reply with ONLY the category name, nothing else.
+          Categories: support, billing, technical
+        temperature: 0.0
+        max_tokens: 20
+
+    # Step 2: Evaluate the classification result
+    - id: check
+      tool_type: logic/condition
+      config:
+        field: response
+        op: Eq
+        value: support
+
+    # Branch A: Support handler
+    - id: support_handler
+      tool_type: ai/llm_call
+      config:
+        prompt: "You are a friendly support agent. Help the user with their issue."
+        temperature: 0.7
+        max_tokens: 512
+
+    # Branch B: Default handler (billing, technical, or unrecognized)
+    - id: default_handler
+      tool_type: ai/llm_call
+      config:
+        prompt: "You are a helpful assistant. Answer the user's question."
+        temperature: 0.7
+        max_tokens: 512
+
+    # Final output
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: classify
+
+    - source: classify
+      target: check
+
+    # If classification = "support" → go to support handler
+    - source: check
+      target: support_handler
+      condition:
+        field: result
+        op: Eq
+        value: true
+
+    # Otherwise → go to default handler
+    - source: check
+      target: default_handler
+      condition:
+        field: result
+        op: Eq
+        value: false
+
+    - source: support_handler
+      target: respond
+
+    - source: default_handler
+      target: respond

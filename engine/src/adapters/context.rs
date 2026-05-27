@@ -1,4 +1,4 @@
-//! SimpleExecutionContext — wires all resources together into a concrete
+//! DefaultExecutionContext — wires all resources together into a concrete
 //! `ExecutionContext` implementation, with a builder pattern for ergonomic
 //! construction.
 
@@ -7,12 +7,12 @@ use crate::core::context::{
 };
 
 // ---------------------------------------------------------------------------
-// SimpleExecutionContext
+// DefaultExecutionContext
 // ---------------------------------------------------------------------------
 
 /// Concrete implementation of `ExecutionContext` that holds boxed resource
 /// trait objects.  Suitable for both production and testing.
-pub struct SimpleExecutionContext {
+pub struct DefaultExecutionContext {
     db: Option<Box<dyn DBResource>>,
     llm: Box<dyn LLMResource>,
     storage: Option<Box<dyn StorageResource>>,
@@ -23,7 +23,7 @@ pub struct SimpleExecutionContext {
     system_prompt: Option<String>,
 }
 
-impl ExecutionContext for SimpleExecutionContext {
+impl ExecutionContext for DefaultExecutionContext {
     fn db(&self) -> Option<&dyn DBResource> {
         self.db.as_deref()
     }
@@ -57,10 +57,10 @@ impl ExecutionContext for SimpleExecutionContext {
     }
 }
 
-impl SimpleExecutionContext {
+impl DefaultExecutionContext {
     /// Start building a context.  The LLM resource is always required.
-    pub fn builder(llm: Box<dyn LLMResource>) -> SimpleExecutionContextBuilder {
-        SimpleExecutionContextBuilder {
+    pub fn builder(llm: Box<dyn LLMResource>) -> DefaultExecutionContextBuilder {
+        DefaultExecutionContextBuilder {
             db: None,
             llm,
             storage: None,
@@ -99,8 +99,8 @@ impl SimpleExecutionContext {
 // Builder
 // ---------------------------------------------------------------------------
 
-/// Builder for `SimpleExecutionContext`.
-pub struct SimpleExecutionContextBuilder {
+/// Builder for `DefaultExecutionContext`.
+pub struct DefaultExecutionContextBuilder {
     db: Option<Box<dyn DBResource>>,
     llm: Box<dyn LLMResource>,
     storage: Option<Box<dyn StorageResource>>,
@@ -111,7 +111,7 @@ pub struct SimpleExecutionContextBuilder {
     system_prompt: Option<String>,
 }
 
-impl SimpleExecutionContextBuilder {
+impl DefaultExecutionContextBuilder {
     pub fn with_db(mut self, db: Box<dyn DBResource>) -> Self {
         self.db = Some(db);
         self
@@ -147,8 +147,8 @@ impl SimpleExecutionContextBuilder {
         self
     }
 
-    pub fn build(self) -> SimpleExecutionContext {
-        SimpleExecutionContext {
+    pub fn build(self) -> DefaultExecutionContext {
+        DefaultExecutionContext {
             db: self.db,
             llm: self.llm,
             storage: self.storage,
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn default_dev_context() {
-        let ctx = SimpleExecutionContext::default_dev();
+        let ctx = DefaultExecutionContext::default_dev();
         assert!(ctx.db().is_some());
         assert!(ctx.storage().is_some());
         assert_eq!(ctx.auth().role, Role::Owner);
@@ -186,7 +186,7 @@ mod tests {
     fn builder_with_all_options() {
         use super::super::mock_llm::MockLLMResource;
 
-        let ctx = SimpleExecutionContext::builder(Box::new(MockLLMResource::new()))
+        let ctx = DefaultExecutionContext::builder(Box::new(MockLLMResource::new()))
             .with_auth(AuthContext {
                 user_id: "u-1".into(),
                 role: Role::Editor,
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn set_node_id_mutates() {
-        let mut ctx = SimpleExecutionContext::default_dev();
+        let mut ctx = DefaultExecutionContext::default_dev();
         assert!(ctx.node_id().is_none());
         ctx.set_node_id(Some("n-5".to_string()));
         assert_eq!(ctx.node_id(), Some("n-5"));

@@ -9,7 +9,11 @@ pub mod simple_vector;
 pub mod sqlite_db;
 
 pub use adapter_bridge::AdapterBridgeLLMResource;
-pub use context::{SimpleExecutionContext, SimpleExecutionContextBuilder};
+pub use context::{DefaultExecutionContext, DefaultExecutionContextBuilder};
+/// Backward-compat alias.
+pub type SimpleExecutionContext = DefaultExecutionContext;
+/// Backward-compat alias.
+pub type SimpleExecutionContextBuilder = DefaultExecutionContextBuilder;
 pub use in_memory_db::InMemoryDBResource;
 pub use in_memory_storage::InMemoryStorageResource;
 pub use local_storage::LocalStorageResource;

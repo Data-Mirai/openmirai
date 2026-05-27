@@ -42,7 +42,7 @@ pub use crate::core::runner::{
     ToolExecutor, TraceEntry, TraceStatus, TranscriptEntry,
 };
 pub use crate::core::schema::{ColumnDef, ColumnType, SchemaError, TableSchema};
-pub use crate::core::state::{SharedState, StateError};
+pub use crate::core::state::{ExecutionState, SharedState, StateError};
 
 // Re-export tool-system types for convenience.
 pub use crate::tools::{
@@ -69,8 +69,8 @@ pub use crate::runtime::{AgentRuntime, RuntimeAgentRecord, RuntimeAgentStatus, R
 
 // Re-export adapter types (formerly "resources").
 pub use crate::adapters::{
-    AdapterBridgeLLMResource, InMemoryDBResource, InMemoryStorageResource, MockLLMResource,
-    OllamaLLMResource, SimpleExecutionContext,
+    AdapterBridgeLLMResource, DefaultExecutionContext, InMemoryDBResource,
+    InMemoryStorageResource, MockLLMResource, OllamaLLMResource, SimpleExecutionContext,
 };
 
 // Backward-compat alias: `resources` → `adapters`.

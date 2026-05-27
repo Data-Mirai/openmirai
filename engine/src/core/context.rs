@@ -91,6 +91,14 @@ pub trait DBResource: Send + Sync {
     ) -> Result<Vec<serde_json::Value>, ResourceError>;
 }
 
+/// Domain-level LLM interface used by tools and the graph runner.
+///
+/// This is the simplified "port" side of the LLM abstraction. It exposes
+/// only what the execution engine needs: prompt-based completion and
+/// embeddings. Provider-specific details (message arrays, tool calling,
+/// streaming) live in [`LLMAdapter`](crate::llm::LLMAdapter).
+///
+/// See `LLMAdapter` doc comment for the full two-layer architecture rationale.
 #[async_trait]
 pub trait LLMResource: Send + Sync {
     /// Send a prompt to the model and get a completion back.

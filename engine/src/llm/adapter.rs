@@ -107,8 +107,30 @@ pub type OnTokenFn = dyn Fn(&str) + Send + Sync;
 
 /// Abstract base for LLM provider adapters.
 ///
-/// Each concrete adapter normalizes input/output for a specific provider.
-/// The engine only interacts via this interface.
+/// Each concrete adapter normalizes input/output for a specific provider
+/// (Claude, Gemini, Ollama, OpenAI-compatible, etc.).
+///
+/// # Two-layer LLM architecture
+///
+/// The engine has two LLM traits by design:
+///
+/// ```text
+/// LLMAdapter (this trait)              LLMResource (core/context.rs)
+/// ├── Provider-specific HTTP details   ├── Simplified domain interface
+/// ├── Messages + tool calling          ├── Prompt-in, response-out
+/// ├── Streaming support                ├── Embeddings
+/// ├── Model listing                    └── Used by tools + runner
+/// └── Implemented per-provider
+///           │
+///           └── AdapterBridgeLLMResource (adapters/adapter_bridge.rs)
+///               bridges LLMAdapter → LLMResource
+/// ```
+///
+/// **Why two traits?** `LLMAdapter` is infrastructure (how to talk to a
+/// provider's HTTP API). `LLMResource` is domain (what a tool needs to
+/// call an LLM). Keeping them separate means tools never deal with
+/// provider-specific details, and adding a new provider doesn't touch
+/// the execution engine.
 #[async_trait]
 pub trait LLMAdapter: Send + Sync {
     /// Identifier of the provider (e.g. `"ollama"`, `"openai"`).

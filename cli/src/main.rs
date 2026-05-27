@@ -498,6 +498,52 @@ async fn run_serve(args: &[String]) {
     }
 }
 
+/// Describe agent contract — inputs/outputs (PRD-004).
+fn cmd_describe(args: &[String]) {
+    let path = match args.first() {
+        Some(p) => p,
+        None => {
+            eprintln!("{}Usage: mirai describe <agent.yaml>{}", colors::RED, colors::RESET);
+            process::exit(1);
+        }
+    };
+
+    let spec = match AgentSpec::from_file(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}Error: {}{}", colors::RED, e, colors::RESET);
+            process::exit(1);
+        }
+    };
+
+    println!("\n{}Agent:{} {} ({})", colors::BOLD, colors::RESET, spec.name, spec.version);
+    if !spec.description.is_empty() {
+        println!("{}", spec.description);
+    }
+
+    if let Some(ref inputs) = spec.inputs {
+        println!("\n{}Inputs:{}", colors::BOLD, colors::RESET);
+        for (name, field) in inputs {
+            let req = if field.required { "required" } else { "optional" };
+            let desc = if field.description.is_empty() { String::new() } else { format!("  {}", field.description) };
+            println!("  {}  {}  {}{}", name, field.field_type, req, desc);
+        }
+    } else {
+        println!("\n{}Inputs:{} (none declared — accepts any payload)", colors::BOLD, colors::RESET);
+    }
+
+    if let Some(ref outputs) = spec.outputs {
+        println!("\n{}Outputs:{}", colors::BOLD, colors::RESET);
+        for (name, field) in outputs {
+            let desc = if field.description.is_empty() { String::new() } else { format!("  {}", field.description) };
+            println!("  {}  {}{}", name, field.field_type, desc);
+        }
+    } else {
+        println!("\n{}Outputs:{} (none declared)", colors::BOLD, colors::RESET);
+    }
+    println!();
+}
+
 /// List available agent templates.
 fn cmd_templates(_args: &[String]) {
     let templates = datamirai_engine::templates::builtin_templates();

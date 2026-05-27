@@ -129,6 +129,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/agents/{id}/execute", post(execute_agent))
         .route("/api/agents/{id}/stream", post(stream_agent))
         .route("/api/agents/{id}/spec", get(get_agent_spec))
+        .route("/api/agents/{id}/schema", get(get_agent_schema))
         // Tools
         .route("/api/tools", get(list_tools))
         // Templates
@@ -1083,6 +1084,32 @@ async fn get_agent_spec(
     let agents = state.agents.read().await;
     match agents.get(&id) {
         Some(spec) => Ok(Json(serde_json::to_value(spec).unwrap_or(json!({})))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Agent not found".to_string(),
+            }),
+        )),
+    }
+}
+
+/// PRD-004: Return agent's input/output contract as JSON.
+async fn get_agent_schema(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let agents = state.agents.read().await;
+    match agents.get(&id) {
+        Some(spec) => {
+            let schema = json!({
+                "name": spec.name,
+                "version": spec.version,
+                "description": spec.description,
+                "inputs": spec.inputs,
+                "outputs": spec.outputs,
+            });
+            Ok(Json(schema))
+        }
         None => Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {

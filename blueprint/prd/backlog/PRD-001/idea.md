@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | PRD-001 |
 | **Fecha** | 2026-05-26 |
-| **Estado** | backlog |
+| **Estado** | in_progress |
 | **Branch** | prd/PRD-001 (cuando esté en implementación) |
 
 ---

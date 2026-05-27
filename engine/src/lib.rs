@@ -59,5 +59,6 @@ pub use crate::runtime::{AgentRuntime, RuntimeAgentRecord, RuntimeAgentStatus, R
 
 // Re-export resource types.
 pub use crate::resources::{
-    InMemoryDBResource, InMemoryStorageResource, MockLLMResource, SimpleExecutionContext,
+    AdapterBridgeLLMResource, InMemoryDBResource, InMemoryStorageResource, MockLLMResource,
+    OllamaLLMResource, SimpleExecutionContext,
 };

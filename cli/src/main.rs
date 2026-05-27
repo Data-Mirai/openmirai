@@ -19,7 +19,8 @@ use std::process;
 use std::sync::Arc;
 
 use datamirai_engine::{
-    AgentSpec, ExecutionStatus, GraphRunner, RegistryExecutor, SimpleExecutionContext, ToolRegistry,
+    AdapterBridgeLLMResource, AgentSpec, ExecutionStatus, GraphRunner, OllamaLLMResource,
+    RegistryExecutor, SimpleExecutionContext, ToolRegistry,
 };
 use datamirai_engine::tools::builtin::register_all_builtin_tools;
 
@@ -72,17 +73,116 @@ async fn run_default() {
     terminal::run_interactive_session(config).await;
 }
 
+/// Parse a named flag from args: `--flag value` → Some(value)
+fn parse_flag(args: &[String], flag: &str) -> Option<String> {
+    args.windows(2).find_map(|w| {
+        if w[0] == flag {
+            Some(w[1].clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Check if a boolean flag is present: `--benchmark` → true
+fn has_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|a| a == flag)
+}
+
+/// Auto-detect provider from model name.
+fn detect_provider_from_model(model: &str) -> Option<&'static str> {
+    let m = model.to_lowercase();
+    if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") {
+        Some("openai")
+    } else if m.starts_with("claude") {
+        Some("claude")
+    } else if m.starts_with("gemini") || m.starts_with("gemma") {
+        Some("gemini")
+    } else if m.contains("llama") || m.contains("mistral") || m.contains("qwen") || m.contains("phi") || m.contains("deepseek") {
+        // Common open models → likely Ollama
+        Some("ollama")
+    } else {
+        None
+    }
+}
+
+/// Resolve LLM provider: explicit flag > env var > model auto-detect > default ollama.
+fn resolve_provider(args: &[String]) -> (String, String, String, String) {
+    let explicit_provider = parse_flag(args, "--provider");
+    let explicit_model = parse_flag(args, "--model");
+    let explicit_key = parse_flag(args, "--api-key");
+    let explicit_url = parse_flag(args, "--base-url");
+
+    let env_provider = std::env::var("MIRAI_LLM_PROVIDER").ok();
+    let env_model = std::env::var("MIRAI_LLM_MODEL").ok();
+
+    // Provider resolution chain
+    let provider = explicit_provider
+        .or(env_provider)
+        .or_else(|| {
+            explicit_model
+                .as_deref()
+                .or(env_model.as_deref())
+                .and_then(detect_provider_from_model)
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "ollama".to_string());
+
+    let model = explicit_model
+        .or(env_model)
+        .unwrap_or_else(|| adapter_factory::default_model(&provider).to_string());
+
+    let api_key = explicit_key.unwrap_or_default();
+    let base_url = explicit_url.unwrap_or_default();
+
+    (provider, model, api_key, base_url)
+}
+
+/// Build the ExecutionContext with a real or mock LLM depending on flags.
+fn build_context(provider: &str, model: &str, api_key: &str, base_url: &str) -> SimpleExecutionContext {
+    use datamirai_engine::resources::InMemoryDBResource;
+    use datamirai_engine::resources::InMemoryStorageResource;
+
+    // Special case: if provider is "mock", use MockLLMResource for testing
+    if provider == "mock" {
+        return SimpleExecutionContext::default_dev();
+    }
+
+    // For Ollama, we can use either the direct OllamaLLMResource or the bridge.
+    // Using bridge for consistency across all providers.
+    let adapter = adapter_factory::create_adapter(provider, api_key, base_url);
+    let bridge = AdapterBridgeLLMResource::new(adapter, model);
+
+    // If provider supports OpenAI-compatible embeddings, configure embed
+    let bridge = match provider {
+        "openai" => {
+            let url = if base_url.is_empty() {
+                "https://api.openai.com/v1".to_string()
+            } else {
+                base_url.to_string()
+            };
+            bridge.with_embed(url, api_key)
+        }
+        _ => bridge,
+    };
+
+    SimpleExecutionContext::builder(Box::new(bridge))
+        .with_db(Box::new(InMemoryDBResource::new()))
+        .with_storage(Box::new(InMemoryStorageResource::new()))
+        .build()
+}
+
 /// Execute an agent from a JSON/YAML file.
 ///
-/// Usage: mirai run <agent.json|agent.yaml> [--input '{"key":"value"}']
+/// Usage: mirai run <agent.json|agent.yaml> [--input '{"key":"value"}'] [--provider ollama] [--model gemma3]
 ///
 /// Output: JSON with status, state, trace, transcript.
 async fn run_agent(args: &[String]) {
     let path = match args.first() {
-        Some(p) => p.as_str(),
-        None => {
+        Some(p) if !p.starts_with("--") => p.as_str(),
+        _ => {
             eprintln!(
-                "{}Usage: mirai run <agent.json|agent.yaml> [--input '{{...}}']{}",
+                "{}Usage: mirai run <agent.json|agent.yaml> [--input '{{...}}'] [--provider <p>] [--model <m>]{}",
                 colors::YELLOW,
                 colors::RESET
             );
@@ -90,14 +190,16 @@ async fn run_agent(args: &[String]) {
         }
     };
 
-    // Parse optional --input JSON
-    let input_json: Option<String> = args.windows(2).find_map(|w| {
-        if w[0] == "--input" || w[0] == "-i" {
-            Some(w[1].clone())
-        } else {
-            None
-        }
-    });
+    // Parse flags
+    let input_json = parse_flag(args, "--input").or_else(|| parse_flag(args, "-i"));
+    let (provider, model, api_key, base_url) = resolve_provider(args);
+
+    // Show provider info
+    eprintln!(
+        "{}LLM: {provider}/{model}{}",
+        colors::DIM,
+        colors::RESET
+    );
 
     // Load agent spec
     let spec = match AgentSpec::from_file(path) {
@@ -132,13 +234,11 @@ async fn run_agent(args: &[String]) {
     let executor = RegistryExecutor::new(Arc::new(registry));
     let runner = GraphRunner::new(Box::new(executor));
 
-    // Create context
-    let context = SimpleExecutionContext::default_dev();
+    // Create context with REAL LLM provider
+    let context = build_context(&provider, &model, &api_key, &base_url);
 
     // If input provided, inject into entry node state
-    // (For now, the trigger tools handle mock_payload from config)
     if let Some(ref input_str) = input_json {
-        // Parse input JSON and inject into the first trigger node's config
         if let Ok(input_value) = serde_json::from_str::<serde_json::Value>(input_str) {
             if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
                 entry.config.insert(
@@ -149,10 +249,18 @@ async fn run_agent(args: &[String]) {
         }
     }
 
+    // Inject model override into all LLM nodes if not already set
+    for node in &mut graph.nodes {
+        if node.tool_type == "ai/llm_call" {
+            node.config
+                .entry("model".to_string())
+                .or_insert_with(|| serde_json::Value::String(model.clone()));
+        }
+    }
+
     // Run
     match runner.run(&graph, &context).await {
         Ok(result) => {
-            // Build output JSON
             let output = serde_json::json!({
                 "status": result.status,
                 "state": result.state.snapshot(),
@@ -255,17 +363,42 @@ fn print_help() {
 {bold}mirai{reset} — Agentic graph engine
 
 {bold}USAGE:{reset}
-    mirai                       Interactive setup wizard + terminal
-    mirai run <file> [-i JSON]  Execute agent from JSON/YAML file
-    mirai validate <file>       Validate agent spec
-    mirai serve                 Start HTTP server
-    mirai version               Show version
-    mirai agent load <file>     Import agent from YAML
-    mirai agent list            List agents
-    mirai help                  This message
+    mirai                                    Interactive setup wizard + terminal
+    mirai run <file> [options]               Execute agent from JSON/YAML file
+    mirai validate <file>                    Validate agent spec
+    mirai serve [--port N]                   Start HTTP server
+    mirai version                            Show version
+    mirai agent load <file>                  Import agent from YAML
+    mirai agent list                         List agents
+    mirai help                               This message
+
+{bold}RUN OPTIONS:{reset}
+    -i, --input <JSON>       Input data for the agent
+    --provider <name>        LLM provider: ollama, openai, claude, gemini, groq, openrouter, nvidia
+    --model <name>           Model name (auto-detects provider if omitted)
+    --api-key <key>          API key (or use env: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+    --base-url <url>         Custom API base URL
+
+{bold}ENVIRONMENT VARIABLES:{reset}
+    MIRAI_LLM_PROVIDER       Default LLM provider
+    MIRAI_LLM_MODEL          Default model
+    OPENAI_API_KEY            OpenAI API key
+    ANTHROPIC_API_KEY         Anthropic (Claude) API key
+    GROQ_API_KEY              Groq API key
+    NVIDIA_API_KEY            NVIDIA API key
+    OPENROUTER_API_KEY        OpenRouter API key
+    OLLAMA_BASE_URL           Ollama server URL (default: http://localhost:11434)
+
+{bold}PROVIDER RESOLUTION:{reset}
+    1. --provider flag
+    2. MIRAI_LLM_PROVIDER env var
+    3. Auto-detect from model name (gpt-* → openai, claude-* → claude, etc.)
+    4. Default: ollama (localhost)
 
 {bold}EXAMPLES:{reset}
-    mirai run agent.json
+    mirai run agent.yaml
+    mirai run agent.yaml --provider ollama --model gemma3
+    mirai run agent.yaml --provider openai --model gpt-4o
     mirai run agent.yaml --input '{{\"query\": \"hello\"}}'
     mirai validate my-agent.json
 ",

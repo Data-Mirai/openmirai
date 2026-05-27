@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 use crate::core::context::ExecutionContext;
 use crate::core::events::{EventEmitter, EventType};
 use crate::core::graph::{ComparisonOp, EdgeCondition, GraphDef, NodeDef};
-use crate::core::state::{ExecutionState, SharedState};
+use crate::core::state::SharedState;
 use crate::core::well_known as wk;
 
 use super::helpers::{now_ts, run_hook_with_timeout, compare_numbers};
@@ -559,7 +559,7 @@ impl GraphRunner {
     async fn handle_node_failure(
         &self,
         node: &NodeDef,
-        idx: usize,
+        _idx: usize,
         tool_err: ToolError,
         retries: u32,
         elapsed_ms: u64,
@@ -680,7 +680,7 @@ impl GraphRunner {
         context: &dyn ExecutionContext,
         session_id: &str,
         state: SharedState,
-        mut trace: Vec<TraceEntry>,
+        trace: Vec<TraceEntry>,
         mut transcript: Vec<TranscriptEntry>,
     ) -> ExecutionResult {
         if let Some(ref hook) = self.hook_handler {

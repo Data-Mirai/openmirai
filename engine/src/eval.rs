@@ -76,7 +76,7 @@ pub fn eval_format_compliance(response: &str, schema: Option<&Value>) -> EvalRes
                 let mut score = 1.0;
                 let mut issues = Vec::new();
 
-                if let (Some(props), Some(obj)) = (
+                if let (Some(_props), Some(obj)) = (
                     schema.get("properties").and_then(|p| p.as_object()),
                     value.as_object(),
                 ) {

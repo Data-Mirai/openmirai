@@ -104,18 +104,6 @@ pub use web_scrape::*;
 pub use html_to_markdown::*;
 pub use rag_search::*;
 
-use self::db_read::DbReadFactory;
-use self::db_write::DbWriteFactory;
-use self::storage_read::StorageReadFactory;
-use self::storage_write::StorageWriteFactory;
-use self::vault_read::VaultReadFactory;
-use self::vault_write::VaultWriteFactory;
-use self::entity_query::EntityQueryFactory;
-use self::entity_upsert::EntityUpsertFactory;
-use self::web_scrape::WebScrapeFactory;
-use self::html_to_markdown::HtmlToMarkdownFactory;
-use self::rag_search::RagSearchFactory;
-
 pub fn register_data_tools(registry: &mut ToolRegistry) {
     registry.register("data/db_read", Box::new(DbReadFactory::new()));
     registry.register("data/db_write", Box::new(DbWriteFactory::new()));

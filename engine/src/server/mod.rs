@@ -12,16 +12,8 @@ pub mod state;
 #[cfg(test)]
 mod tests;
 
-// Re-export the public API surface that external code expects
-// from `datamirai_engine::server::app::*`.
-pub mod app {
-    pub use super::handlers::*;
-    pub use super::helpers::*;
-    pub use super::state::*;
-
-    pub use super::create_router;
-    pub use super::serve;
-}
+// Public API re-exports.
+pub use state::*;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -36,7 +28,6 @@ use crate::tools::registry::ToolRegistry;
 
 use self::handlers::*;
 use self::helpers::rag_search;
-use self::state::AppState;
 
 // ---------------------------------------------------------------------------
 // Router factory
@@ -75,25 +66,6 @@ pub fn create_router(state: AppState) -> Router {
         // RAG + Eval
         .route("/api/v1/rag/search", post(rag_search))
         .route("/api/v1/eval", post(eval_session))
-        // ---- Backward-compat: unversioned /api/ aliases ----
-        .route("/api/graphs", post(create_graph).get(list_graphs))
-        .route("/api/graphs/{id}", get(get_graph).delete(delete_graph))
-        .route("/api/agents", post(create_agent).get(list_agents))
-        .route("/api/agents/from-spec", post(create_agent_from_spec))
-        .route("/api/agents/{id}", get(get_agent))
-        .route("/api/agents/{id}/execute", post(execute_agent))
-        .route("/api/agents/{id}/stream", post(stream_agent))
-        .route("/api/agents/{id}/spec", get(get_agent_spec))
-        .route("/api/agents/{id}/schema", get(get_agent_schema))
-        .route("/api/tools", get(list_tools))
-        .route("/api/templates", get(list_templates_handler))
-        .route("/api/sessions", get(list_sessions))
-        .route("/api/sessions/{id}", get(get_session))
-        .route("/api/universe/message", post(universe_message))
-        .route("/api/universe/groupchat", post(groupchat))
-        .route("/api/metrics", get(get_metrics))
-        .route("/api/rag/search", post(rag_search))
-        .route("/api/eval", post(eval_session))
         // Webhooks (no version prefix)
         .route("/webhooks/{*path}", post(webhook_handler))
         // Middleware: API key auth (if configured)

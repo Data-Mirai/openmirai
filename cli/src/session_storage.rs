@@ -4,6 +4,8 @@
 //! - `manifest.json`    metadata (id, provider, model, cwd, timestamps)
 //! - `transcript.jsonl`  append-only log of every event
 
+#![allow(dead_code)]
+
 use std::fs;
 use std::io::{BufRead, Write as IoWrite};
 use std::path::PathBuf;

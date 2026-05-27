@@ -69,7 +69,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::post("/api/graphs")
+                Request::post("/api/v1/graphs")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
                     .unwrap(),
@@ -83,7 +83,7 @@ async fn body_json(body: Body) -> Value {
         // List
         let resp = app
             .clone()
-            .oneshot(Request::get("/api/graphs").body(Body::empty()).unwrap())
+            .oneshot(Request::get("/api/v1/graphs").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -94,7 +94,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::get(&format!("/api/graphs/{graph_id}"))
+                Request::get(&format!("/api/v1/graphs/{graph_id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -106,7 +106,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::delete(&format!("/api/graphs/{graph_id}"))
+                Request::delete(&format!("/api/v1/graphs/{graph_id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -117,7 +117,7 @@ async fn body_json(body: Body) -> Value {
         // Get after delete -> 404
         let resp = app
             .oneshot(
-                Request::get(&format!("/api/graphs/{graph_id}"))
+                Request::get(&format!("/api/v1/graphs/{graph_id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -140,7 +140,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::post("/api/graphs")
+                Request::post("/api/v1/graphs")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&graph_body).unwrap()))
                     .unwrap(),
@@ -158,7 +158,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::post("/api/agents")
+                Request::post("/api/v1/agents")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&agent_body).unwrap()))
                     .unwrap(),
@@ -172,7 +172,7 @@ async fn body_json(body: Body) -> Value {
         // List agents
         let resp = app
             .clone()
-            .oneshot(Request::get("/api/agents").body(Body::empty()).unwrap())
+            .oneshot(Request::get("/api/v1/agents").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -183,7 +183,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::get(&format!("/api/agents/{agent_id}"))
+                Request::get(&format!("/api/v1/agents/{agent_id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -218,7 +218,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::post("/api/agents/from-spec")
+                Request::post("/api/v1/agents/from-spec")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&spec).unwrap()))
                     .unwrap(),
@@ -234,7 +234,7 @@ async fn body_json(body: Body) -> Value {
         let resp = app
             .clone()
             .oneshot(
-                Request::post(&format!("/api/agents/{agent_id}/execute"))
+                Request::post(&format!("/api/v1/agents/{agent_id}/execute"))
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&exec_body).unwrap()))
                     .unwrap(),
@@ -255,7 +255,7 @@ async fn body_json(body: Body) -> Value {
         let app = create_router(state);
 
         let resp = app
-            .oneshot(Request::get("/api/tools").body(Body::empty()).unwrap())
+            .oneshot(Request::get("/api/v1/tools").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -270,7 +270,7 @@ async fn body_json(body: Body) -> Value {
         let body = json!({ "name": "orphan", "graph_id": "nonexistent" });
         let resp = app
             .oneshot(
-                Request::post("/api/agents")
+                Request::post("/api/v1/agents")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
@@ -285,7 +285,7 @@ async fn body_json(body: Body) -> Value {
         let app = test_app();
         let resp = app
             .oneshot(
-                Request::get("/api/sessions/ghost")
+                Request::get("/api/v1/sessions/ghost")
                     .body(Body::empty())
                     .unwrap(),
             )

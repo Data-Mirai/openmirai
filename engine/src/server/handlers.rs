@@ -9,16 +9,11 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::core::agent_spec::AgentSpec;
-use crate::core::context::LLMResource;
 use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
-use crate::core::runner::{ExecutionResult, ExecutionStatus, TraceEntry};
-use crate::core::state::SharedState;
-use crate::adapters::{InMemoryDBResource, InMemoryStorageResource, SimpleExecutionContext};
-use crate::tools::builtin::register_all_builtin_tools;
-use crate::tools::registry::ToolRegistry;
+use crate::core::runner::{ExecutionStatus, TraceEntry};
 
 use super::state::{AppState, ErrorResponse, ExecuteRequest, GraphCreateRequest, AgentCreateRequest, SessionListQuery};
-use super::helpers::{run_agent_spec, run_agent_spec_streaming, cosine_similarity};
+use super::helpers::{run_agent_spec, run_agent_spec_streaming};
 pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
     let uptime_secs = state.start_time.elapsed().as_secs();
     let agents_count = state.agents.read().await.len();
@@ -274,7 +269,7 @@ pub(crate) async fn execute_agent(
         match crate::core::agent_spec::validate_agent_inputs(&req.trigger_data, inputs_schema) {
             Ok(enriched) => enriched,
             Err(errors) => {
-                let details: Vec<Value> = errors.iter().map(|e| json!({
+                let _details: Vec<Value> = errors.iter().map(|e| json!({
                     "field": e.field,
                     "error": e.error_type,
                     "message": e.message,
@@ -357,7 +352,7 @@ pub(crate) async fn stream_agent(
     let (byte_tx, byte_rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(256);
 
     // Spawn a task that drains events and converts to SSE text.
-    let drain_handle = tokio::spawn(async move {
+    let _drain_handle = tokio::spawn(async move {
         let mut rx = event_rx;
         while let Some(event) = rx.recv().await {
             let sse_text = event.to_sse();

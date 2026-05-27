@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use datamirai_engine::{
     AdapterBridgeLLMResource, AgentSpec, ExecutionContext, ExecutionStatus, GraphRunner,
-    RegistryExecutor, SimpleExecutionContext, ToolRegistry,
+    RegistryExecutor, DefaultExecutionContext, ToolRegistry,
 };
 use datamirai_engine::tools::builtin::register_all_builtin_tools;
 
@@ -150,10 +150,10 @@ fn build_context(
     api_key: &str,
     base_url: &str,
     system_prompt: Option<&str>,
-) -> SimpleExecutionContext {
-    use datamirai_engine::resources::InMemoryDBResource;
-    use datamirai_engine::resources::InMemoryStorageResource;
-    use datamirai_engine::resources::MockLLMResource;
+) -> DefaultExecutionContext {
+    use datamirai_engine::adapters::InMemoryDBResource;
+    use datamirai_engine::adapters::InMemoryStorageResource;
+    use datamirai_engine::adapters::MockLLMResource;
 
     // Special case: if provider is "mock", use MockLLMResource for testing
     let llm: Box<dyn datamirai_engine::LLMResource> = if provider == "mock" {
@@ -175,7 +175,7 @@ fn build_context(
         Box::new(bridge)
     };
 
-    let mut builder = SimpleExecutionContext::builder(llm)
+    let mut builder = DefaultExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
         .with_storage(Box::new(InMemoryStorageResource::new()));
 
@@ -494,7 +494,7 @@ async fn run_serve(args: &[String]) {
     let server_api_key = parse_flag(args, "--api-key")
         .or_else(|| std::env::var("MIRAI_API_KEY").ok());
 
-    if let Err(e) = datamirai_engine::server::app::serve(&host, port, llm_factory, server_api_key).await {
+    if let Err(e) = datamirai_engine::server::serve(&host, port, llm_factory, server_api_key).await {
         eprintln!(
             "{}Server error: {e}{}",
             colors::RED,

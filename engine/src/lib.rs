@@ -72,10 +72,6 @@ pub use crate::runtime::{AgentRuntime, RuntimeAgentRecord, RuntimeAgentStatus, R
 // Re-export adapter types (formerly "resources").
 pub use crate::adapters::{
     AdapterBridgeLLMResource, DefaultExecutionContext, InMemoryDBResource,
-    InMemoryStorageResource, MockLLMResource, OllamaLLMResource, SimpleExecutionContext,
+    InMemoryStorageResource, MockLLMResource, OllamaLLMResource,
 };
 
-// Backward-compat alias: `resources` → `adapters`.
-pub mod resources {
-    pub use crate::adapters::*;
-}

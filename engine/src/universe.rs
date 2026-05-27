@@ -273,7 +273,6 @@ pub struct GroupChatResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::soul;
 
     fn make_soul(name: &str, caps: &[&str]) -> Soul {
         Soul {

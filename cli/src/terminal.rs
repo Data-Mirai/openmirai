@@ -292,7 +292,7 @@ async fn execute_tool(
     }
 
     // We need a minimal ExecutionContext for tool execution.
-    let ctx = datamirai_engine::resources::SimpleExecutionContext::default_dev();
+    let ctx = datamirai_engine::adapters::DefaultExecutionContext::default_dev();
 
     match tool.execute(inputs, &config, &ctx).await {
         Ok(result) => {

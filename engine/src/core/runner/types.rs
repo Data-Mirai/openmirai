@@ -7,9 +7,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::core::graph::GraphError;
-use crate::core::state::ExecutionState;
-/// Backward-compat alias.
-pub type SharedState = ExecutionState;
+use crate::core::state::SharedState;
 
 #[derive(Debug, Error)]
 pub enum RunnerError {

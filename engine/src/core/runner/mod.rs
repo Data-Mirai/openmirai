@@ -21,6 +21,6 @@ pub use graph_runner::GraphRunner;
 pub use traits::{CheckpointCallback, HookHandler, ToolExecutor};
 pub use types::{
     BackoffStrategy, Checkpoint, ExecutionResult, ExecutionStatus, FailureMode, HookResult,
-    InterruptInfo, RetryPolicy, RunnerError, SharedState, ToolError, TraceEntry, TraceStatus,
+    InterruptInfo, RetryPolicy, RunnerError, ToolError, TraceEntry, TraceStatus,
     TranscriptEntry,
 };

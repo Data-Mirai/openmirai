@@ -108,19 +108,6 @@ pub use mkdir::*;
 pub use tree::*;
 pub use file_info::*;
 
-use self::read_file::ReadFileFactory;
-use self::write_file::WriteFileFactory;
-use self::list_dir::ListDirFactory;
-use self::glob_files::GlobFilesFactory;
-use self::grep_files::GrepFilesFactory;
-use self::edit_file::EditFileFactory;
-use self::copy::CopyFactory;
-use self::move_file::MoveFactory;
-use self::delete::DeleteFactory;
-use self::mkdir::MkdirFactory;
-use self::tree::TreeFactory;
-use self::file_info::FileInfoFactory;
-
 pub fn register_filesystem_tools(registry: &mut ToolRegistry) {
     // Canonical names (match Python: filesystem/*)
     registry.register("filesystem/read_file", Box::new(ReadFileFactory::new()));

@@ -7,9 +7,7 @@ use serde_json::Value;
 
 use crate::core::context::ExecutionContext;
 use crate::core::graph::{GraphDef, NodeDef};
-use crate::core::state::ExecutionState;
-/// Backward-compat alias used by trait signatures.
-pub(crate) type SharedState = ExecutionState;
+use crate::core::state::SharedState;
 
 use super::types::{HookResult, ToolError, RunnerError, Checkpoint};
 /// Seven interception points during graph execution.

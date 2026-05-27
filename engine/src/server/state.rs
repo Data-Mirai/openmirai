@@ -3,10 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::core::agent_spec::AgentSpec;
@@ -14,7 +12,6 @@ use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
 use crate::tools::registry::{RegistryExecutor, ToolRegistry};
-use crate::tools::builtin::register_all_builtin_tools;
 /// Shared application state passed to all handlers via axum's `State`.
 ///
 /// Uses `Arc<RwLock<HashMap>>` for in-memory storage. A real DB layer will

@@ -1,22 +1,17 @@
 //! Execution helpers shared by agent handlers.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::core::agent_spec::AgentSpec;
-use crate::core::context::LLMResource;
-use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
-use crate::core::runner::{ExecutionResult, ExecutionStatus, GraphRunner, TraceEntry};
+use crate::core::runner::{ExecutionResult, ExecutionStatus};
 use crate::core::state::SharedState;
-use crate::adapters::{InMemoryDBResource, InMemoryStorageResource, SimpleExecutionContext};
-use crate::tools::builtin::register_all_builtin_tools;
-use crate::tools::registry::{RegistryExecutor, ToolRegistry};
+use crate::adapters::{InMemoryDBResource, InMemoryStorageResource, DefaultExecutionContext};
 
 use super::state::{AppState, ErrorResponse};
 
@@ -74,7 +69,7 @@ pub(crate) async fn run_agent_spec(
 
     // Create context with REAL LLM from the factory. Zero mocks.
     let llm = (state.llm_factory)();
-    let mut ctx_builder = SimpleExecutionContext::builder(llm)
+    let mut ctx_builder = DefaultExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
         .with_storage(Box::new(InMemoryStorageResource::new()));
     if let Some(ref prompt) = system_prompt {
@@ -143,7 +138,7 @@ pub(crate) async fn run_agent_spec_streaming(
     };
 
     let llm = (state.llm_factory)();
-    let mut ctx_builder = SimpleExecutionContext::builder(llm)
+    let mut ctx_builder = DefaultExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
         .with_storage(Box::new(InMemoryStorageResource::new()));
     if let Some(ref prompt) = system_prompt {

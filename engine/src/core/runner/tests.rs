@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -16,7 +19,6 @@ use super::{
     FailureMode, GraphRunner, HookHandler, HookResult, InterruptInfo, RetryPolicy,
     RunnerError, ToolError, ToolExecutor, TraceEntry, TraceStatus, TranscriptEntry,
 };
-    // -- Test helpers -------------------------------------------------------
 
     fn make_node(id: &str, tool_type: &str) -> NodeDef {
         NodeDef {

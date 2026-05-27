@@ -103,6 +103,7 @@ ai_tool! {
         field("max_tokens", FieldType::Number, false, "Max tokens to generate"),
         field("system_prompt", FieldType::String, false, "Node-level system prompt"),
         field("output_schema", FieldType::String, false, "JSON Schema to enforce structured output"),
+        field("output_schema_strict", FieldType::Boolean, false, "Fail hard if schema validation fails after retries (default true)"),
         field("max_retries", FieldType::Number, false, "Retries for schema validation (default 2)"),
         field("max_context_length", FieldType::Number, false, "Max chars for session context (default 12000)"),
     ]
@@ -134,6 +135,62 @@ impl Tool for LlmCallTool {
                 tool_type: "ai/llm_call".into(),
                 message: "prompt is required (via input or config)".into(),
             });
+        }
+
+        // --- Security: prompt injection scan ---
+        let scanner_enabled = config
+            .get("security_scan")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true); // Enabled by default
+
+        if scanner_enabled {
+            let sensitivity = match config.get("security_sensitivity").and_then(|v| v.as_str()) {
+                Some("low") => crate::security::Sensitivity::Low,
+                Some("high") => crate::security::Sensitivity::High,
+                _ => crate::security::Sensitivity::Medium,
+            };
+            let scan_config = crate::security::ScannerConfig {
+                enabled: true,
+                sensitivity,
+                block_on_detection: config
+                    .get("security_block")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+            };
+
+            // Scan all text inputs recursively (prompt + session data).
+            let mut text_parts: Vec<String> = Vec::new();
+            fn collect_strings(value: &Value, parts: &mut Vec<String>) {
+                match value {
+                    Value::String(s) => parts.push(s.clone()),
+                    Value::Array(arr) => arr.iter().for_each(|v| collect_strings(v, parts)),
+                    Value::Object(map) => map.values().for_each(|v| collect_strings(v, parts)),
+                    _ => {}
+                }
+            }
+            for v in inputs.values() {
+                collect_strings(v, &mut text_parts);
+            }
+            let all_input_text = text_parts.join(" ");
+
+            let scan_result = crate::security::scan(&all_input_text, &scan_config);
+            if scan_result.blocked {
+                warn!(
+                    threat = ?scan_result.threat_type,
+                    confidence = scan_result.confidence,
+                    pattern = ?scan_result.matched_pattern,
+                    "Prompt injection detected — blocking execution"
+                );
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/llm_call".into(),
+                    message: format!(
+                        "Security scan blocked execution: {:?} detected (confidence: {:.0}%). {}",
+                        scan_result.threat_type,
+                        scan_result.confidence * 100.0,
+                        scan_result.details.unwrap_or_default()
+                    ),
+                });
+            }
         }
 
         // --- Build session context from all non-prompt inputs ---
@@ -262,11 +319,29 @@ impl Tool for LlmCallTool {
             }
         }
 
-        // --- All retries exhausted -- return best effort ---
+        // --- All retries exhausted ---
         let schema = output_schema.as_ref().unwrap();
-        let (parsed, _) = validate_response(&last_response, schema);
-        let schema_valid = parsed.is_some();
+        let (parsed, final_errors) = validate_response(&last_response, schema);
+        let schema_valid = parsed.is_some() && final_errors.is_empty();
 
+        // If strict mode is enabled, fail hard when schema validation fails.
+        let strict = config
+            .get("output_schema_strict")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        if strict && !schema_valid {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/llm_call".into(),
+                message: format!(
+                    "Output validation failed after {} retries. Errors: {}",
+                    max_retries,
+                    final_errors.join("; ")
+                ),
+            });
+        }
+
+        // Non-strict: return best effort.
         let mut out = HashMap::new();
         out.insert("response".to_string(), json!(last_response));
         out.insert("model".to_string(), json!(model));

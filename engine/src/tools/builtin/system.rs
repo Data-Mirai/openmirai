@@ -309,6 +309,96 @@ impl Tool for ProcessListTool {
 pub fn register_system_tools(registry: &mut ToolRegistry) {
     registry.register("system/bash", Box::new(BashFactory::new()));
     registry.register("system/process_list", Box::new(ProcessListFactory::new()));
+    registry.register("system/sandbox_exec", Box::new(SandboxExecFactory::new()));
+}
+
+// ===========================================================================
+// SandboxExecTool
+// ===========================================================================
+
+system_tool! {
+    struct SandboxExecTool, factory SandboxExecFactory;
+    tool_type = "system/sandbox_exec",
+    name = "Sandbox Code Execution",
+    description = "Executes code in an isolated sandbox with timeout and resource limits",
+    category = "system",
+    inputs = [
+        field("code", FieldType::String, true, "Source code to execute"),
+        field("language", FieldType::String, true, "Language: python, javascript, or bash"),
+    ],
+    outputs = [
+        field("stdout", FieldType::String, true, "Standard output"),
+        field("stderr", FieldType::String, true, "Standard error"),
+        field("exit_code", FieldType::Number, true, "Process exit code"),
+        field("duration_ms", FieldType::Number, true, "Execution duration in ms"),
+        field("timed_out", FieldType::Boolean, true, "Whether execution timed out"),
+    ],
+    config_fields = [
+        field("max_time_ms", FieldType::Number, false, "Timeout in ms (default 30000)"),
+        field("max_memory_mb", FieldType::Number, false, "Max memory in MB (default 256)"),
+        field("network_access", FieldType::Boolean, false, "Allow network (default false)"),
+    ]
+}
+
+#[async_trait]
+impl Tool for SandboxExecTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let code = inputs
+            .get("code")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "system/sandbox_exec".into(),
+                message: "input 'code' is required".into(),
+            })?;
+
+        let lang_str = inputs
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or("bash");
+
+        let language = match lang_str {
+            "python" | "py" => crate::sandbox::Language::Python,
+            "javascript" | "js" | "node" => crate::sandbox::Language::Javascript,
+            "bash" | "sh" => crate::sandbox::Language::Bash,
+            other => {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "system/sandbox_exec".into(),
+                    message: format!("Unsupported language: '{other}'. Use: python, javascript, bash"),
+                })
+            }
+        };
+
+        let sandbox_config = crate::sandbox::SandboxConfig {
+            max_time_ms: config.get("max_time_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
+            max_memory_mb: config.get("max_memory_mb").and_then(|v| v.as_u64()).unwrap_or(256),
+            network_access: config.get("network_access").and_then(|v| v.as_bool()).unwrap_or(false),
+            ..Default::default()
+        };
+
+        let result = crate::sandbox::execute(code, &language, &sandbox_config).await;
+
+        if let Some(ref err) = result.error {
+            if result.timed_out {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "system/sandbox_exec".into(),
+                    message: err.clone(),
+                });
+            }
+        }
+
+        let mut out = HashMap::new();
+        out.insert("stdout".to_string(), json!(result.stdout));
+        out.insert("stderr".to_string(), json!(result.stderr));
+        out.insert("exit_code".to_string(), json!(result.exit_code));
+        out.insert("duration_ms".to_string(), json!(result.duration_ms));
+        out.insert("timed_out".to_string(), json!(result.timed_out));
+        Ok(out)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +536,7 @@ mod tests {
         register_system_tools(&mut reg);
         assert!(reg.get("system/bash").is_some());
         assert!(reg.get("system/process_list").is_some());
-        assert_eq!(reg.list_tools().len(), 2);
+        assert!(reg.get("system/sandbox_exec").is_some());
+        assert_eq!(reg.list_tools().len(), 3);
     }
 }

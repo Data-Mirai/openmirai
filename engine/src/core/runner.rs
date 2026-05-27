@@ -797,59 +797,98 @@ impl GraphRunner {
 
                     // Checkpoint after successful execution (REGLA-12).
                     step += 1;
-                    let next = self.resolve_next_node(node_id, &output, graph);
 
-                    self.save_checkpoint(
-                        &session_id,
-                        step,
-                        node_id,
-                        &state,
-                        next.as_deref(),
-                    )
-                    .await;
+                    // Resolve ALL next nodes to detect fan-out.
+                    let next_nodes = self.resolve_all_next_nodes(node_id, &output, graph);
 
-                    // Transcript: decision at conditional edges
-                    let outgoing = graph.outgoing_edges(node_id);
-                    let conditional: Vec<_> = outgoing
-                        .iter()
-                        .filter(|e| e.condition.is_some())
-                        .collect();
-                    if conditional.len() > 1 {
-                        if let Some(ref next_id) = next {
-                            // Find matching edge for metadata
-                            let edge_id = outgoing
-                                .iter()
-                                .find(|e| e.target == *next_id)
-                                .map(|e| e.id.as_str())
-                                .unwrap_or("unknown");
-                            let cond_desc = outgoing
-                                .iter()
-                                .find(|e| e.target == *next_id)
-                                .and_then(|e| e.condition.as_ref())
-                                .map(|c| {
-                                    format!("{} {:?} {}", c.field, c.op, c.value)
-                                })
-                                .unwrap_or_default();
+                    if next_nodes.len() > 1 {
+                        // ---- FAN-OUT: parallel execution ----
+                        debug!(
+                            from = %node_id,
+                            targets = ?next_nodes,
+                            "fan-out detected — executing {} nodes in parallel",
+                            next_nodes.len()
+                        );
 
-                            transcript.push(TranscriptEntry {
-                                entry_type: "decision".to_string(),
-                                message: format!(
-                                    "Decision: following edge {} (condition: {})",
-                                    edge_id, cond_desc
-                                ),
-                                timestamp: now_ts(),
-                                node_id: Some(node_id.to_string()),
-                                metadata: HashMap::new(),
-                            });
+                        let (fo_trace, fo_transcript) = self
+                            .execute_fanout(&next_nodes, graph, context, &state, &session_id)
+                            .await?;
+                        trace.extend(fo_trace);
+                        transcript.extend(fo_transcript);
+
+                        // Find join node (common successor of all parallel nodes).
+                        let join_id = self.find_fanout_join(&next_nodes, graph);
+
+                        self.save_checkpoint(
+                            &session_id,
+                            step,
+                            node_id,
+                            &state,
+                            join_id.as_deref(),
+                        )
+                        .await;
+
+                        if let Some(ref jid) = join_id {
+                            debug!(from = %node_id, join = %jid, "fan-in at join node");
+                        } else {
+                            debug!(from = %node_id, "fan-out paths terminate without join");
                         }
-                    }
-
-                    if let Some(ref nid) = next {
-                        debug!(from = %node_id, to = %nid, "advancing to next node");
+                        join_id.as_deref().and_then(|nid| node_idx.get(nid).copied())
                     } else {
-                        debug!(from = %node_id, "no outgoing edge — end of graph");
+                        // ---- NORMAL: sequential execution ----
+                        let next = next_nodes.into_iter().next();
+
+                        self.save_checkpoint(
+                            &session_id,
+                            step,
+                            node_id,
+                            &state,
+                            next.as_deref(),
+                        )
+                        .await;
+
+                        // Transcript: decision at conditional edges
+                        let outgoing = graph.outgoing_edges(node_id);
+                        let conditional: Vec<_> = outgoing
+                            .iter()
+                            .filter(|e| e.condition.is_some())
+                            .collect();
+                        if conditional.len() > 1 {
+                            if let Some(ref next_id) = next {
+                                let edge_id = outgoing
+                                    .iter()
+                                    .find(|e| e.target == *next_id)
+                                    .map(|e| e.id.as_str())
+                                    .unwrap_or("unknown");
+                                let cond_desc = outgoing
+                                    .iter()
+                                    .find(|e| e.target == *next_id)
+                                    .and_then(|e| e.condition.as_ref())
+                                    .map(|c| {
+                                        format!("{} {:?} {}", c.field, c.op, c.value)
+                                    })
+                                    .unwrap_or_default();
+
+                                transcript.push(TranscriptEntry {
+                                    entry_type: "decision".to_string(),
+                                    message: format!(
+                                        "Decision: following edge {} (condition: {})",
+                                        edge_id, cond_desc
+                                    ),
+                                    timestamp: now_ts(),
+                                    node_id: Some(node_id.to_string()),
+                                    metadata: HashMap::new(),
+                                });
+                            }
+                        }
+
+                        if let Some(ref nid) = next {
+                            debug!(from = %node_id, to = %nid, "advancing to next node");
+                        } else {
+                            debug!(from = %node_id, "no outgoing edge — end of graph");
+                        }
+                        next.as_deref().and_then(|nid| node_idx.get(nid).copied())
                     }
-                    next.as_deref().and_then(|nid| node_idx.get(nid).copied())
                 }
 
                 // ---- Failure ----
@@ -1184,30 +1223,210 @@ impl GraphRunner {
         output: &HashMap<String, Value>,
         graph: &GraphDef,
     ) -> Option<String> {
+        let targets = self.resolve_all_next_nodes(node_id, output, graph);
+        targets.into_iter().next()
+    }
+
+    /// Returns ALL next nodes. If multiple unconditional edges exist, returns
+    /// all of them (fan-out). If conditional edges match, returns only the first
+    /// matching one (conditions are mutually exclusive).
+    fn resolve_all_next_nodes(
+        &self,
+        node_id: &str,
+        output: &HashMap<String, Value>,
+        graph: &GraphDef,
+    ) -> Vec<String> {
         let outgoing = graph.outgoing_edges(node_id);
 
         if outgoing.is_empty() {
-            return None;
+            return vec![];
         }
 
-        // First pass: conditional edges.
+        // First pass: conditional edges — return first match (exclusive routing).
         for edge in &outgoing {
             if let Some(ref condition) = edge.condition {
                 if Self::evaluate_condition(output, condition) {
-                    return Some(edge.target.clone());
+                    return vec![edge.target.clone()];
                 }
             }
         }
 
-        // Second pass: first unconditional edge.
-        for edge in &outgoing {
-            if edge.condition.is_none() {
-                return Some(edge.target.clone());
+        // Second pass: collect ALL unconditional edges.
+        let unconditional: Vec<String> = outgoing
+            .iter()
+            .filter(|e| e.condition.is_none())
+            .map(|e| e.target.clone())
+            .collect();
+
+        unconditional
+    }
+
+    /// Execute multiple nodes in parallel (fan-out) using concurrent futures.
+    ///
+    /// Uses `futures_util::future::join_all` for IO-concurrent execution of all
+    /// parallel nodes. Results are stored in SharedState under each node's ID.
+    async fn execute_fanout(
+        &self,
+        node_ids: &[String],
+        graph: &GraphDef,
+        context: &dyn ExecutionContext,
+        state: &SharedState,
+        session_id: &str,
+    ) -> Result<
+        (Vec<TraceEntry>, Vec<TranscriptEntry>),
+        RunnerError,
+    > {
+        let mut trace_entries = Vec::new();
+        let mut transcript_entries = Vec::new();
+
+        transcript_entries.push(TranscriptEntry {
+            entry_type: "fanout_start".to_string(),
+            message: format!(
+                "Fan-out: executing {} nodes in parallel: [{}]",
+                node_ids.len(),
+                node_ids.join(", ")
+            ),
+            timestamp: now_ts(),
+            node_id: None,
+            metadata: HashMap::new(),
+        });
+
+        self.emit_event(
+            EventType::BlockStarted,
+            session_id,
+            None,
+            {
+                let mut m = HashMap::new();
+                m.insert("fanout_nodes".to_string(), Value::String(node_ids.join(",")));
+                m
+            },
+        );
+
+        // Prepare concurrent futures — one per parallel node.
+        let futures: Vec<_> = node_ids
+            .iter()
+            .filter_map(|nid| {
+                let node = graph.nodes.iter().find(|n| n.id == *nid)?;
+                let mut inputs = self.resolve_inputs(nid, graph, state);
+                for (key, val) in &node.config {
+                    inputs.entry(key.clone()).or_insert_with(|| val.clone());
+                }
+                let executor = &self.executor;
+                Some(async move {
+                    let start = Instant::now();
+                    let result = executor.execute(node, inputs, context).await;
+                    let elapsed_ms = start.elapsed().as_millis() as u64;
+                    (node.id.clone(), node.tool_type.clone(), result, elapsed_ms)
+                })
+            })
+            .collect();
+
+        // Execute all concurrently via join_all (IO-concurrent, borrows context).
+        let results = futures_util::future::join_all(futures).await;
+
+        // Collect results.
+        let mut failed_count = 0usize;
+        for (node_id, tool_type, exec_result, elapsed_ms) in results {
+            match exec_result {
+                Ok(output) => {
+                    if let Err(e) = state.set(&node_id, output, true) {
+                        warn!(node_id = %node_id, error = %e, "fanout: failed to set state");
+                    }
+
+                    trace_entries.push(TraceEntry {
+                        node_id: node_id.clone(),
+                        tool_type: tool_type.clone(),
+                        status: TraceStatus::Ok,
+                        duration_ms: elapsed_ms,
+                        retries: 0,
+                        error: None,
+                    });
+
+                    transcript_entries.push(TranscriptEntry {
+                        entry_type: "fanout_node_done".to_string(),
+                        message: format!(
+                            "Fan-out node '{}' ({}) completed in {}ms",
+                            node_id, tool_type, elapsed_ms
+                        ),
+                        timestamp: now_ts(),
+                        node_id: Some(node_id),
+                        metadata: HashMap::new(),
+                    });
+                }
+                Err(tool_err) => {
+                    failed_count += 1;
+                    trace_entries.push(TraceEntry {
+                        node_id: node_id.clone(),
+                        tool_type: tool_type.clone(),
+                        status: TraceStatus::Error,
+                        duration_ms: elapsed_ms,
+                        retries: 0,
+                        error: Some(tool_err.to_string()),
+                    });
+
+                    transcript_entries.push(TranscriptEntry {
+                        entry_type: "fanout_node_error".to_string(),
+                        message: format!("Fan-out node '{}' failed: {}", node_id, tool_err),
+                        timestamp: now_ts(),
+                        node_id: Some(node_id),
+                        metadata: HashMap::new(),
+                    });
+                }
             }
         }
 
-        // All edges are conditional and none matched.
-        None
+        transcript_entries.push(TranscriptEntry {
+            entry_type: "fanout_end".to_string(),
+            message: format!(
+                "Fan-out completed: {} succeeded, {} failed",
+                node_ids.len() - failed_count,
+                failed_count
+            ),
+            timestamp: now_ts(),
+            node_id: None,
+            metadata: HashMap::new(),
+        });
+
+        self.emit_event(
+            EventType::BlockCompleted,
+            session_id,
+            None,
+            HashMap::new(),
+        );
+
+        Ok((trace_entries, transcript_entries))
+    }
+
+    /// Find the join node after a fan-out: the common successor of all
+    /// parallel nodes. Returns None if they don't converge.
+    fn find_fanout_join(&self, parallel_node_ids: &[String], graph: &GraphDef) -> Option<String> {
+        if parallel_node_ids.is_empty() {
+            return None;
+        }
+
+        // For each parallel node, find its unconditional targets.
+        let mut successor_sets: Vec<std::collections::HashSet<String>> = Vec::new();
+        for nid in parallel_node_ids {
+            let targets: std::collections::HashSet<String> = graph
+                .outgoing_edges(nid)
+                .iter()
+                .filter(|e| e.condition.is_none())
+                .map(|e| e.target.clone())
+                .collect();
+            successor_sets.push(targets);
+        }
+
+        // Find the intersection — nodes that ALL parallel paths lead to.
+        if let Some(first) = successor_sets.first() {
+            let common: std::collections::HashSet<String> = first
+                .iter()
+                .filter(|n| successor_sets.iter().all(|s| s.contains(*n)))
+                .cloned()
+                .collect();
+            common.into_iter().next()
+        } else {
+            None
+        }
     }
 
     /// Evaluate a single edge condition against a node's output map.
@@ -2886,5 +3105,142 @@ mod tests {
         assert!(types.contains(&"block_end"), "missing 'block_end'");
         assert!(types.contains(&"decision"), "missing 'decision'");
         assert!(types.contains(&"completed"), "missing 'completed'");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fan-out / Fan-in tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fanout_executes_parallel_nodes() {
+        // Graph: A → [B, C] → D (fan-out from A, fan-in at D)
+        let graph = GraphDef {
+            id: "g-fo".into(),
+            name: "fanout".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+                make_node("d", "tool/echo"),
+            ],
+            edges: vec![
+                // A fans out to B and C (two unconditional edges)
+                make_edge("e1", "a", "b"),
+                make_edge("e2", "a", "c"),
+                // B and C converge at D (fan-in)
+                make_edge("e3", "b", "d"),
+                make_edge("e4", "c", "d"),
+            ],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Completed);
+
+        // A executes first, then B and C in parallel (via fanout), then D
+        let traced_ids: Vec<&str> = result.trace.iter().map(|t| t.node_id.as_str()).collect();
+        assert_eq!(traced_ids[0], "a");
+        // B and C should both appear (order may vary)
+        assert!(traced_ids.contains(&"b"), "B should be in trace");
+        assert!(traced_ids.contains(&"c"), "C should be in trace");
+        // D is the last one (join node)
+        assert_eq!(traced_ids.last().unwrap(), &"d");
+
+        // All should succeed
+        assert!(result.trace.iter().all(|t| t.status == TraceStatus::Ok));
+
+        // Fan-out transcript entries should exist
+        let types: Vec<&str> = result.transcript.iter().map(|t| t.entry_type.as_str()).collect();
+        assert!(types.contains(&"fanout_start"), "missing fanout_start");
+        assert!(types.contains(&"fanout_end"), "missing fanout_end");
+    }
+
+    #[tokio::test]
+    async fn fanout_single_unconditional_edge_is_sequential() {
+        // Graph: A → B → C (single edges, no fan-out)
+        let graph = GraphDef {
+            id: "g-seq".into(),
+            name: "sequential".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+            ],
+            edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Completed);
+        assert_eq!(result.trace.len(), 3);
+        // Should NOT contain fanout entries
+        let types: Vec<&str> = result.transcript.iter().map(|t| t.entry_type.as_str()).collect();
+        assert!(!types.contains(&"fanout_start"), "sequential graph should not fan-out");
+    }
+
+    #[tokio::test]
+    async fn fanout_without_join_terminates_after_parallel() {
+        // Graph: A → [B, C] (no join node)
+        let graph = GraphDef {
+            id: "g-nj".into(),
+            name: "no-join".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+            ],
+            edges: vec![
+                make_edge("e1", "a", "b"),
+                make_edge("e2", "a", "c"),
+            ],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        let ctx = TestContext::new();
+        let result = runner.run(&graph, &ctx).await.unwrap();
+
+        assert_eq!(result.status, ExecutionStatus::Completed);
+
+        // A + B + C should all execute
+        let traced_ids: Vec<&str> = result.trace.iter().map(|t| t.node_id.as_str()).collect();
+        assert!(traced_ids.contains(&"a"));
+        assert!(traced_ids.contains(&"b"));
+        assert!(traced_ids.contains(&"c"));
+    }
+
+    #[tokio::test]
+    async fn resolve_all_next_nodes_returns_multiple_unconditional() {
+        let graph = GraphDef {
+            id: "g".into(),
+            name: "t".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("a", "tool/echo"),
+                make_node("b", "tool/echo"),
+                make_node("c", "tool/echo"),
+            ],
+            edges: vec![
+                make_edge("e1", "a", "b"),
+                make_edge("e2", "a", "c"),
+            ],
+            metadata: HashMap::new(),
+        };
+
+        let runner = GraphRunner::new(Box::new(EchoExecutor));
+        let output = HashMap::new();
+        let next = runner.resolve_all_next_nodes("a", &output, &graph);
+        assert_eq!(next.len(), 2);
+        assert!(next.contains(&"b".to_string()));
+        assert!(next.contains(&"c".to_string()));
     }
 }

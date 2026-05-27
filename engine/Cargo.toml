@@ -31,9 +31,9 @@ url = "2"
 rand = "0.8"
 sha2 = "0.10"
 hex = "0.4"
+tempfile = "3"
 
 [dev-dependencies]
 tokio-test = "0.4"
-tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

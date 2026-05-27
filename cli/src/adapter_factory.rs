@@ -22,6 +22,38 @@ pub fn create_adapter(
             };
             Box::new(OllamaAdapter::new(&url, Duration::from_secs(300)))
         }
+        "claude" | "anthropic" => {
+            let key = resolve_key(api_key, "ANTHROPIC_API_KEY");
+            if key.is_empty() {
+                eprintln!("Warning: Provider 'claude' requires API key. Set --api-key or ANTHROPIC_API_KEY env var.");
+            }
+            let url = if base_url.is_empty() {
+                "https://api.anthropic.com/v1"
+            } else {
+                base_url
+            };
+            Box::new(datamirai_engine::llm::ClaudeAdapter::with_options(
+                &key,
+                url,
+                Duration::from_secs(120),
+            ))
+        }
+        "gemini" | "google" => {
+            let key = resolve_key(api_key, "GOOGLE_API_KEY");
+            if key.is_empty() {
+                eprintln!("Warning: Provider 'gemini' requires API key. Set --api-key or GOOGLE_API_KEY env var.");
+            }
+            let url = if base_url.is_empty() {
+                "https://generativelanguage.googleapis.com/v1beta"
+            } else {
+                base_url
+            };
+            Box::new(datamirai_engine::llm::GeminiAdapter::with_options(
+                &key,
+                url,
+                Duration::from_secs(120),
+            ))
+        }
         "groq" => {
             let key = resolve_key(api_key, "GROQ_API_KEY");
             Box::new(datamirai_engine::llm::groq::new(&key))
@@ -77,6 +109,8 @@ pub fn default_model(provider: &str) -> &'static str {
         "groq" => "qwen-qwq-32b",
         "nvidia" => "meta/llama-3.3-70b-instruct",
         "openai" => "gpt-4o",
+        "claude" | "anthropic" => "claude-sonnet-4-20250514",
+        "gemini" | "google" => "gemini-2.5-flash",
         "openrouter" => "meta-llama/llama-3.3-70b-instruct",
         _ => "qwen3:8b",
     }

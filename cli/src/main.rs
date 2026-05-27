@@ -19,7 +19,8 @@ use std::process;
 use std::sync::Arc;
 
 use datamirai_engine::{
-    AgentSpec, ExecutionStatus, GraphRunner, RegistryExecutor, SimpleExecutionContext, ToolRegistry,
+    AdapterBridgeLLMResource, AgentSpec, ExecutionStatus, GraphRunner,
+    RegistryExecutor, SimpleExecutionContext, ToolRegistry,
 };
 use datamirai_engine::tools::builtin::register_all_builtin_tools;
 
@@ -43,9 +44,11 @@ async fn main() {
             validate_agent(rest);
         }
         Some("serve") => {
-            println!("{}Server mode not yet implemented.{}", colors::YELLOW, colors::RESET);
-            process::exit(1);
+            let rest = &args[1..];
+            run_serve(rest).await;
         }
+        Some("templates") => cmd_templates(&args[1..]),
+        Some("new") => cmd_new(&args[1..]),
         Some("agent") => handle_agent_subcommand(&args[1..]),
         Some("help" | "--help" | "-h") => print_help(),
         Some(other) => {
@@ -72,17 +75,125 @@ async fn run_default() {
     terminal::run_interactive_session(config).await;
 }
 
+/// Parse a named flag from args: `--flag value` → Some(value)
+fn parse_flag(args: &[String], flag: &str) -> Option<String> {
+    args.windows(2).find_map(|w| {
+        if w[0] == flag {
+            Some(w[1].clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Check if a boolean flag is present: `--benchmark` → true
+fn has_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|a| a == flag)
+}
+
+/// Auto-detect provider from model name.
+fn detect_provider_from_model(model: &str) -> Option<&'static str> {
+    let m = model.to_lowercase();
+    if m.starts_with("gpt") || m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") {
+        Some("openai")
+    } else if m.starts_with("claude") {
+        Some("claude")
+    } else if m.starts_with("gemini") || m.starts_with("gemma") {
+        Some("gemini")
+    } else if m.contains("llama") || m.contains("mistral") || m.contains("qwen") || m.contains("phi") || m.contains("deepseek") {
+        // Common open models → likely Ollama
+        Some("ollama")
+    } else {
+        None
+    }
+}
+
+/// Resolve LLM provider: explicit flag > env var > model auto-detect > default ollama.
+fn resolve_provider(args: &[String]) -> (String, String, String, String) {
+    let explicit_provider = parse_flag(args, "--provider");
+    let explicit_model = parse_flag(args, "--model");
+    let explicit_key = parse_flag(args, "--api-key");
+    let explicit_url = parse_flag(args, "--base-url");
+
+    let env_provider = std::env::var("MIRAI_LLM_PROVIDER").ok();
+    let env_model = std::env::var("MIRAI_LLM_MODEL").ok();
+
+    // Provider resolution chain
+    let provider = explicit_provider
+        .or(env_provider)
+        .or_else(|| {
+            explicit_model
+                .as_deref()
+                .or(env_model.as_deref())
+                .and_then(detect_provider_from_model)
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "ollama".to_string());
+
+    let model = explicit_model
+        .or(env_model)
+        .unwrap_or_else(|| adapter_factory::default_model(&provider).to_string());
+
+    let api_key = explicit_key.unwrap_or_default();
+    let base_url = explicit_url.unwrap_or_default();
+
+    (provider, model, api_key, base_url)
+}
+
+/// Build the ExecutionContext with a real or mock LLM depending on flags.
+fn build_context(
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    base_url: &str,
+    system_prompt: Option<&str>,
+) -> SimpleExecutionContext {
+    use datamirai_engine::resources::InMemoryDBResource;
+    use datamirai_engine::resources::InMemoryStorageResource;
+    use datamirai_engine::resources::MockLLMResource;
+
+    // Special case: if provider is "mock", use MockLLMResource for testing
+    let llm: Box<dyn datamirai_engine::LLMResource> = if provider == "mock" {
+        Box::new(MockLLMResource::new())
+    } else {
+        let adapter = adapter_factory::create_adapter(provider, api_key, base_url);
+        let bridge = AdapterBridgeLLMResource::new(adapter, model);
+        let bridge = match provider {
+            "openai" => {
+                let url = if base_url.is_empty() {
+                    "https://api.openai.com/v1".to_string()
+                } else {
+                    base_url.to_string()
+                };
+                bridge.with_embed(url, api_key)
+            }
+            _ => bridge,
+        };
+        Box::new(bridge)
+    };
+
+    let mut builder = SimpleExecutionContext::builder(llm)
+        .with_db(Box::new(InMemoryDBResource::new()))
+        .with_storage(Box::new(InMemoryStorageResource::new()));
+
+    if let Some(prompt) = system_prompt {
+        builder = builder.with_system_prompt(prompt);
+    }
+
+    builder.build()
+}
+
 /// Execute an agent from a JSON/YAML file.
 ///
-/// Usage: mirai run <agent.json|agent.yaml> [--input '{"key":"value"}']
+/// Usage: mirai run <agent.json|agent.yaml> [--input '{"key":"value"}'] [--provider ollama] [--model gemma3]
 ///
 /// Output: JSON with status, state, trace, transcript.
 async fn run_agent(args: &[String]) {
     let path = match args.first() {
-        Some(p) => p.as_str(),
-        None => {
+        Some(p) if !p.starts_with("--") => p.as_str(),
+        _ => {
             eprintln!(
-                "{}Usage: mirai run <agent.json|agent.yaml> [--input '{{...}}']{}",
+                "{}Usage: mirai run <agent.json|agent.yaml> [--input '{{...}}'] [--provider <p>] [--model <m>]{}",
                 colors::YELLOW,
                 colors::RESET
             );
@@ -90,14 +201,27 @@ async fn run_agent(args: &[String]) {
         }
     };
 
-    // Parse optional --input JSON
-    let input_json: Option<String> = args.windows(2).find_map(|w| {
-        if w[0] == "--input" || w[0] == "-i" {
-            Some(w[1].clone())
-        } else {
-            None
-        }
-    });
+    // Parse flags
+    let input_json = parse_flag(args, "--input").or_else(|| parse_flag(args, "-i"));
+    let (provider, model, api_key, base_url) = resolve_provider(args);
+
+    // Benchmark setup
+    let benchmark_enabled = has_flag(args, "--benchmark")
+        || std::env::var("MIRAI_BENCHMARK").map(|v| v == "1").unwrap_or(false);
+    if benchmark_enabled {
+        let bench_path = std::env::var("MIRAI_BENCHMARK_FILE")
+            .unwrap_or_else(|_| "benchmarks.jsonl".to_string());
+        datamirai_engine::benchmark::mark_process_start();
+        datamirai_engine::benchmark::enable(bench_path);
+    }
+
+    // Show provider info
+    eprintln!(
+        "{}LLM: {provider}/{model}{}{}",
+        colors::DIM,
+        if benchmark_enabled { " [benchmark]" } else { "" },
+        colors::RESET
+    );
 
     // Load agent spec
     let spec = match AgentSpec::from_file(path) {
@@ -132,13 +256,33 @@ async fn run_agent(args: &[String]) {
     let executor = RegistryExecutor::new(Arc::new(registry));
     let runner = GraphRunner::new(Box::new(executor));
 
-    // Create context
-    let context = SimpleExecutionContext::default_dev();
+    // Resolve Soul if specified → system prompt
+    let system_prompt = if let Some(ref soul_path) = spec.soul {
+        match datamirai_engine::soul::load_from_file(std::path::Path::new(soul_path)) {
+            Ok(soul) => {
+                eprintln!("{}Soul: {}{}", colors::DIM, soul.name, colors::RESET);
+                Some(soul.to_system_prompt())
+            }
+            Err(e) => {
+                eprintln!("{}Warning: failed to load soul '{}': {}{}", colors::YELLOW, soul_path, e, colors::RESET);
+                spec.system_prompt.clone()
+            }
+        }
+    } else {
+        spec.system_prompt.clone()
+    };
+
+    // Create context with LLM provider + system prompt
+    let context = build_context(
+        &provider,
+        &model,
+        &api_key,
+        &base_url,
+        system_prompt.as_deref(),
+    );
 
     // If input provided, inject into entry node state
-    // (For now, the trigger tools handle mock_payload from config)
     if let Some(ref input_str) = input_json {
-        // Parse input JSON and inject into the first trigger node's config
         if let Ok(input_value) = serde_json::from_str::<serde_json::Value>(input_str) {
             if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
                 entry.config.insert(
@@ -149,16 +293,71 @@ async fn run_agent(args: &[String]) {
         }
     }
 
+    // Inject model override into all LLM nodes if not already set
+    for node in &mut graph.nodes {
+        if node.tool_type == "ai/llm_call" {
+            node.config
+                .entry("model".to_string())
+                .or_insert_with(|| serde_json::Value::String(model.clone()));
+        }
+    }
+
+    // Record cold start
+    if benchmark_enabled {
+        datamirai_engine::benchmark::record_cold_start();
+    }
+    let exec_start = std::time::Instant::now();
+
     // Run
     match runner.run(&graph, &context).await {
         Ok(result) => {
-            // Build output JSON
+            let exec_ms = exec_start.elapsed().as_millis() as u64;
+            let trace_enabled = has_flag(args, "--trace");
+
+            // Print trace tree if --trace
+            if trace_enabled {
+                let tree = datamirai_engine::observability::build_trace_tree(&result, &spec.name);
+                let rendered = datamirai_engine::observability::render_trace_tree(&tree);
+                eprintln!("\n{}Trace:{}\n{}\n", colors::BOLD, colors::RESET, rendered);
+
+                let metrics = datamirai_engine::observability::compute_metrics(&result.trace);
+                eprintln!(
+                    "{}Metrics:{} {} nodes, {}ms total, {:.1}ms avg, {} retries\n",
+                    colors::BOLD,
+                    colors::RESET,
+                    metrics.total_nodes,
+                    metrics.total_duration_ms,
+                    metrics.avg_node_duration_ms,
+                    metrics.total_retries,
+                );
+            }
+
+            // Log benchmarks
+            if benchmark_enabled {
+                datamirai_engine::benchmark::log_execution(
+                    exec_ms,
+                    &spec.name,
+                    graph.nodes.len(),
+                    &provider,
+                );
+                // Log individual node latencies from trace
+                for entry in &result.trace {
+                    datamirai_engine::benchmark::log_tool_latency(
+                        entry.duration_ms,
+                        &entry.tool_type,
+                        &entry.node_id,
+                    );
+                }
+                datamirai_engine::benchmark::log_memory_usage();
+            }
+
             let output = serde_json::json!({
                 "status": result.status,
                 "state": result.state.snapshot(),
                 "trace": result.trace,
                 "transcript": result.transcript,
                 "error": result.error,
+                "interrupt_info": result.interrupt_info,
             });
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
 
@@ -213,6 +412,135 @@ fn validate_agent(args: &[String]) {
     }
 }
 
+/// Start the HTTP server.
+async fn run_serve(args: &[String]) {
+    let port: u16 = parse_flag(args, "--port")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    let host = parse_flag(args, "--host").unwrap_or_else(|| "0.0.0.0".to_string());
+
+    eprintln!(
+        "{}Starting datamirai-engine server on {}:{}{}",
+        colors::GREEN,
+        host,
+        port,
+        colors::RESET
+    );
+
+    if let Err(e) = datamirai_engine::server::app::serve(&host, port).await {
+        eprintln!(
+            "{}Server error: {e}{}",
+            colors::RED,
+            colors::RESET
+        );
+        process::exit(1);
+    }
+}
+
+/// List available agent templates.
+fn cmd_templates(_args: &[String]) {
+    let templates = datamirai_engine::templates::builtin_templates();
+    println!(
+        "{bold}Available templates ({count}):{reset}\n",
+        bold = colors::BOLD,
+        count = templates.len(),
+        reset = colors::RESET,
+    );
+    for t in &templates {
+        println!(
+            "  {green}{:<25}{reset} [{:?}] {}",
+            t.id,
+            t.category,
+            t.description,
+            green = colors::GREEN,
+            reset = colors::RESET,
+        );
+    }
+    println!(
+        "\n{}Use: mirai new --template <id> --name <agent-name>{}",
+        colors::DIM,
+        colors::RESET,
+    );
+}
+
+/// Create a new agent from a template.
+fn cmd_new(args: &[String]) {
+    let template_id = match parse_flag(args, "--template") {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{}Usage: mirai new --template <template-id> --name <agent-name> [--provider <p>]{}",
+                colors::YELLOW,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    };
+
+    let name = parse_flag(args, "--name").unwrap_or_else(|| template_id.clone());
+
+    let template = match datamirai_engine::templates::get_template(&template_id) {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{}Template '{}' not found. Run 'mirai templates' to see available templates.{}",
+                colors::RED,
+                template_id,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    };
+
+    // Clone spec and override name + provider.
+    let mut spec = template.spec.clone();
+    spec["name"] = serde_json::Value::String(name.clone());
+
+    if let Some(provider) = parse_flag(args, "--provider") {
+        // Inject provider/model into LLM nodes.
+        if let Some(nodes) = spec["graph"]["nodes"].as_array_mut() {
+            for node in nodes {
+                if node["tool_type"].as_str() == Some("ai/llm_call") {
+                    node["config"]["provider"] = serde_json::Value::String(provider.clone());
+                }
+            }
+        }
+    }
+
+    // Write to file.
+    let filename = format!("{name}.yaml");
+    let yaml = serde_yaml::to_string(&spec).unwrap_or_else(|_| {
+        serde_json::to_string_pretty(&spec).unwrap()
+    });
+
+    match std::fs::write(&filename, &yaml) {
+        Ok(_) => {
+            println!(
+                "{}✓ Created '{}' from template '{}'{}",
+                colors::GREEN,
+                filename,
+                template_id,
+                colors::RESET
+            );
+            println!(
+                "{}Run it: mirai run {}{}",
+                colors::DIM,
+                filename,
+                colors::RESET
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{}Error writing {}: {e}{}",
+                colors::RED,
+                filename,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    }
+}
+
 fn handle_agent_subcommand(args: &[String]) {
     match args.first().map(|s| s.as_str()) {
         Some("load") => {
@@ -255,17 +583,42 @@ fn print_help() {
 {bold}mirai{reset} — Agentic graph engine
 
 {bold}USAGE:{reset}
-    mirai                       Interactive setup wizard + terminal
-    mirai run <file> [-i JSON]  Execute agent from JSON/YAML file
-    mirai validate <file>       Validate agent spec
-    mirai serve                 Start HTTP server
-    mirai version               Show version
-    mirai agent load <file>     Import agent from YAML
-    mirai agent list            List agents
-    mirai help                  This message
+    mirai                                    Interactive setup wizard + terminal
+    mirai run <file> [options]               Execute agent from JSON/YAML file
+    mirai validate <file>                    Validate agent spec
+    mirai serve [--port N]                   Start HTTP server
+    mirai version                            Show version
+    mirai agent load <file>                  Import agent from YAML
+    mirai agent list                         List agents
+    mirai help                               This message
+
+{bold}RUN OPTIONS:{reset}
+    -i, --input <JSON>       Input data for the agent
+    --provider <name>        LLM provider: ollama, openai, claude, gemini, groq, openrouter, nvidia
+    --model <name>           Model name (auto-detects provider if omitted)
+    --api-key <key>          API key (or use env: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+    --base-url <url>         Custom API base URL
+
+{bold}ENVIRONMENT VARIABLES:{reset}
+    MIRAI_LLM_PROVIDER       Default LLM provider
+    MIRAI_LLM_MODEL          Default model
+    OPENAI_API_KEY            OpenAI API key
+    ANTHROPIC_API_KEY         Anthropic (Claude) API key
+    GROQ_API_KEY              Groq API key
+    NVIDIA_API_KEY            NVIDIA API key
+    OPENROUTER_API_KEY        OpenRouter API key
+    OLLAMA_BASE_URL           Ollama server URL (default: http://localhost:11434)
+
+{bold}PROVIDER RESOLUTION:{reset}
+    1. --provider flag
+    2. MIRAI_LLM_PROVIDER env var
+    3. Auto-detect from model name (gpt-* → openai, claude-* → claude, etc.)
+    4. Default: ollama (localhost)
 
 {bold}EXAMPLES:{reset}
-    mirai run agent.json
+    mirai run agent.yaml
+    mirai run agent.yaml --provider ollama --model gemma3
+    mirai run agent.yaml --provider openai --model gpt-4o
     mirai run agent.yaml --input '{{\"query\": \"hello\"}}'
     mirai validate my-agent.json
 ",

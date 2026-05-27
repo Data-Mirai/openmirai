@@ -282,6 +282,10 @@ pub struct AgentSpec {
     pub agent_type: AgentType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// Path to a SOUL.md file that defines agent personality.
+    /// If set, the Soul's system prompt is used (overrides system_prompt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soul: Option<String>,
     #[serde(default)]
     pub graph: AgentGraphSpec,
     #[serde(default)]
@@ -488,6 +492,7 @@ mod tests {
             version: "v1".to_string(),
             agent_type: AgentType::Managed,
             system_prompt: Some("You are helpful.".to_string()),
+            soul: None,
             graph: AgentGraphSpec {
                 nodes: vec![
                     AgentNodeSpec {
@@ -740,6 +745,7 @@ mod tests {
             version: "v1".to_string(),
             agent_type: AgentType::Managed,
             system_prompt: None,
+            soul: None,
             graph: AgentGraphSpec::default(),
             triggers: vec![],
             config: AgentConfig::default(),

@@ -43,6 +43,7 @@ pub use crate::core::runner::{
 };
 pub use crate::core::schema::{ColumnDef, ColumnType, SchemaError, TableSchema};
 pub use crate::core::state::{ExecutionState, SharedState, StateError};
+pub use crate::core::value_type::ValueType;
 
 // Re-export tool-system types for convenience.
 pub use crate::tools::{

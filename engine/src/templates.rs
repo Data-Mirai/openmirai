@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Types

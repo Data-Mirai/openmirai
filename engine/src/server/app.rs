@@ -439,7 +439,6 @@ async fn stream_agent(
     use axum::body::Body;
     use axum::response::IntoResponse;
     use tokio_stream::wrappers::ReceiverStream;
-    use tokio_stream::StreamExt;
 
     let agents = state.agents.read().await;
     let spec = match agents.get(&id) {

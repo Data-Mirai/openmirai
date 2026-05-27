@@ -44,8 +44,8 @@ async fn main() {
             validate_agent(rest);
         }
         Some("serve") => {
-            println!("{}Server mode not yet implemented.{}", colors::YELLOW, colors::RESET);
-            process::exit(1);
+            let rest = &args[1..];
+            run_serve(rest).await;
         }
         Some("agent") => handle_agent_subcommand(&args[1..]),
         Some("help" | "--help" | "-h") => print_help(),
@@ -356,6 +356,31 @@ fn validate_agent(args: &[String]) {
             );
             process::exit(1);
         }
+    }
+}
+
+/// Start the HTTP server.
+async fn run_serve(args: &[String]) {
+    let port: u16 = parse_flag(args, "--port")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    let host = parse_flag(args, "--host").unwrap_or_else(|| "0.0.0.0".to_string());
+
+    eprintln!(
+        "{}Starting datamirai-engine server on {}:{}{}",
+        colors::GREEN,
+        host,
+        port,
+        colors::RESET
+    );
+
+    if let Err(e) = datamirai_engine::server::app::serve(&host, port).await {
+        eprintln!(
+            "{}Server error: {e}{}",
+            colors::RED,
+            colors::RESET
+        );
+        process::exit(1);
     }
 }
 

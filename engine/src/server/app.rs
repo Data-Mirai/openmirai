@@ -13,8 +13,11 @@ use tower_http::cors::CorsLayer;
 
 use crate::core::agent_spec::AgentSpec;
 use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
-use crate::core::runner::{ExecutionResult, ExecutionStatus, TraceEntry};
+use crate::core::runner::{ExecutionResult, ExecutionStatus, GraphRunner, TraceEntry};
+use crate::tools::registry::RegistryExecutor;
 use crate::core::state::SharedState;
+use crate::resources::{MockLLMResource, SimpleExecutionContext, InMemoryDBResource, InMemoryStorageResource};
+use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
 
 // ---------------------------------------------------------------------------
@@ -31,15 +34,22 @@ pub struct AppState {
     pub agents: Arc<RwLock<HashMap<String, AgentSpec>>>,
     pub sessions: Arc<RwLock<HashMap<String, ExecutionResult>>>,
     pub tool_registry: Arc<ToolRegistry>,
+    pub runner: GraphRunner,
+    pub start_time: std::time::Instant,
 }
 
 impl AppState {
     pub fn new(tool_registry: ToolRegistry) -> Self {
+        let registry = Arc::new(tool_registry);
+        let executor = RegistryExecutor::new(registry.clone());
+        let runner = GraphRunner::new(Box::new(executor));
         Self {
             graphs: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            tool_registry: Arc::new(tool_registry),
+            tool_registry: registry,
+            runner,
+            start_time: std::time::Instant::now(),
         }
     }
 }
@@ -106,9 +116,12 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Agents CRUD
         .route("/api/agents", post(create_agent).get(list_agents))
+        .route("/api/agents/from-spec", post(create_agent_from_spec))
         .route("/api/agents/{id}", get(get_agent))
         .route("/api/agents/{id}/execute", post(execute_agent))
         .route("/api/agents/{id}/spec", get(get_agent_spec))
+        // Tools
+        .route("/api/tools", get(list_tools))
         // Sessions
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
@@ -126,7 +139,9 @@ pub fn create_router(state: AppState) -> Router {
 
 /// Start the HTTP server on the given host and port.
 pub async fn serve(host: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let state = AppState::new(ToolRegistry::new());
+    let mut registry = ToolRegistry::new();
+    register_all_builtin_tools(&mut registry);
+    let state = AppState::new(registry);
     let app = create_router(state);
 
     let addr = format!("{host}:{port}");
@@ -140,8 +155,21 @@ pub async fn serve(host: &str, port: u16) -> Result<(), Box<dyn std::error::Erro
 // Health / Version handlers
 // ---------------------------------------------------------------------------
 
-async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+async fn health(State(state): State<AppState>) -> Json<Value> {
+    let uptime_secs = state.start_time.elapsed().as_secs();
+    let agents_count = state.agents.read().await.len();
+    let sessions_count = state.sessions.read().await.len();
+    let tools_count = state.tool_registry.list_tools().len();
+
+    Json(json!({
+        "status": "ok",
+        "version": "0.1.0",
+        "engine": "datamirai-engine-rs",
+        "uptime_seconds": uptime_secs,
+        "agents_loaded": agents_count,
+        "sessions_total": sessions_count,
+        "tools_registered": tools_count,
+    }))
 }
 
 async fn version() -> Json<Value> {
@@ -352,42 +380,123 @@ async fn execute_agent(
     };
     drop(agents);
 
-    // Placeholder execution — real graph execution will be wired later.
+    // Run the agent graph with real execution.
+    let result = run_agent_spec(&spec, &req.trigger_data, &state).await;
+
     let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
-
-    let result = ExecutionResult {
-        status: ExecutionStatus::Completed,
-        state: SharedState::new(),
-        trace: vec![TraceEntry {
-            node_id: req.entry_node_id.unwrap_or_else(|| "placeholder".to_string()),
-            tool_type: "placeholder".to_string(),
-            status: crate::core::runner::TraceStatus::Ok,
-            duration_ms: 0,
-            retries: 0,
-            error: None,
-        }],
-        transcript: vec![],
-        error: None,
-        interrupt_node_id: None,
-        interrupt_info: None,
-    };
-
     let body = json!({
-        "session_id": session_id,
+        "session_id": &session_id,
         "agent_id": id,
         "agent_name": spec.name,
-        "status": "completed",
-        "trigger_data": req.trigger_data,
+        "status": result.status,
         "trace": result.trace,
+        "transcript": result.transcript,
+        "state": result.state.snapshot(),
+        "error": result.error,
     });
 
-    state
-        .sessions
-        .write()
-        .await
-        .insert(session_id, result);
+    state.sessions.write().await.insert(session_id, result);
 
     Ok(Json(body))
+}
+
+/// Create an agent directly from a full AgentSpec (no separate graph needed).
+async fn create_agent_from_spec(
+    State(state): State<AppState>,
+    Json(spec): Json<AgentSpec>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
+    let agent_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let name = spec.name.clone();
+
+    state.agents.write().await.insert(agent_id.clone(), spec);
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": agent_id,
+            "name": name,
+            "status": "created",
+        })),
+    ))
+}
+
+/// List all registered tools with their specs.
+async fn list_tools(State(state): State<AppState>) -> Json<Value> {
+    let tools: Vec<Value> = state
+        .tool_registry
+        .list_tools()
+        .iter()
+        .map(|spec| {
+            json!({
+                "tool_type": spec.tool_type,
+                "name": spec.name,
+                "description": spec.description,
+                "category": spec.category,
+                "inputs": spec.inputs.iter().map(|f| json!({
+                    "name": f.name,
+                    "type": format!("{:?}", f.field_type),
+                    "required": f.required,
+                    "description": f.description,
+                })).collect::<Vec<_>>(),
+                "outputs": spec.outputs.iter().map(|f| json!({
+                    "name": f.name,
+                    "type": format!("{:?}", f.field_type),
+                    "description": f.description,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Json(json!(tools))
+}
+
+/// Internal: run an AgentSpec through the GraphRunner.
+async fn run_agent_spec(
+    spec: &AgentSpec,
+    trigger_data: &HashMap<String, Value>,
+    state: &AppState,
+) -> ExecutionResult {
+    let mut graph = spec.to_graph(Some(&spec.name));
+    graph.auto_generate_edge_ids();
+
+    if let Err(e) = graph.validate() {
+        return ExecutionResult {
+            status: ExecutionStatus::Failed,
+            state: SharedState::new(),
+            trace: vec![],
+            transcript: vec![],
+            error: Some(format!("Graph validation failed: {e}")),
+            interrupt_node_id: None,
+            interrupt_info: None,
+        };
+    }
+
+    // Inject trigger data into entry node.
+    if !trigger_data.is_empty() {
+        if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
+            if let Ok(val) = serde_json::to_value(trigger_data) {
+                entry.config.insert("mock_payload".to_string(), val);
+            }
+        }
+    }
+
+    // Create context (default dev for now, real providers via config later).
+    let context = SimpleExecutionContext::builder(Box::new(MockLLMResource::new()))
+        .with_db(Box::new(InMemoryDBResource::new()))
+        .with_storage(Box::new(InMemoryStorageResource::new()))
+        .build();
+
+    match state.runner.run(&graph, &context).await {
+        Ok(result) => result,
+        Err(e) => ExecutionResult {
+            status: ExecutionStatus::Failed,
+            state: SharedState::new(),
+            trace: vec![],
+            transcript: vec![],
+            error: Some(e.to_string()),
+            interrupt_node_id: None,
+            interrupt_info: None,
+        },
+    }
 }
 
 async fn get_agent_spec(
@@ -661,45 +770,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_agent_placeholder() {
-        let state = AppState::new(ToolRegistry::new());
+    async fn execute_agent_from_spec() {
+        let mut registry = ToolRegistry::new();
+        register_all_builtin_tools(&mut registry);
+        let state = AppState::new(registry);
         let app = create_router(state.clone());
 
-        // Create graph + agent
-        let graph_body = json!({ "name": "exec-graph", "nodes": [], "edges": [] });
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::post("/api/graphs")
-                    .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&graph_body).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let graph_id = body_json(resp.into_body()).await["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        // Create agent via from-spec with a simple trigger→response graph
+        let spec = json!({
+            "name": "test-exec",
+            "description": "test",
+            "version": "v1",
+            "graph": {
+                "nodes": [
+                    {"id": "trigger", "tool_type": "trigger/manual", "config": {"mock_payload": {"msg": "hello"}}},
+                    {"id": "out", "tool_type": "output/response", "config": {"message": "done"}}
+                ],
+                "edges": [
+                    {"source": "trigger", "target": "out"}
+                ]
+            }
+        });
 
-        let agent_body = json!({ "name": "exec-agent", "graph_id": graph_id });
         let resp = app
             .clone()
             .oneshot(
-                Request::post("/api/agents")
+                Request::post("/api/agents/from-spec")
                     .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&agent_body).unwrap()))
+                    .body(Body::from(serde_json::to_vec(&spec).unwrap()))
                     .unwrap(),
             )
             .await
             .unwrap();
-        let agent_id = body_json(resp.into_body()).await["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let created = body_json(resp.into_body()).await;
+        let agent_id = created["id"].as_str().unwrap().to_string();
 
         // Execute
-        let exec_body = json!({ "trigger_data": { "msg": "hello" } });
+        let exec_body = json!({ "trigger_data": {} });
         let resp = app
             .clone()
             .oneshot(
@@ -712,8 +820,25 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let result = body_json(resp.into_body()).await;
-        assert_eq!(result["status"], "completed");
+        assert_eq!(result["status"], "Completed");
         assert_eq!(result["agent_id"], agent_id);
+    }
+
+    #[tokio::test]
+    async fn list_tools_returns_all_builtins() {
+        let mut registry = ToolRegistry::new();
+        register_all_builtin_tools(&mut registry);
+        let state = AppState::new(registry);
+        let app = create_router(state);
+
+        let resp = app
+            .oneshot(Request::get("/api/tools").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let tools = body_json(resp.into_body()).await;
+        let arr = tools.as_array().unwrap();
+        assert!(arr.len() >= 40, "Expected 40+ tools, got {}", arr.len());
     }
 
     #[tokio::test]

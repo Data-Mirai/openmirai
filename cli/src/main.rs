@@ -19,7 +19,7 @@ use std::process;
 use std::sync::Arc;
 
 use datamirai_engine::{
-    AdapterBridgeLLMResource, AgentSpec, ExecutionStatus, GraphRunner,
+    AdapterBridgeLLMResource, AgentSpec, ExecutionContext, ExecutionStatus, GraphRunner,
     RegistryExecutor, SimpleExecutionContext, ToolRegistry,
 };
 use datamirai_engine::tools::builtin::register_all_builtin_tools;
@@ -50,6 +50,8 @@ async fn main() {
         Some("templates") => cmd_templates(&args[1..]),
         Some("new") => cmd_new(&args[1..]),
         Some("describe") => cmd_describe(&args[1..]),
+        Some("eval") => cmd_eval(&args[1..]).await,
+        Some("rag") => cmd_rag(&args[1..]).await,
         Some("agent") => handle_agent_subcommand(&args[1..]),
         Some("help" | "--help" | "-h") => print_help(),
         Some(other) => {
@@ -643,6 +645,133 @@ fn cmd_new(args: &[String]) {
                 filename,
                 colors::RESET
             );
+            process::exit(1);
+        }
+    }
+}
+
+/// Evaluate a session or input/output pair.
+async fn cmd_eval(args: &[String]) {
+    let input = parse_flag(args, "--input").unwrap_or_default();
+    let output = parse_flag(args, "--output").unwrap_or_default();
+    let types_str = parse_flag(args, "--types").unwrap_or_else(|| "format_compliance,latency".to_string());
+
+    if output.is_empty() {
+        eprintln!(
+            "{}Usage: mirai eval --input <text> --output <text> --types relevance,format_compliance{}",
+            colors::YELLOW, colors::RESET
+        );
+        process::exit(1);
+    }
+
+    let eval_types: Vec<datamirai_engine::eval::EvalType> = types_str.split(',').filter_map(|s| match s.trim() {
+        "relevance" => Some(datamirai_engine::eval::EvalType::Relevance),
+        "faithfulness" => Some(datamirai_engine::eval::EvalType::Faithfulness),
+        "completeness" => Some(datamirai_engine::eval::EvalType::Completeness),
+        "format_compliance" => Some(datamirai_engine::eval::EvalType::FormatCompliance),
+        "latency" => Some(datamirai_engine::eval::EvalType::Latency),
+        _ => None,
+    }).collect();
+
+    let (provider, model, api_key, base_url) = resolve_provider(args);
+    let context = build_context(&provider, &model, &api_key, &base_url, None);
+
+    let results = datamirai_engine::eval::execute_eval(
+        &eval_types, &input, &output, None, 0, None, context.llm(), "",
+    ).await;
+
+    println!("{}Eval Results:{}", colors::BOLD, colors::RESET);
+    for r in &results {
+        let bar = "=".repeat((r.score * 20.0) as usize);
+        println!(
+            "  {:20} [{:<20}] {:.2}  {}",
+            format!("{:?}", r.eval_type),
+            bar,
+            r.score,
+            r.details.as_deref().unwrap_or(""),
+        );
+    }
+}
+
+/// RAG search from CLI.
+async fn cmd_rag(args: &[String]) {
+    let sub = args.first().map(|s| s.as_str());
+    match sub {
+        Some("search") => {
+            let query = parse_flag(args, "--query").unwrap_or_default();
+            let docs_str = parse_flag(args, "--documents").unwrap_or_default();
+            let top_k: usize = parse_flag(args, "--top-k").and_then(|v| v.parse().ok()).unwrap_or(3);
+
+            if query.is_empty() || docs_str.is_empty() {
+                eprintln!(
+                    "{}Usage: mirai rag search --query <text> --documents <file1,file2,...> --top-k <n>{}",
+                    colors::YELLOW, colors::RESET
+                );
+                process::exit(1);
+            }
+
+            // Read documents from file paths.
+            let mut documents = Vec::new();
+            for path in docs_str.split(',') {
+                let path = path.trim();
+                match std::fs::read_to_string(path) {
+                    Ok(content) => documents.push(content),
+                    Err(e) => eprintln!("{}Warning: could not read {}: {}{}", colors::YELLOW, path, e, colors::RESET),
+                }
+            }
+
+            if documents.is_empty() {
+                eprintln!("{}No documents loaded{}", colors::RED, colors::RESET);
+                process::exit(1);
+            }
+
+            let (provider, model, api_key, base_url) = resolve_provider(args);
+            let context = build_context(&provider, &model, &api_key, &base_url, None);
+
+            // Chunk + embed + search.
+            let rag_config = datamirai_engine::rag::RAGPipelineConfig {
+                name: "cli".into(),
+                source_type: datamirai_engine::rag::SourceType::Text,
+                chunking_strategy: datamirai_engine::rag::ChunkingStrategy::Paragraph,
+                chunk_size: 512,
+                chunk_overlap: 50,
+                embedding_model: String::new(),
+            };
+
+            let mut all_chunks: Vec<String> = Vec::new();
+            for doc in &documents {
+                all_chunks.extend(datamirai_engine::rag::chunk_text(doc, &rag_config));
+            }
+
+            eprintln!("{}Chunks: {} | Embedding...{}", colors::DIM, all_chunks.len(), colors::RESET);
+
+            let query_emb = match context.llm().embed(&query, "").await {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("{}Embedding error: {e}{}", colors::RED, colors::RESET);
+                    process::exit(1);
+                }
+            };
+
+            let mut scored = Vec::new();
+            for (i, chunk) in all_chunks.iter().enumerate() {
+                if let Ok(emb) = context.llm().embed(chunk, "").await {
+                    let dot: f64 = query_emb.iter().zip(emb.iter()).map(|(a, b)| a * b).sum();
+                    let mag_a: f64 = query_emb.iter().map(|x| x * x).sum::<f64>().sqrt();
+                    let mag_b: f64 = emb.iter().map(|x| x * x).sum::<f64>().sqrt();
+                    let sim = if mag_a > 0.0 && mag_b > 0.0 { dot / (mag_a * mag_b) } else { 0.0 };
+                    scored.push((i, sim));
+                }
+            }
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            println!("{}Results (top {}):{}", colors::BOLD, top_k, colors::RESET);
+            for (i, score) in scored.iter().take(top_k) {
+                println!("  [{:.4}] {}...", score, &all_chunks[*i][..80.min(all_chunks[*i].len())]);
+            }
+        }
+        _ => {
+            eprintln!("{}Usage: mirai rag search --query <text> --documents <paths>{}", colors::YELLOW, colors::RESET);
             process::exit(1);
         }
     }

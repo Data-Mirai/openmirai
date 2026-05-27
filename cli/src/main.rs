@@ -19,7 +19,7 @@ use std::process;
 use std::sync::Arc;
 
 use datamirai_engine::{
-    AdapterBridgeLLMResource, AgentSpec, ExecutionStatus, GraphRunner, OllamaLLMResource,
+    AdapterBridgeLLMResource, AgentSpec, ExecutionStatus, GraphRunner,
     RegistryExecutor, SimpleExecutionContext, ToolRegistry,
 };
 use datamirai_engine::tools::builtin::register_all_builtin_tools;
@@ -194,10 +194,21 @@ async fn run_agent(args: &[String]) {
     let input_json = parse_flag(args, "--input").or_else(|| parse_flag(args, "-i"));
     let (provider, model, api_key, base_url) = resolve_provider(args);
 
+    // Benchmark setup
+    let benchmark_enabled = has_flag(args, "--benchmark")
+        || std::env::var("MIRAI_BENCHMARK").map(|v| v == "1").unwrap_or(false);
+    if benchmark_enabled {
+        let bench_path = std::env::var("MIRAI_BENCHMARK_FILE")
+            .unwrap_or_else(|_| "benchmarks.jsonl".to_string());
+        datamirai_engine::benchmark::mark_process_start();
+        datamirai_engine::benchmark::enable(bench_path);
+    }
+
     // Show provider info
     eprintln!(
-        "{}LLM: {provider}/{model}{}",
+        "{}LLM: {provider}/{model}{}{}",
         colors::DIM,
+        if benchmark_enabled { " [benchmark]" } else { "" },
         colors::RESET
     );
 
@@ -258,9 +269,36 @@ async fn run_agent(args: &[String]) {
         }
     }
 
+    // Record cold start
+    if benchmark_enabled {
+        datamirai_engine::benchmark::record_cold_start();
+    }
+    let exec_start = std::time::Instant::now();
+
     // Run
     match runner.run(&graph, &context).await {
         Ok(result) => {
+            let exec_ms = exec_start.elapsed().as_millis() as u64;
+
+            // Log benchmarks
+            if benchmark_enabled {
+                datamirai_engine::benchmark::log_execution(
+                    exec_ms,
+                    &spec.name,
+                    graph.nodes.len(),
+                    &provider,
+                );
+                // Log individual node latencies from trace
+                for entry in &result.trace {
+                    datamirai_engine::benchmark::log_tool_latency(
+                        entry.duration_ms,
+                        &entry.tool_type,
+                        &entry.node_id,
+                    );
+                }
+                datamirai_engine::benchmark::log_memory_usage();
+            }
+
             let output = serde_json::json!({
                 "status": result.status,
                 "state": result.state.snapshot(),

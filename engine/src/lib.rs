@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod core;
 pub mod db;
 pub mod energy;

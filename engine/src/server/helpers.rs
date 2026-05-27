@@ -61,10 +61,13 @@ pub(crate) async fn run_agent_spec(
 
     // Resolve system prompt from Soul or spec.
     let system_prompt = if let Some(ref soul_path) = spec.soul {
-        crate::soul::load_from_file(std::path::Path::new(soul_path))
-            .ok()
-            .map(|s| s.to_system_prompt())
-            .or(spec.system_prompt.clone())
+        match crate::soul::load_from_file(std::path::Path::new(soul_path)) {
+            Ok(soul) => Some(soul.to_system_prompt()),
+            Err(e) => {
+                warn!(soul_path = %soul_path, error = %e, "failed to load SOUL.md — falling back to system_prompt");
+                spec.system_prompt.clone()
+            }
+        }
     } else {
         spec.system_prompt.clone()
     };
@@ -128,10 +131,13 @@ pub(crate) async fn run_agent_spec_streaming(
     }
 
     let system_prompt = if let Some(ref soul_path) = spec.soul {
-        crate::soul::load_from_file(std::path::Path::new(soul_path))
-            .ok()
-            .map(|s| s.to_system_prompt())
-            .or(spec.system_prompt.clone())
+        match crate::soul::load_from_file(std::path::Path::new(soul_path)) {
+            Ok(soul) => Some(soul.to_system_prompt()),
+            Err(e) => {
+                warn!(soul_path = %soul_path, error = %e, "failed to load SOUL.md — falling back to system_prompt");
+                spec.system_prompt.clone()
+            }
+        }
     } else {
         spec.system_prompt.clone()
     };

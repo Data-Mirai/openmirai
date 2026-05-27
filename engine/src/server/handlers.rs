@@ -53,17 +53,31 @@ pub(crate) async fn create_graph(
 ) -> impl IntoResponse {
     let graph_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
 
-    let nodes: Vec<NodeDef> = req
-        .nodes
-        .into_iter()
-        .filter_map(|v| serde_json::from_value(v).ok())
-        .collect();
+    let mut nodes = Vec::with_capacity(req.nodes.len());
+    for (i, v) in req.nodes.into_iter().enumerate() {
+        match serde_json::from_value::<NodeDef>(v) {
+            Ok(n) => nodes.push(n),
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": format!("invalid node at index {}: {}", i, e)})),
+                ).into_response();
+            }
+        }
+    }
 
-    let edges: Vec<EdgeDef> = req
-        .edges
-        .into_iter()
-        .filter_map(|v| serde_json::from_value(v).ok())
-        .collect();
+    let mut edges = Vec::with_capacity(req.edges.len());
+    for (i, v) in req.edges.into_iter().enumerate() {
+        match serde_json::from_value::<EdgeDef>(v) {
+            Ok(e) => edges.push(e),
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": format!("invalid edge at index {}: {}", i, e)})),
+                ).into_response();
+            }
+        }
+    }
 
     let graph = GraphDef {
         id: graph_id.clone(),
@@ -74,10 +88,18 @@ pub(crate) async fn create_graph(
         metadata: req.metadata,
     };
 
-    let body = serde_json::to_value(&graph).unwrap_or(json!({}));
+    let body = match serde_json::to_value(&graph) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("failed to serialize graph: {}", e)})),
+            ).into_response();
+        }
+    };
     state.graphs.write().await.insert(graph_id, graph);
 
-    (StatusCode::CREATED, Json(body))
+    (StatusCode::CREATED, Json(body)).into_response()
 }
 
 pub(crate) async fn list_graphs(State(state): State<AppState>) -> Json<Value> {

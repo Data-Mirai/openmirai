@@ -145,7 +145,10 @@ impl GraphRunner {
         let entry_nodes = graph.entry_nodes();
         let entry_node_id = entry_nodes
             .first()
-            .expect("validated non-empty graph has at least one entry node")
+            .ok_or_else(|| RunnerError::Internal {
+                context: "entry node".into(),
+                message: "no entry nodes found after validation".into(),
+            })?
             .id
             .clone();
 
@@ -247,7 +250,13 @@ impl GraphRunner {
                         ));
                     }
                     HookResult::Skip => {
-                        let _ = state.set(node_id, HashMap::new(), true);
+                        if let Err(e) = state.set(node_id, HashMap::new(), true) {
+                            error!(node_id = %node_id, error = %e, "state.set failed on hook skip");
+                            return Ok(self.make_failed_result(
+                                state, trace, transcript,
+                                format!("state.set failed at '{}': {}", node_id, e),
+                            ));
+                        }
                         current_idx = self.resolve_next_node(node_id, &HashMap::new(), graph)
                             .as_deref().and_then(|nid| node_idx.get(nid).copied());
                         step += 1;
@@ -462,9 +471,13 @@ impl GraphRunner {
             }
         }
 
-        // Store output + trace
+        // Store output + trace — fail loudly if state can't persist
         if let Err(e) = state.set(node_id, output.clone(), true) {
-            warn!(node_id = %node_id, error = %e, "failed to set state");
+            error!(node_id = %node_id, error = %e, "state.set failed — aborting execution");
+            return Err(RunnerError::Internal {
+                context: format!("state.set at node '{}'", node_id),
+                message: e.to_string(),
+            });
         }
         trace.push(TraceEntry {
             node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
@@ -603,7 +616,15 @@ impl GraphRunner {
             FailureMode::Skip => {
                 warn!(node_id = %node_id, error = %err_msg, "node execution failed — skipping");
                 let empty: HashMap<String, Value> = HashMap::new();
-                let _ = state.set(node_id, empty.clone(), true);
+                if let Err(e) = state.set(node_id, empty.clone(), true) {
+                    error!(node_id = %node_id, error = %e, "state.set failed on skip — stopping");
+                    return NodeFailureOutcome::Stop(ExecutionResult {
+                        status: ExecutionStatus::Failed, state: state.clone(),
+                        trace: trace.clone(), transcript: transcript.clone(),
+                        error: Some(format!("state.set failed at '{}': {}", node_id, e)),
+                        interrupt_node_id: None, interrupt_info: None,
+                    });
+                }
                 trace.push(TraceEntry {
                     node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
                     status: TraceStatus::Skipped, duration_ms: elapsed_ms, retries,
@@ -618,7 +639,15 @@ impl GraphRunner {
                 warn!(node_id = %node_id, error = %err_msg, "node execution failed — routing to error path");
                 let mut err_output: HashMap<String, Value> = HashMap::new();
                 err_output.insert(wk::ERROR_FIELD.to_string(), Value::String(err_msg.clone()));
-                let _ = state.set(node_id, err_output.clone(), true);
+                if let Err(e) = state.set(node_id, err_output.clone(), true) {
+                    error!(node_id = %node_id, error = %e, "state.set failed on error route — stopping");
+                    return NodeFailureOutcome::Stop(ExecutionResult {
+                        status: ExecutionStatus::Failed, state: state.clone(),
+                        trace: trace.clone(), transcript: transcript.clone(),
+                        error: Some(format!("state.set failed at '{}': {}", node_id, e)),
+                        interrupt_node_id: None, interrupt_info: None,
+                    });
+                }
                 trace.push(TraceEntry {
                     node_id: node_id.to_string(), tool_type: node.tool_type.clone(),
                     status: TraceStatus::Error, duration_ms: elapsed_ms, retries,
@@ -714,7 +743,7 @@ impl GraphRunner {
                     );
                 }
                 Err(e) => {
-                    warn!(error = %e, "failed to save checkpoint");
+                    error!(error = %e, node_id = %node_id, "checkpoint save failed — session may not be resumable");
                 }
             }
         }
@@ -917,7 +946,14 @@ impl GraphRunner {
             match exec_result {
                 Ok(output) => {
                     if let Err(e) = state.set(&node_id, output, true) {
-                        warn!(node_id = %node_id, error = %e, "fanout: failed to set state");
+                        error!(node_id = %node_id, error = %e, "fanout: state.set failed");
+                        failed_count += 1;
+                        trace_entries.push(TraceEntry {
+                            node_id: node_id.clone(), tool_type: tool_type.clone(),
+                            status: TraceStatus::Error, duration_ms: elapsed_ms, retries: 0,
+                            error: Some(format!("state.set failed: {}", e)),
+                        });
+                        continue;
                     }
 
                     trace_entries.push(TraceEntry {
@@ -1152,10 +1188,12 @@ impl GraphRunner {
         }
     }
 
-    /// Send a stream event for real-time SSE. Non-blocking — drops if full.
+    /// Send a stream event for real-time SSE. Non-blocking — warns if dropped.
     fn stream_event(&self, event: crate::streaming::StreamEvent) {
         if let Some(ref tx) = self.stream_tx {
-            let _ = tx.try_send(event);
+            if let Err(e) = tx.try_send(event) {
+                warn!("stream event dropped (channel full or closed): {}", e);
+            }
         }
     }
 }

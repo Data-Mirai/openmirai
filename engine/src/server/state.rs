@@ -23,19 +23,29 @@ use crate::tools::builtin::register_all_builtin_tools;
 /// This is set once at server startup and cloned per-request.
 pub type LLMFactory = Arc<dyn Fn() -> Box<dyn LLMResource> + Send + Sync>;
 
+/// Maximum sessions kept in memory before eviction.
+const DEFAULT_MAX_SESSIONS: usize = 10_000;
+
+/// Default execution timeout in seconds.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
+
 #[derive(Clone)]
 pub struct AppState {
     pub graphs: Arc<RwLock<HashMap<String, GraphDef>>>,
     pub agents: Arc<RwLock<HashMap<String, AgentSpec>>>,
     pub sessions: Arc<RwLock<HashMap<String, ExecutionResult>>>,
+    /// Insertion-order tracking for FIFO eviction.
+    session_order: Arc<RwLock<Vec<String>>>,
     pub tool_registry: Arc<ToolRegistry>,
     pub runner: GraphRunner,
     pub llm_factory: LLMFactory,
     pub start_time: std::time::Instant,
-    /// Optional API key for authentication.  When `Some`, every request
-    /// (except GET /health and GET /version) must include a matching
-    /// `X-API-Key` header — otherwise the server returns 401.
+    /// Optional API key for authentication.
     pub api_key: Option<String>,
+    /// Max sessions in memory (FIFO eviction when exceeded).
+    pub max_sessions: usize,
+    /// Execution timeout in seconds for agent run endpoints.
+    pub timeout_secs: u64,
 }
 
 impl AppState {
@@ -48,12 +58,32 @@ impl AppState {
             graphs: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            session_order: Arc::new(RwLock::new(Vec::new())),
             tool_registry: registry,
             runner,
             llm_factory,
             start_time: std::time::Instant::now(),
             api_key,
+            max_sessions: DEFAULT_MAX_SESSIONS,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
         }
+    }
+
+    /// Insert a session with FIFO eviction when max_sessions is exceeded.
+    pub async fn insert_session(&self, id: String, result: ExecutionResult) {
+        let mut sessions = self.sessions.write().await;
+        let mut order = self.session_order.write().await;
+
+        // Evict oldest if at capacity.
+        while order.len() >= self.max_sessions {
+            if let Some(oldest_id) = order.first().cloned() {
+                sessions.remove(&oldest_id);
+                order.remove(0);
+            }
+        }
+
+        sessions.insert(id.clone(), result);
+        order.push(id);
     }
 }
 

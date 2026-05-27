@@ -269,8 +269,19 @@ pub(crate) async fn execute_agent(
         req.trigger_data.clone()
     };
 
-    // Run the agent graph with real execution.
-    let result = run_agent_spec(&spec, &trigger_data, &state).await;
+    // Run the agent graph with timeout protection.
+    let timeout = std::time::Duration::from_secs(state.timeout_secs);
+    let result = match tokio::time::timeout(timeout, run_agent_spec(&spec, &trigger_data, &state)).await {
+        Ok(r) => r,
+        Err(_) => {
+            return Err((
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(ErrorResponse {
+                    error: format!("execution timed out after {}s", state.timeout_secs),
+                }),
+            ));
+        }
+    };
 
     let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
     let body = json!({
@@ -284,7 +295,7 @@ pub(crate) async fn execute_agent(
         "error": result.error,
     });
 
-    state.sessions.write().await.insert(session_id, result);
+    state.insert_session(session_id, result).await;
 
     Ok(Json(body))
 }

@@ -9,7 +9,15 @@ license = "MIT"
 name = "datamirai_engine"
 path = "src/lib.rs"
 
+[features]
+default = ["server", "builtin-tools"]
+## HTTP API server (axum + tower-http + tokio-stream).
+server = ["dep:axum", "dep:tower-http", "dep:tokio-stream"]
+## All 48+ built-in tools. Disable to use only the core graph runner.
+builtin-tools = []
+
 [dependencies]
+# --- Core (always compiled) ---
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,15 +32,17 @@ async-trait = "0.1"
 regex = "1"
 glob = "0.3"
 fnv = "1"
-axum = "0.8"
-tower-http = { version = "0.6", features = ["cors"] }
 rusqlite = { version = "0.35", features = ["bundled"] }
 url = "2"
 rand = "0.8"
 sha2 = "0.10"
 hex = "0.4"
 tempfile = "3"
-tokio-stream = "0.1"
+
+# --- Optional: server ---
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

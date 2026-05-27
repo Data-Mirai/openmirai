@@ -15,6 +15,7 @@ pub mod security;
 pub mod runtime;
 pub mod sandbox;
 pub mod search;
+#[cfg(feature = "server")]
 pub mod server;
 pub mod soul;
 pub mod streaming;

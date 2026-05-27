@@ -49,6 +49,7 @@ async fn main() {
         }
         Some("templates") => cmd_templates(&args[1..]),
         Some("new") => cmd_new(&args[1..]),
+        Some("describe") => cmd_describe(&args[1..]),
         Some("agent") => handle_agent_subcommand(&args[1..]),
         Some("help" | "--help" | "-h") => print_help(),
         Some(other) => {
@@ -281,14 +282,39 @@ async fn run_agent(args: &[String]) {
         system_prompt.as_deref(),
     );
 
-    // If input provided, inject into entry node state
+    // If input provided, validate against spec.inputs and inject into trigger node
     if let Some(ref input_str) = input_json {
         if let Ok(input_value) = serde_json::from_str::<serde_json::Value>(input_str) {
+            // Convert Value to HashMap for validation
+            let payload: std::collections::HashMap<String, serde_json::Value> = match input_value {
+                serde_json::Value::Object(map) => map.into_iter().collect(),
+                _ => {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert("_raw".to_string(), input_value);
+                    m
+                }
+            };
+
+            // Validate against spec.inputs if defined (PRD-004 Capa 1)
+            let validated_payload = if let Some(ref inputs_schema) = spec.inputs {
+                match datamirai_engine::core::agent_spec::validate_agent_inputs(&payload, inputs_schema) {
+                    Ok(enriched) => enriched,
+                    Err(errors) => {
+                        eprintln!("{}Error: input validation failed for agent '{}':{}", colors::RED, spec.name, colors::RESET);
+                        for err in &errors {
+                            eprintln!("  - {}", err);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                payload
+            };
+
+            // Inject validated payload into trigger node
             if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
-                entry.config.insert(
-                    "mock_payload".to_string(),
-                    input_value,
-                );
+                let payload_value = serde_json::to_value(&validated_payload).unwrap_or(serde_json::json!({}));
+                entry.config.insert("payload".to_string(), payload_value);
             }
         }
     }

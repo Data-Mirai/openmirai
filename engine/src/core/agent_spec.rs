@@ -264,13 +264,157 @@ pub struct AgentResourceRef {
 }
 
 // ---------------------------------------------------------------------------
+// Input/Output Contract (PRD-004)
+// ---------------------------------------------------------------------------
+
+/// User-facing type for agent input/output fields in YAML specs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputType {
+    Text,
+    Number,
+    Boolean,
+    Json,
+    File,
+}
+
+impl InputType {
+    /// Check if a serde_json::Value matches this expected type.
+    pub fn matches(&self, value: &serde_json::Value) -> bool {
+        match self {
+            InputType::Text => value.is_string(),
+            InputType::Number => value.is_number(),
+            InputType::Boolean => value.is_boolean(),
+            InputType::Json => value.is_object() || value.is_array(),
+            InputType::File => value.is_string(),
+        }
+    }
+
+    /// Human-readable name for error messages.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InputType::Text => "text",
+            InputType::Number => "number",
+            InputType::Boolean => "boolean",
+            InputType::Json => "json",
+            InputType::File => "file",
+        }
+    }
+}
+
+impl std::fmt::Display for InputType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Describes a single input field in spec.inputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputFieldSpec {
+    #[serde(rename = "type")]
+    pub field_type: InputType,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+}
+
+/// Describes a single output field in spec.outputs (declarative — not enforced at runtime v1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputFieldSpec {
+    #[serde(rename = "type")]
+    pub field_type: InputType,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Validation error for agent inputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputValidationError {
+    pub field: String,
+    pub error_type: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for InputValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+/// Validate a client payload against the agent's input schema.
+///
+/// Returns Ok(enriched_payload) with defaults applied, or Err(errors) with all
+/// validation failures (not fail-fast — reports all errors at once).
+pub fn validate_agent_inputs(
+    payload: &HashMap<String, serde_json::Value>,
+    inputs_schema: &HashMap<String, InputFieldSpec>,
+) -> Result<HashMap<String, serde_json::Value>, Vec<InputValidationError>> {
+    let mut enriched = payload.clone();
+    let mut errors = Vec::new();
+
+    for (name, spec) in inputs_schema {
+        match payload.get(name) {
+            Some(value) => {
+                if !spec.field_type.matches(value) {
+                    let actual = value_type_name(value);
+                    errors.push(InputValidationError {
+                        field: name.clone(),
+                        error_type: "type_mismatch".to_string(),
+                        message: format!(
+                            "input '{}': expected {}, got {}",
+                            name, spec.field_type, actual
+                        ),
+                    });
+                }
+            }
+            None => {
+                if spec.required {
+                    let desc = if spec.description.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", spec.description)
+                    };
+                    errors.push(InputValidationError {
+                        field: name.clone(),
+                        error_type: "missing_required".to_string(),
+                        message: format!("missing required input: {}{}", name, desc),
+                    });
+                } else if let Some(ref default) = spec.default {
+                    enriched.insert(name.clone(), default.clone());
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(enriched)
+    } else {
+        Err(errors)
+    }
+}
+
+fn value_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "text",
+        serde_json::Value::Array(_) => "json",
+        serde_json::Value::Object(_) => "json",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // AgentSpec
 // ---------------------------------------------------------------------------
 
 /// Complete, self-contained agent definition.
 ///
 /// Includes the graph inline (nodes + edges), triggers, config,
-/// resource references, and metadata. Serializes to/from YAML and JSON.
+/// resource references, and metadata. YAML is the canonical format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSpec {
     pub name: String,
@@ -286,6 +430,13 @@ pub struct AgentSpec {
     /// If set, the Soul's system prompt is used (overrides system_prompt).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soul: Option<String>,
+    /// Input schema — declares what data the client must/can provide.
+    /// If None, no validation is performed (backward compat).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<HashMap<String, InputFieldSpec>>,
+    /// Output schema — declares what the agent produces (declarative, not enforced in v1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<HashMap<String, OutputFieldSpec>>,
     #[serde(default)]
     pub graph: AgentGraphSpec,
     #[serde(default)]
@@ -385,39 +536,15 @@ impl AgentSpec {
         Ok(spec)
     }
 
-    /// Serialize to JSON string (FEAT-034: JSON is the canonical format).
-    pub fn to_json(&self) -> Result<String, AgentSpecError> {
-        serde_json::to_string_pretty(self).map_err(AgentSpecError::from)
-    }
-
-    /// Parse JSON string into AgentSpec.
-    pub fn from_json(json: &str) -> Result<Self, AgentSpecError> {
-        let mut spec: Self = serde_json::from_str(json)?;
-        spec.validate()?;
-        Ok(spec)
-    }
-
-    /// Load from file — auto-detects format by extension (.yaml, .yml, .json).
+    /// Load from file — YAML-only (serde_yaml parses both YAML and JSON syntax).
     pub fn from_file(path: &str) -> Result<Self, AgentSpecError> {
         let content = std::fs::read_to_string(path)?;
-        if path.ends_with(".json") {
-            Self::from_json(&content)
-        } else if path.ends_with(".yaml") || path.ends_with(".yml") {
-            Self::from_yaml(&content)
-        } else {
-            Err(AgentSpecError::UnsupportedExtension(
-                path.rsplit('.').next().unwrap_or("unknown").to_string(),
-            ))
-        }
+        Self::from_yaml(&content)
     }
 
-    /// Save to file — auto-detects format by extension.
+    /// Save to file — always produces YAML.
     pub fn to_file(&self, path: &str) -> Result<(), AgentSpecError> {
-        let content = if path.ends_with(".json") {
-            self.to_json()?
-        } else {
-            self.to_yaml()?
-        };
+        let content = self.to_yaml()?;
         std::fs::write(path, content)?;
         Ok(())
     }
@@ -493,6 +620,8 @@ mod tests {
             agent_type: AgentType::Managed,
             system_prompt: Some("You are helpful.".to_string()),
             soul: None,
+            inputs: None,
+            outputs: None,
             graph: AgentGraphSpec {
                 nodes: vec![
                     AgentNodeSpec {
@@ -634,23 +763,12 @@ mod tests {
     }
 
     #[test]
-    fn json_roundtrip() {
-        let spec = sample_spec();
-        let json = spec.to_json().unwrap();
-        let back = AgentSpec::from_json(&json).unwrap();
-        assert_eq!(back.name, "test-agent");
-        assert_eq!(back.graph.nodes.len(), 2);
-        assert_eq!(back.graph.edges.len(), 1);
-    }
-
-    #[test]
-    fn json_yaml_roundtrip() {
-        let spec = sample_spec();
-        let json = spec.to_json().unwrap();
-        let from_json = AgentSpec::from_json(&json).unwrap();
-        let yaml = from_json.to_yaml().unwrap();
-        let from_yaml = AgentSpec::from_yaml(&yaml).unwrap();
-        assert_eq!(from_yaml.name, "test-agent");
+    fn yaml_parses_json_syntax() {
+        // serde_yaml is a superset of JSON — JSON syntax parses fine
+        let json_str = r#"{"name":"json-agent","graph":{"nodes":[{"id":"n1","tool_type":"ai/llm_call"}],"edges":[]}}"#;
+        let spec = AgentSpec::from_yaml(json_str).unwrap();
+        assert_eq!(spec.name, "json-agent");
+        assert_eq!(spec.graph.nodes.len(), 1);
     }
 
     #[test]
@@ -746,6 +864,8 @@ mod tests {
             agent_type: AgentType::Managed,
             system_prompt: None,
             soul: None,
+            inputs: None,
+            outputs: None,
             graph: AgentGraphSpec::default(),
             triggers: vec![],
             config: AgentConfig::default(),
@@ -754,5 +874,204 @@ mod tests {
         };
         let err = spec.validate().unwrap_err();
         assert!(matches!(err, AgentSpecError::Graph(_)), "expected Graph error for empty graph, got: {err:?}");
+    }
+
+    // --- PRD-004: Input/Output Contract tests ---
+
+    #[test]
+    fn yaml_with_inputs_outputs_roundtrip() {
+        let yaml = r#"
+name: qa-assistant
+version: v1
+description: "Responde preguntas"
+inputs:
+  question:
+    type: text
+    required: true
+    description: "Pregunta del usuario"
+  context:
+    type: text
+    required: false
+    description: "Contexto adicional"
+    default: "sin contexto"
+outputs:
+  answer:
+    type: text
+    description: "Respuesta generada"
+  confidence:
+    type: number
+    description: "Nivel de confianza"
+graph:
+  nodes:
+    - id: n1
+      tool_type: trigger/manual
+    - id: n2
+      tool_type: ai/llm_call
+  edges:
+    - source: n1
+      target: n2
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        assert_eq!(spec.name, "qa-assistant");
+
+        // Inputs
+        let inputs = spec.inputs.as_ref().unwrap();
+        assert_eq!(inputs.len(), 2);
+        let q = &inputs["question"];
+        assert_eq!(q.field_type, InputType::Text);
+        assert!(q.required);
+        assert_eq!(q.description, "Pregunta del usuario");
+        let ctx = &inputs["context"];
+        assert!(!ctx.required);
+        assert_eq!(ctx.default, Some(serde_json::json!("sin contexto")));
+
+        // Outputs
+        let outputs = spec.outputs.as_ref().unwrap();
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs["answer"].field_type, InputType::Text);
+        assert_eq!(outputs["confidence"].field_type, InputType::Number);
+
+        // Round-trip
+        let yaml2 = spec.to_yaml().unwrap();
+        let spec2 = AgentSpec::from_yaml(&yaml2).unwrap();
+        assert_eq!(spec2.inputs.as_ref().unwrap().len(), 2);
+        assert_eq!(spec2.outputs.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn yaml_without_inputs_outputs_backward_compat() {
+        let yaml = r#"
+name: old-agent
+graph:
+  nodes:
+    - id: n1
+      tool_type: ai/llm_call
+    - id: n2
+      tool_type: logic/condition
+  edges:
+    - source: n1
+      target: n2
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        assert!(spec.inputs.is_none());
+        assert!(spec.outputs.is_none());
+    }
+
+    #[test]
+    fn validate_inputs_happy_path() {
+        let mut schema = HashMap::new();
+        schema.insert("question".to_string(), InputFieldSpec {
+            field_type: InputType::Text,
+            required: true,
+            description: "Pregunta".to_string(),
+            default: None,
+        });
+        schema.insert("context".to_string(), InputFieldSpec {
+            field_type: InputType::Text,
+            required: false,
+            description: "Contexto".to_string(),
+            default: Some(serde_json::json!("default ctx")),
+        });
+
+        let mut payload = HashMap::new();
+        payload.insert("question".to_string(), serde_json::json!("hola"));
+
+        let result = validate_agent_inputs(&payload, &schema).unwrap();
+        assert_eq!(result["question"], serde_json::json!("hola"));
+        assert_eq!(result["context"], serde_json::json!("default ctx")); // default applied
+    }
+
+    #[test]
+    fn validate_inputs_missing_required() {
+        let mut schema = HashMap::new();
+        schema.insert("question".to_string(), InputFieldSpec {
+            field_type: InputType::Text,
+            required: true,
+            description: "Pregunta del usuario".to_string(),
+            default: None,
+        });
+
+        let payload = HashMap::new(); // empty
+        let errors = validate_agent_inputs(&payload, &schema).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].error_type, "missing_required");
+        assert!(errors[0].message.contains("question"));
+        assert!(errors[0].message.contains("Pregunta del usuario"));
+    }
+
+    #[test]
+    fn validate_inputs_type_mismatch() {
+        let mut schema = HashMap::new();
+        schema.insert("question".to_string(), InputFieldSpec {
+            field_type: InputType::Text,
+            required: true,
+            description: String::new(),
+            default: None,
+        });
+
+        let mut payload = HashMap::new();
+        payload.insert("question".to_string(), serde_json::json!(42)); // number, not text
+
+        let errors = validate_agent_inputs(&payload, &schema).unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].error_type, "type_mismatch");
+        assert!(errors[0].message.contains("expected text"));
+        assert!(errors[0].message.contains("got number"));
+    }
+
+    #[test]
+    fn validate_inputs_extra_fields_allowed() {
+        let mut schema = HashMap::new();
+        schema.insert("question".to_string(), InputFieldSpec {
+            field_type: InputType::Text,
+            required: true,
+            description: String::new(),
+            default: None,
+        });
+
+        let mut payload = HashMap::new();
+        payload.insert("question".to_string(), serde_json::json!("hola"));
+        payload.insert("extra_field".to_string(), serde_json::json!(123));
+
+        let result = validate_agent_inputs(&payload, &schema).unwrap();
+        assert_eq!(result.len(), 2); // both fields preserved
+        assert_eq!(result["extra_field"], serde_json::json!(123));
+    }
+
+    #[test]
+    fn validate_inputs_multiple_errors() {
+        let mut schema = HashMap::new();
+        schema.insert("question".to_string(), InputFieldSpec {
+            field_type: InputType::Text,
+            required: true,
+            description: String::new(),
+            default: None,
+        });
+        schema.insert("count".to_string(), InputFieldSpec {
+            field_type: InputType::Number,
+            required: true,
+            description: String::new(),
+            default: None,
+        });
+
+        let payload = HashMap::new(); // empty — both required missing
+        let errors = validate_agent_inputs(&payload, &schema).unwrap_err();
+        assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
+    fn input_type_matches_all_variants() {
+        use serde_json::json;
+        assert!(InputType::Text.matches(&json!("hello")));
+        assert!(!InputType::Text.matches(&json!(42)));
+        assert!(InputType::Number.matches(&json!(3.14)));
+        assert!(!InputType::Number.matches(&json!("three")));
+        assert!(InputType::Boolean.matches(&json!(true)));
+        assert!(!InputType::Boolean.matches(&json!(1)));
+        assert!(InputType::Json.matches(&json!({"key": "val"})));
+        assert!(InputType::Json.matches(&json!([1, 2, 3])));
+        assert!(!InputType::Json.matches(&json!("string")));
+        assert!(InputType::File.matches(&json!("/path/to/file.txt")));
+        assert!(!InputType::File.matches(&json!(123)));
     }
 }

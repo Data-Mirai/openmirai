@@ -129,8 +129,40 @@ impl ToolExecutor for RegistryExecutor {
                 tool_type: node.tool_type.clone(),
             })?;
 
+        // PRD-004 Capa 2: validate inputs against ToolSpec before executing
+        let tool_spec = factory.spec();
+        let validated = match crate::tools::base::validate_node_inputs(&inputs, tool_spec, &node.id) {
+            Ok(v) => v,
+            Err(validation_errors) => {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: node.tool_type.clone(),
+                    message: validation_errors.join("; "),
+                });
+            }
+        };
+
         let tool = factory.create();
-        tool.execute(inputs, &node.config, context).await
+
+        // PRD-004: catch_unwind — tool panics become ToolError, not process crash
+        let result = std::panic::AssertUnwindSafe(
+            tool.execute(validated, &node.config, context)
+        );
+        match futures_util::FutureExt::catch_unwind(result).await {
+            Ok(inner) => inner,
+            Err(panic_info) => {
+                let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "tool panicked (unknown cause)".to_string()
+                };
+                Err(ToolError::ExecutionFailed {
+                    tool_type: node.tool_type.clone(),
+                    message: format!("tool panic: {}", msg),
+                })
+            }
+        }
     }
 }
 

@@ -87,12 +87,14 @@ trigger_tool! {
     description = "HTTP webhook entry point for graph execution",
     inputs = [],
     outputs = [
-        field("body", FieldType::Object, true, "Request body"),
+        field("payload", FieldType::Object, true, "Request body (validated if spec.inputs defined)"),
+        field("body", FieldType::Object, false, "Deprecated alias for payload"),
         field("headers", FieldType::Object, true, "Request headers"),
         field("query_params", FieldType::Object, true, "Query parameters"),
     ],
     config_fields = [
-        field("mock_payload", FieldType::Object, false, "Mock payload for testing"),
+        field("payload", FieldType::Object, false, "Client payload (primary)"),
+        field("mock_payload", FieldType::Object, false, "Deprecated alias for payload"),
     ]
 }
 
@@ -104,8 +106,9 @@ impl Tool for WebhookTriggerTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let body = config
-            .get("body")
+        let payload = config
+            .get("payload")
+            .or_else(|| config.get("body"))
             .or_else(|| config.get("mock_payload"))
             .cloned()
             .unwrap_or(json!({}));
@@ -119,7 +122,8 @@ impl Tool for WebhookTriggerTool {
             .unwrap_or(json!({}));
 
         let mut out = HashMap::new();
-        out.insert("body".to_string(), body);
+        out.insert("payload".to_string(), payload.clone());
+        out.insert("body".to_string(), payload); // backward compat alias
         out.insert("headers".to_string(), headers);
         out.insert("query_params".to_string(), query_params);
         Ok(out)
@@ -137,12 +141,14 @@ trigger_tool! {
     description = "Manual execution entry point",
     inputs = [],
     outputs = [
-        field("user_input", FieldType::Object, true, "User input data"),
+        field("payload", FieldType::Object, true, "Client input data (validated if spec.inputs defined)"),
+        field("user_input", FieldType::Object, false, "Deprecated alias for payload"),
         field("triggered_by", FieldType::String, true, "Who triggered the execution"),
         field("timestamp", FieldType::Number, true, "Trigger timestamp"),
     ],
     config_fields = [
-        field("mock_payload", FieldType::Object, false, "Mock payload for testing"),
+        field("payload", FieldType::Object, false, "Client payload (primary)"),
+        field("mock_payload", FieldType::Object, false, "Deprecated alias for payload"),
     ]
 }
 
@@ -154,8 +160,9 @@ impl Tool for ManualTriggerTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let user_input = config
-            .get("user_input")
+        let payload = config
+            .get("payload")
+            .or_else(|| config.get("user_input"))
             .or_else(|| config.get("mock_payload"))
             .cloned()
             .unwrap_or(json!({}));
@@ -169,7 +176,8 @@ impl Tool for ManualTriggerTool {
             + now.timestamp_subsec_millis() as f64 / 1000.0;
 
         let mut out = HashMap::new();
-        out.insert("user_input".to_string(), user_input);
+        out.insert("payload".to_string(), payload.clone());
+        out.insert("user_input".to_string(), payload); // backward compat alias
         out.insert("triggered_by".to_string(), json!(triggered_by));
         out.insert("timestamp".to_string(), json!(timestamp));
         Ok(out)

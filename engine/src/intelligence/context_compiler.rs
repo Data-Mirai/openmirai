@@ -229,6 +229,8 @@ mod tests {
             agent_type: crate::core::AgentType::Managed,
             system_prompt: system_prompt.map(|s| s.to_string()),
             soul: None,
+            inputs: None,
+            outputs: None,
             graph: Default::default(),
             triggers: Vec::new(),
             config: Default::default(),

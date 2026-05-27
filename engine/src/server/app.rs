@@ -142,6 +142,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/metrics", get(get_metrics))
         // RAG
         .route("/api/rag/search", post(rag_search))
+        // Eval
+        .route("/api/eval", post(eval_session))
+        // GroupChat
+        .route("/api/universe/groupchat", post(groupchat))
         // Webhooks
         .route("/webhooks/{*path}", post(webhook_handler))
         // Middleware
@@ -311,6 +315,8 @@ async fn create_agent(
         agent_type: Default::default(),
         system_prompt: None,
         soul: None,
+        inputs: None,
+        outputs: None,
         graph: Default::default(),
         triggers: Vec::new(),
         config: Default::default(),
@@ -406,8 +412,30 @@ async fn execute_agent(
     };
     drop(agents);
 
+    // Validate trigger_data against spec.inputs if defined (PRD-004 Capa 1)
+    let trigger_data = if let Some(ref inputs_schema) = spec.inputs {
+        match crate::core::agent_spec::validate_agent_inputs(&req.trigger_data, inputs_schema) {
+            Ok(enriched) => enriched,
+            Err(errors) => {
+                let details: Vec<Value> = errors.iter().map(|e| json!({
+                    "field": e.field,
+                    "error": e.error_type,
+                    "message": e.message,
+                })).collect();
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(ErrorResponse {
+                        error: format!("input validation failed: {}", errors.iter().map(|e| e.message.as_str()).collect::<Vec<_>>().join("; ")),
+                    }),
+                ));
+            }
+        }
+    } else {
+        req.trigger_data.clone()
+    };
+
     // Run the agent graph with real execution.
-    let result = run_agent_spec(&spec, &req.trigger_data, &state).await;
+    let result = run_agent_spec(&spec, &trigger_data, &state).await;
 
     let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
     let body = json!({
@@ -586,7 +614,7 @@ async fn run_agent_spec(
     if !trigger_data.is_empty() {
         if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
             if let Ok(val) = serde_json::to_value(trigger_data) {
-                entry.config.insert("mock_payload".to_string(), val);
+                entry.config.insert("payload".to_string(), val);
             }
         }
     }
@@ -656,7 +684,7 @@ async fn run_agent_spec_streaming(
     if !trigger_data.is_empty() {
         if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
             if let Ok(val) = serde_json::to_value(trigger_data) {
-                entry.config.insert("mock_payload".to_string(), val);
+                entry.config.insert("payload".to_string(), val);
             }
         }
     }
@@ -807,6 +835,118 @@ fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
         return 0.0;
     }
     dot / (mag_a * mag_b)
+}
+
+/// Execute eval on a session with REAL LLM judge.
+async fn eval_session(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let input_text = req.get("input").and_then(|v| v.as_str()).unwrap_or("");
+    let output_text = req.get("output").and_then(|v| v.as_str()).unwrap_or("");
+    let context_text = req.get("context").and_then(|v| v.as_str());
+    let duration_ms = req.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+    let judge_model = req.get("judge_model").and_then(|v| v.as_str()).unwrap_or("");
+
+    let eval_types: Vec<crate::eval::EvalType> = req.get("eval_types")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().and_then(|s| match s {
+            "relevance" => Some(crate::eval::EvalType::Relevance),
+            "faithfulness" => Some(crate::eval::EvalType::Faithfulness),
+            "completeness" => Some(crate::eval::EvalType::Completeness),
+            "format_compliance" => Some(crate::eval::EvalType::FormatCompliance),
+            "latency" => Some(crate::eval::EvalType::Latency),
+            _ => None,
+        })).collect())
+        .unwrap_or_default();
+
+    if eval_types.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "eval_types array required (relevance, faithfulness, completeness, format_compliance, latency)".into(),
+        })));
+    }
+
+    let llm = (state.llm_factory)();
+    let results = crate::eval::execute_eval(
+        &eval_types, input_text, output_text, context_text,
+        duration_ms, None, &*llm, judge_model,
+    ).await;
+
+    let scores: Vec<Value> = results.iter().map(|r| json!({
+        "eval_type": r.eval_type,
+        "score": r.score,
+        "details": r.details,
+        "judge_model": r.judge_model,
+    })).collect();
+
+    Ok(Json(json!({
+        "results": scores,
+        "eval_count": scores.len(),
+    })))
+}
+
+/// Execute a GroupChat debate with REAL LLM.
+async fn groupchat(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let topic = req.get("topic").and_then(|v| v.as_str()).unwrap_or("");
+    let max_rounds = req.get("max_rounds").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+    let participants = req.get("participants").and_then(|v| v.as_array());
+
+    if topic.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "topic is required".into() })));
+    }
+    let participants = match participants {
+        Some(p) if p.len() >= 2 => p,
+        _ => return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "participants array required (min 2 agents with name + personality)".into(),
+        }))),
+    };
+
+    let llm = (state.llm_factory)();
+    let mut transcript: Vec<Value> = Vec::new();
+
+    for round in 0..max_rounds {
+        let speaker_idx = round % participants.len();
+        let speaker = &participants[speaker_idx];
+        let name = speaker.get("name").and_then(|v| v.as_str()).unwrap_or("agent");
+        let personality = speaker.get("personality").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Build context: topic + transcript so far.
+        let history: String = transcript.iter().map(|t| {
+            format!("[{}]: {}", t["agent"].as_str().unwrap_or("?"), t["content"].as_str().unwrap_or(""))
+        }).collect::<Vec<_>>().join("\n");
+
+        let prompt = format!(
+            "You are {}. {}.\n\nTopic: {}\n\nPrevious discussion:\n{}\n\nGive your perspective in 2-3 sentences.",
+            name, personality, topic, if history.is_empty() { "(none yet)".to_string() } else { history }
+        );
+
+        match llm.call("", &prompt, &[], 0.7, 256).await {
+            Ok(response) => {
+                transcript.push(json!({
+                    "round": round + 1,
+                    "agent": name,
+                    "content": response.response,
+                }));
+            }
+            Err(e) => {
+                transcript.push(json!({
+                    "round": round + 1,
+                    "agent": name,
+                    "content": format!("(error: {e})"),
+                }));
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "topic": topic,
+        "rounds": max_rounds,
+        "participants": participants.len(),
+        "transcript": transcript,
+    })))
 }
 
 /// Get aggregated metrics from all sessions.
@@ -1226,7 +1366,7 @@ mod tests {
             "version": "v1",
             "graph": {
                 "nodes": [
-                    {"id": "trigger", "tool_type": "trigger/manual", "config": {"mock_payload": {"msg": "hello"}}},
+                    {"id": "trigger", "tool_type": "trigger/manual", "config": {"payload": {"msg": "hello"}}},
                     {"id": "out", "tool_type": "output/response", "config": {"message": "done"}}
                 ],
                 "edges": [

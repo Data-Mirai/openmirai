@@ -71,6 +71,79 @@ pub struct ToolSpec {
 }
 
 // ---------------------------------------------------------------------------
+// Node Input Validation (PRD-004 Capa 2)
+// ---------------------------------------------------------------------------
+
+impl FieldType {
+    /// Check if a serde_json::Value matches this FieldType.
+    pub fn matches(&self, value: &Value) -> bool {
+        match self {
+            FieldType::String => value.is_string(),
+            FieldType::Number => value.is_number(),
+            FieldType::Boolean => value.is_boolean(),
+            FieldType::Array => value.is_array(),
+            FieldType::Object => value.is_object(),
+            FieldType::Integer => value.is_i64() || value.is_u64(),
+        }
+    }
+}
+
+/// Validate resolved inputs against a tool's declared ToolSpec.inputs.
+///
+/// Checks required fields are present and types match. Applies defaults
+/// from ToolField.default for optional missing fields. Returns enriched
+/// inputs or a list of validation error messages.
+pub fn validate_node_inputs(
+    inputs: &std::collections::HashMap<String, Value>,
+    tool_spec: &ToolSpec,
+    node_id: &str,
+) -> Result<std::collections::HashMap<String, Value>, Vec<String>> {
+    let mut enriched = inputs.clone();
+    let mut errors = Vec::new();
+
+    for field in &tool_spec.inputs {
+        match inputs.get(&field.name) {
+            Some(value) => {
+                if !field.field_type.matches(value) {
+                    errors.push(format!(
+                        "Node '{}': input '{}' expected {}, got {}",
+                        node_id, field.name, field.field_type,
+                        value_type_label(value),
+                    ));
+                }
+            }
+            None => {
+                if field.required {
+                    errors.push(format!(
+                        "Node '{}': missing required input '{}' (type: {})",
+                        node_id, field.name, tool_spec.tool_type,
+                    ));
+                } else if let Some(ref default) = field.default {
+                    enriched.insert(field.name.clone(), default.clone());
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(enriched)
+    } else {
+        Err(errors)
+    }
+}
+
+fn value_type_label(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

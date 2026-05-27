@@ -163,7 +163,26 @@ pub fn build_judge_prompt(
 
 /// Parse a judge response (expects `{"score": N, "reason": "..."}`)
 pub fn parse_judge_response(response: &str) -> Option<EvalResult> {
-    let parsed: Value = serde_json::from_str(response).ok()?;
+    // Try direct parse first, then extract from markdown code blocks.
+    let json_str = serde_json::from_str::<Value>(response).ok()
+        .map(|_| response.to_string())
+        .or_else(|| {
+            // Extract from ```json ... ``` blocks
+            let re = regex::Regex::new(r"```(?:json)?\s*\n?([\s\S]*?)\n?\s*```").ok()?;
+            re.captures(response).map(|c| c[1].trim().to_string())
+        })
+        .or_else(|| {
+            // Find first { ... } block
+            let start = response.find('{')?;
+            let mut depth = 0i32;
+            for (i, c) in response[start..].char_indices() {
+                if c == '{' { depth += 1; }
+                if c == '}' { depth -= 1; }
+                if depth == 0 { return Some(response[start..start+i+1].to_string()); }
+            }
+            None
+        })?;
+    let parsed: Value = serde_json::from_str(&json_str).ok()?;
     let raw_score = parsed.get("score")?.as_f64()?;
     let reason = parsed
         .get("reason")
@@ -176,6 +195,72 @@ pub fn parse_judge_response(response: &str) -> Option<EvalResult> {
         details: reason,
         judge_model: None,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Integrated eval — calls REAL LLM for judge evals
+// ---------------------------------------------------------------------------
+
+/// Execute a full eval run against a completed session.
+///
+/// - Programmatic types (format_compliance, latency) run without LLM.
+/// - LLM-as-judge types (relevance, faithfulness, completeness) call the real LLM.
+pub async fn execute_eval(
+    eval_types: &[EvalType],
+    input_text: &str,
+    output_text: &str,
+    context_text: Option<&str>,
+    duration_ms: u64,
+    output_schema: Option<&Value>,
+    llm: &dyn crate::core::context::LLMResource,
+    judge_model: &str,
+) -> Vec<EvalResult> {
+    let mut results = Vec::new();
+
+    for eval_type in eval_types {
+        match eval_type {
+            EvalType::FormatCompliance => {
+                results.push(eval_format_compliance(output_text, output_schema));
+            }
+            EvalType::Latency => {
+                results.push(eval_latency(duration_ms, 5000));
+            }
+            EvalType::Relevance | EvalType::Faithfulness | EvalType::Completeness => {
+                let prompt = build_judge_prompt(eval_type, input_text, output_text, context_text);
+                if prompt.is_empty() {
+                    continue;
+                }
+
+                // Call REAL LLM for evaluation.
+                match llm.call(judge_model, &prompt, &[], 0.1, 256).await {
+                    Ok(response) => {
+                        if let Some(mut eval_result) = parse_judge_response(&response.response) {
+                            eval_result.eval_type = eval_type.clone();
+                            eval_result.judge_model = Some(response.model);
+                            results.push(eval_result);
+                        } else {
+                            results.push(EvalResult {
+                                eval_type: eval_type.clone(),
+                                score: 0.5,
+                                details: Some(format!("LLM responded but could not parse score: {}", &response.response[..100.min(response.response.len())])),
+                                judge_model: Some(response.model),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        results.push(EvalResult {
+                            eval_type: eval_type.clone(),
+                            score: 0.0,
+                            details: Some(format!("LLM judge error: {e}")),
+                            judge_model: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    results
 }
 
 // ---------------------------------------------------------------------------

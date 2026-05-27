@@ -1,4 +1,5 @@
 pub mod benchmark;
+pub mod channels;
 pub mod core;
 pub mod db;
 pub mod energy;
@@ -8,6 +9,7 @@ pub mod llm;
 pub mod mcp;
 pub mod memory;
 pub mod observability;
+pub mod rag;
 pub mod render;
 pub mod resources;
 pub mod security;
@@ -22,6 +24,7 @@ pub mod tools;
 pub mod triggers;
 pub mod universe;
 pub mod vault;
+pub mod voice;
 
 // Re-export core types explicitly (no glob).
 pub use crate::core::agent_spec::{

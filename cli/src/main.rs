@@ -47,6 +47,8 @@ async fn main() {
             let rest = &args[1..];
             run_serve(rest).await;
         }
+        Some("templates") => cmd_templates(&args[1..]),
+        Some("new") => cmd_new(&args[1..]),
         Some("agent") => handle_agent_subcommand(&args[1..]),
         Some("help" | "--help" | "-h") => print_help(),
         Some(other) => {
@@ -245,8 +247,38 @@ async fn run_agent(args: &[String]) {
     let executor = RegistryExecutor::new(Arc::new(registry));
     let runner = GraphRunner::new(Box::new(executor));
 
+    // Resolve Soul if specified
+    let system_prompt = if let Some(ref soul_path) = spec.soul {
+        match datamirai_engine::soul::load_from_file(std::path::Path::new(soul_path)) {
+            Ok(soul) => {
+                eprintln!("{}Soul: {}{}", colors::DIM, soul.name, colors::RESET);
+                Some(soul.to_system_prompt())
+            }
+            Err(e) => {
+                eprintln!("{}Warning: failed to load soul '{}': {}{}", colors::YELLOW, soul_path, e, colors::RESET);
+                spec.system_prompt.clone()
+            }
+        }
+    } else {
+        spec.system_prompt.clone()
+    };
+
     // Create context with REAL LLM provider
-    let context = build_context(&provider, &model, &api_key, &base_url);
+    let mut context = build_context(&provider, &model, &api_key, &base_url);
+    // Inject system prompt from Soul or AgentSpec
+    if let Some(ref prompt) = system_prompt {
+        context = SimpleExecutionContext::builder(Box::new(
+            AdapterBridgeLLMResource::new(
+                adapter_factory::create_adapter(&provider, &api_key, &base_url),
+                &model,
+            )
+        ))
+        .with_db(Box::new(datamirai_engine::resources::InMemoryDBResource::new()))
+        .with_storage(Box::new(datamirai_engine::resources::InMemoryStorageResource::new()))
+        .with_system_prompt(prompt)
+        .build();
+    }
+    let context = context;
 
     // If input provided, inject into entry node state
     if let Some(ref input_str) = input_json {
@@ -400,6 +432,110 @@ async fn run_serve(args: &[String]) {
             colors::RESET
         );
         process::exit(1);
+    }
+}
+
+/// List available agent templates.
+fn cmd_templates(_args: &[String]) {
+    let templates = datamirai_engine::templates::builtin_templates();
+    println!(
+        "{bold}Available templates ({count}):{reset}\n",
+        bold = colors::BOLD,
+        count = templates.len(),
+        reset = colors::RESET,
+    );
+    for t in &templates {
+        println!(
+            "  {green}{:<25}{reset} [{:?}] {}",
+            t.id,
+            t.category,
+            t.description,
+            green = colors::GREEN,
+            reset = colors::RESET,
+        );
+    }
+    println!(
+        "\n{}Use: mirai new --template <id> --name <agent-name>{}",
+        colors::DIM,
+        colors::RESET,
+    );
+}
+
+/// Create a new agent from a template.
+fn cmd_new(args: &[String]) {
+    let template_id = match parse_flag(args, "--template") {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{}Usage: mirai new --template <template-id> --name <agent-name> [--provider <p>]{}",
+                colors::YELLOW,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    };
+
+    let name = parse_flag(args, "--name").unwrap_or_else(|| template_id.clone());
+
+    let template = match datamirai_engine::templates::get_template(&template_id) {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "{}Template '{}' not found. Run 'mirai templates' to see available templates.{}",
+                colors::RED,
+                template_id,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    };
+
+    // Clone spec and override name + provider.
+    let mut spec = template.spec.clone();
+    spec["name"] = serde_json::Value::String(name.clone());
+
+    if let Some(provider) = parse_flag(args, "--provider") {
+        // Inject provider/model into LLM nodes.
+        if let Some(nodes) = spec["graph"]["nodes"].as_array_mut() {
+            for node in nodes {
+                if node["tool_type"].as_str() == Some("ai/llm_call") {
+                    node["config"]["provider"] = serde_json::Value::String(provider.clone());
+                }
+            }
+        }
+    }
+
+    // Write to file.
+    let filename = format!("{name}.yaml");
+    let yaml = serde_yaml::to_string(&spec).unwrap_or_else(|_| {
+        serde_json::to_string_pretty(&spec).unwrap()
+    });
+
+    match std::fs::write(&filename, &yaml) {
+        Ok(_) => {
+            println!(
+                "{}✓ Created '{}' from template '{}'{}",
+                colors::GREEN,
+                filename,
+                template_id,
+                colors::RESET
+            );
+            println!(
+                "{}Run it: mirai run {}{}",
+                colors::DIM,
+                filename,
+                colors::RESET
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{}Error writing {}: {e}{}",
+                colors::RED,
+                filename,
+                colors::RESET
+            );
+            process::exit(1);
+        }
     }
 }
 

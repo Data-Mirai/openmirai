@@ -303,6 +303,7 @@ mod tests {
             version: "v1".to_string(),
             agent_type: AgentType::Managed,
             system_prompt: None,
+            soul: None,
             graph: AgentGraphSpec::default(),
             triggers: vec![],
             config: AgentConfig::default(),

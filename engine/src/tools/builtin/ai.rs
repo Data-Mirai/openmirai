@@ -137,6 +137,54 @@ impl Tool for LlmCallTool {
             });
         }
 
+        // --- Security: prompt injection scan ---
+        let scanner_enabled = config
+            .get("security_scan")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true); // Enabled by default
+
+        if scanner_enabled {
+            let sensitivity = match config.get("security_sensitivity").and_then(|v| v.as_str()) {
+                Some("low") => crate::security::Sensitivity::Low,
+                Some("high") => crate::security::Sensitivity::High,
+                _ => crate::security::Sensitivity::Medium,
+            };
+            let scan_config = crate::security::ScannerConfig {
+                enabled: true,
+                sensitivity,
+                block_on_detection: config
+                    .get("security_block")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+            };
+
+            // Scan all text inputs (prompt + session data).
+            let all_input_text: String = inputs
+                .values()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let scan_result = crate::security::scan(&all_input_text, &scan_config);
+            if scan_result.blocked {
+                warn!(
+                    threat = ?scan_result.threat_type,
+                    confidence = scan_result.confidence,
+                    pattern = ?scan_result.matched_pattern,
+                    "Prompt injection detected — blocking execution"
+                );
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/llm_call".into(),
+                    message: format!(
+                        "Security scan blocked execution: {:?} detected (confidence: {:.0}%). {}",
+                        scan_result.threat_type,
+                        scan_result.confidence * 100.0,
+                        scan_result.details.unwrap_or_default()
+                    ),
+                });
+            }
+        }
+
         // --- Build session context from all non-prompt inputs ---
         let session_data: HashMap<String, Value> = inputs
             .iter()

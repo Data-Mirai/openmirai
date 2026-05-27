@@ -119,9 +119,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/agents/from-spec", post(create_agent_from_spec))
         .route("/api/agents/{id}", get(get_agent))
         .route("/api/agents/{id}/execute", post(execute_agent))
+        .route("/api/agents/{id}/stream", post(stream_agent))
         .route("/api/agents/{id}/spec", get(get_agent_spec))
         // Tools
         .route("/api/tools", get(list_tools))
+        // Templates
+        .route("/api/templates", get(list_templates_handler))
         // Sessions
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
@@ -285,6 +288,7 @@ async fn create_agent(
         version: "v1".to_string(),
         agent_type: Default::default(),
         system_prompt: None,
+        soul: None,
         graph: Default::default(),
         triggers: Vec::new(),
         config: Default::default(),
@@ -400,6 +404,50 @@ async fn execute_agent(
     Ok(Json(body))
 }
 
+/// Execute an agent with SSE streaming response.
+async fn stream_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ExecuteRequest>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    use axum::response::IntoResponse;
+
+    let agents = state.agents.read().await;
+    let spec = match agents.get(&id) {
+        Some(s) => s.clone(),
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Agent not found".to_string(),
+                }),
+            ))
+        }
+    };
+    drop(agents);
+
+    // Run the agent and convert result to SSE events.
+    let result = run_agent_spec(&spec, &req.trigger_data, &state).await;
+    let node_count = spec.graph.nodes.len();
+    let events = crate::streaming::trace_to_events(&result, &spec.name, node_count);
+
+    // Build SSE response body.
+    let mut body = String::new();
+    for event in &events {
+        body.push_str(&event.to_sse());
+    }
+
+    Ok((
+        StatusCode::OK,
+        [
+            ("content-type", "text/event-stream"),
+            ("cache-control", "no-cache"),
+            ("connection", "keep-alive"),
+        ],
+        body,
+    ).into_response())
+}
+
 /// Create an agent directly from a full AgentSpec (no separate graph needed).
 async fn create_agent_from_spec(
     State(state): State<AppState>,
@@ -449,6 +497,24 @@ async fn list_tools(State(state): State<AppState>) -> Json<Value> {
     Json(json!(tools))
 }
 
+/// List available agent templates.
+async fn list_templates_handler() -> Json<Value> {
+    let templates: Vec<Value> = crate::templates::builtin_templates()
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "name": t.name,
+                "category": t.category,
+                "description": t.description,
+                "required_providers": t.required_providers,
+                "tags": t.tags,
+            })
+        })
+        .collect();
+    Json(json!(templates))
+}
+
 /// Internal: run an AgentSpec through the GraphRunner.
 async fn run_agent_spec(
     spec: &AgentSpec,
@@ -479,11 +545,23 @@ async fn run_agent_spec(
         }
     }
 
-    // Create context (default dev for now, real providers via config later).
-    let context = SimpleExecutionContext::builder(Box::new(MockLLMResource::new()))
+    // Resolve system prompt from Soul or spec.
+    let system_prompt = if let Some(ref soul_path) = spec.soul {
+        crate::soul::load_from_file(std::path::Path::new(soul_path))
+            .ok()
+            .map(|s| s.to_system_prompt())
+            .or(spec.system_prompt.clone())
+    } else {
+        spec.system_prompt.clone()
+    };
+
+    let mut ctx_builder = SimpleExecutionContext::builder(Box::new(MockLLMResource::new()))
         .with_db(Box::new(InMemoryDBResource::new()))
-        .with_storage(Box::new(InMemoryStorageResource::new()))
-        .build();
+        .with_storage(Box::new(InMemoryStorageResource::new()));
+    if let Some(ref prompt) = system_prompt {
+        ctx_builder = ctx_builder.with_system_prompt(prompt);
+    }
+    let context = ctx_builder.build();
 
     match state.runner.run(&graph, &context).await {
         Ok(result) => result,

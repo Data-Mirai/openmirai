@@ -158,12 +158,20 @@ impl Tool for LlmCallTool {
                     .unwrap_or(true),
             };
 
-            // Scan all text inputs (prompt + session data).
-            let all_input_text: String = inputs
-                .values()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
+            // Scan all text inputs recursively (prompt + session data).
+            let mut text_parts: Vec<String> = Vec::new();
+            fn collect_strings(value: &Value, parts: &mut Vec<String>) {
+                match value {
+                    Value::String(s) => parts.push(s.clone()),
+                    Value::Array(arr) => arr.iter().for_each(|v| collect_strings(v, parts)),
+                    Value::Object(map) => map.values().for_each(|v| collect_strings(v, parts)),
+                    _ => {}
+                }
+            }
+            for v in inputs.values() {
+                collect_strings(v, &mut text_parts);
+            }
+            let all_input_text = text_parts.join(" ");
 
             let scan_result = crate::security::scan(&all_input_text, &scan_config);
             if scan_result.blocked {

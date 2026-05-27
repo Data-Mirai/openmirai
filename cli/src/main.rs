@@ -141,37 +141,46 @@ fn resolve_provider(args: &[String]) -> (String, String, String, String) {
 }
 
 /// Build the ExecutionContext with a real or mock LLM depending on flags.
-fn build_context(provider: &str, model: &str, api_key: &str, base_url: &str) -> SimpleExecutionContext {
+fn build_context(
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    base_url: &str,
+    system_prompt: Option<&str>,
+) -> SimpleExecutionContext {
     use datamirai_engine::resources::InMemoryDBResource;
     use datamirai_engine::resources::InMemoryStorageResource;
+    use datamirai_engine::resources::MockLLMResource;
 
     // Special case: if provider is "mock", use MockLLMResource for testing
-    if provider == "mock" {
-        return SimpleExecutionContext::default_dev();
-    }
-
-    // For Ollama, we can use either the direct OllamaLLMResource or the bridge.
-    // Using bridge for consistency across all providers.
-    let adapter = adapter_factory::create_adapter(provider, api_key, base_url);
-    let bridge = AdapterBridgeLLMResource::new(adapter, model);
-
-    // If provider supports OpenAI-compatible embeddings, configure embed
-    let bridge = match provider {
-        "openai" => {
-            let url = if base_url.is_empty() {
-                "https://api.openai.com/v1".to_string()
-            } else {
-                base_url.to_string()
-            };
-            bridge.with_embed(url, api_key)
-        }
-        _ => bridge,
+    let llm: Box<dyn datamirai_engine::LLMResource> = if provider == "mock" {
+        Box::new(MockLLMResource::new())
+    } else {
+        let adapter = adapter_factory::create_adapter(provider, api_key, base_url);
+        let bridge = AdapterBridgeLLMResource::new(adapter, model);
+        let bridge = match provider {
+            "openai" => {
+                let url = if base_url.is_empty() {
+                    "https://api.openai.com/v1".to_string()
+                } else {
+                    base_url.to_string()
+                };
+                bridge.with_embed(url, api_key)
+            }
+            _ => bridge,
+        };
+        Box::new(bridge)
     };
 
-    SimpleExecutionContext::builder(Box::new(bridge))
+    let mut builder = SimpleExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
-        .with_storage(Box::new(InMemoryStorageResource::new()))
-        .build()
+        .with_storage(Box::new(InMemoryStorageResource::new()));
+
+    if let Some(prompt) = system_prompt {
+        builder = builder.with_system_prompt(prompt);
+    }
+
+    builder.build()
 }
 
 /// Execute an agent from a JSON/YAML file.
@@ -247,7 +256,7 @@ async fn run_agent(args: &[String]) {
     let executor = RegistryExecutor::new(Arc::new(registry));
     let runner = GraphRunner::new(Box::new(executor));
 
-    // Resolve Soul if specified
+    // Resolve Soul if specified → system prompt
     let system_prompt = if let Some(ref soul_path) = spec.soul {
         match datamirai_engine::soul::load_from_file(std::path::Path::new(soul_path)) {
             Ok(soul) => {
@@ -263,22 +272,14 @@ async fn run_agent(args: &[String]) {
         spec.system_prompt.clone()
     };
 
-    // Create context with REAL LLM provider
-    let mut context = build_context(&provider, &model, &api_key, &base_url);
-    // Inject system prompt from Soul or AgentSpec
-    if let Some(ref prompt) = system_prompt {
-        context = SimpleExecutionContext::builder(Box::new(
-            AdapterBridgeLLMResource::new(
-                adapter_factory::create_adapter(&provider, &api_key, &base_url),
-                &model,
-            )
-        ))
-        .with_db(Box::new(datamirai_engine::resources::InMemoryDBResource::new()))
-        .with_storage(Box::new(datamirai_engine::resources::InMemoryStorageResource::new()))
-        .with_system_prompt(prompt)
-        .build();
-    }
-    let context = context;
+    // Create context with LLM provider + system prompt
+    let context = build_context(
+        &provider,
+        &model,
+        &api_key,
+        &base_url,
+        system_prompt.as_deref(),
+    );
 
     // If input provided, inject into entry node state
     if let Some(ref input_str) = input_json {

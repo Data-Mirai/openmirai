@@ -1,0 +1,39 @@
+<!--
+BLUEPRINT SEED — BITACORA.md
+Responsable: → blueprint/agents/BITACORA.md (protocolo completo)
+
+Historial narrativo append-at-top de las acciones que los agentes ejecutan
+sobre este proyecto. Complementa al workboard (estado) y a git (snapshots).
+
+Se lee de ARRIBA (más reciente) hacia ABAJO (más antiguo).
+
+Las entradas nuevas se insertan inmediatamente DESPUÉS del marker
+<!-- BITACORA:INSERT -->. No tocar el marker; los agentes lo buscan como
+punto de inserción.
+
+Formato por entrada:
+
+**YYYY-MM-DD HH:MM · Agente · Estado**
+Descripción breve (1-2 líneas).
+Contexto adicional si aplica (PRD, archivos, razón).
+
+---
+
+Estados:
+- ⏳ en progreso   empezó una tarea larga
+- ✅ done          terminó bien
+- ⚠️ bloqueado    necesita atención del PM
+- 🔄 handoff      sesión cerró sin completar
+-->
+
+# Bitácora
+
+<!-- BITACORA:INSERT -->
+
+**2026-05-27 ~06:00 · CodeGen · ✅ done**
+PRD-001 implementado completo — 23 features, 636 tests, 9.5MB binary.
+Branch: prd/PRD-001. 12 commits. Listo para `/merge`.
+
+---
+
+_(vacío — los agentes agregan entradas al ejecutar acciones)_

@@ -1,0 +1,14 @@
+{
+  "project": "Engine",
+  "version": "0.0.0",
+  "last_updated": "",
+  "prds": {
+    "in_progress": [],
+    "backlog_next": [],
+    "done_recent": []
+  },
+  "last_handoff": null,
+  "next_step": "Abrir el repo con Claude Code y ejecutar /init",
+  "blocked_on": null,
+  "activity_14d": []
+}

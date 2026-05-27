@@ -27,6 +27,25 @@ Implementación: `adapter_factory::create_adapter()` + `AdapterBridgeLLMResource
 ### MCP injection
 `mcp_servers` del AgentSpec se inyectan como `__mcp_servers` en config de nodos `mcp/call`.
 
+### YAML-only para agent specs (PRD-004)
+YAML es el único formato para specs. `from_json()`/`to_json()` eliminados.
+`from_file()` usa `serde_yaml` para todo (parsea JSON syntax también).
+HTTP API bodies siguen siendo JSON (estándar HTTP).
+
+### Input validation: 2 capas (PRD-004)
+- **Capa 1 (AgentSpec)**: `validate_agent_inputs()` en agent_spec.rs valida payload del client contra `spec.inputs`. CLI exit(1), HTTP 422.
+- **Capa 2 (Node)**: `validate_node_inputs()` en tools/base.rs valida inputs resueltos contra `ToolSpec.inputs` antes de cada `tool.execute()`.
+- **catch_unwind**: RegistryExecutor envuelve `tool.execute()` en catch_unwind. Panics → ToolError.
+
+### Nested field traversal (PRD-004)
+`SharedState.get_field()` soporta dot-separated paths: `trigger.payload.question`.
+Backward compat: paths sin dots funcionan idéntico.
+
+### Trigger output: payload (PRD-004)
+ManualTriggerTool y WebhookTriggerTool producen `payload` como campo principal.
+`user_input` y `body` se mantienen como alias de backward compat.
+Injection key: `config["payload"]` (antes `mock_payload`).
+
 ## Frontend
 
 _(Engine no tiene frontend — las interfaces son CLI y HTTP API)_

@@ -30,6 +30,13 @@ Estados:
 
 <!-- BITACORA:INSERT -->
 
+**2026-05-27 ~22:00 · CodeGen+Merge · ✅ done**
+PRD-004 implementado y mergeado a main. 16 archivos, 1227 insertions.
+Branch: prd/PRD-004. 655 tests, 0 regressions.
+Movido a `blueprint/prd/v0.3.0/PRD-004/`.
+
+---
+
 **2026-05-27 ~21:00 · Idea · ✅ done**
 PRD-004 diseñado: Agent Contract — Input/Output Schema + Runner Estricto.
 2 capas de validación (AgentSpec boundary + Node boundary), nested field traversal,

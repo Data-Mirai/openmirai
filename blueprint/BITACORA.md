@@ -30,6 +30,14 @@ Estados:
 
 <!-- BITACORA:INSERT -->
 
+**2026-05-27 ~21:00 · Idea · ✅ done**
+PRD-004 diseñado: Agent Contract — Input/Output Schema + Runner Estricto.
+2 capas de validación (AgentSpec boundary + Node boundary), nested field traversal,
+catch_unwind para tools, YAML canónico. 20 tests (TEST-058 a TEST-077).
+Archivo: `blueprint/prd/backlog/PRD-004/idea.md`
+
+---
+
 **2026-05-27 ~06:00 · CodeGen · ✅ done**
 PRD-001 implementado completo — 23 features, 636 tests, 9.5MB binary.
 Branch: prd/PRD-001. 12 commits. Listo para `/merge`.

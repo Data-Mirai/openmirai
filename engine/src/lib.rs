@@ -2,6 +2,7 @@ pub mod benchmark;
 pub mod core;
 pub mod db;
 pub mod energy;
+pub mod eval;
 pub mod intelligence;
 pub mod llm;
 pub mod mcp;
@@ -16,8 +17,10 @@ pub mod search;
 pub mod server;
 pub mod soul;
 pub mod streaming;
+pub mod templates;
 pub mod tools;
 pub mod triggers;
+pub mod universe;
 pub mod vault;
 
 // Re-export core types explicitly (no glob).

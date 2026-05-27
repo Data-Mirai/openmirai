@@ -357,6 +357,7 @@ async fn run_agent(args: &[String]) {
                 "trace": result.trace,
                 "transcript": result.transcript,
                 "error": result.error,
+                "interrupt_info": result.interrupt_info,
             });
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
 

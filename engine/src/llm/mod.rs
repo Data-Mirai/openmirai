@@ -5,6 +5,7 @@
 
 mod adapter;
 mod claude;
+mod error;
 mod gemini;
 pub mod groq;
 pub mod nvidia;

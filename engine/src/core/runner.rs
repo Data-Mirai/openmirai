@@ -14,6 +14,7 @@ use crate::core::context::ExecutionContext;
 use crate::core::events::{EventEmitter, EventType};
 use crate::core::graph::{ComparisonOp, EdgeCondition, GraphDef, GraphError, NodeDef};
 use crate::core::state::SharedState;
+use crate::core::well_known as wk;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -263,11 +264,13 @@ fn default_initial_delay() -> f64 {
     1.0
 }
 
+/// Default: 3 retries with exponential backoff — industry standard for
+/// transient failures.  Aligned with `AgentRetryConfig::default()`.
 impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
-            max_retries: 0,
-            backoff: BackoffStrategy::default(),
+            max_retries: 3,
+            backoff: BackoffStrategy::Exponential,
             initial_delay_secs: default_initial_delay(),
             on_failure: FailureMode::default(),
         }
@@ -512,7 +515,7 @@ impl GraphRunner {
 
         // Transcript: started
         transcript.push(TranscriptEntry {
-            entry_type: "started".to_string(),
+            entry_type: wk::TRANSCRIPT_STARTED.to_string(),
             message: "Execution started".to_string(),
             timestamp: now_ts(),
             node_id: None,
@@ -611,7 +614,7 @@ impl GraphRunner {
             }
 
             // Check if this is a human_input block — interrupt BEFORE execution.
-            if node.tool_type == "logic/human_input" {
+            if node.tool_type == wk::HUMAN_INPUT_TOOL {
                 let prompt = node
                     .config
                     .get("prompt")
@@ -730,7 +733,7 @@ impl GraphRunner {
 
             // Transcript: block starting
             transcript.push(TranscriptEntry {
-                entry_type: "block_start".to_string(),
+                entry_type: wk::TRANSCRIPT_BLOCK_START.to_string(),
                 message: format!("Executing {}", node.tool_type),
                 timestamp: now_ts(),
                 node_id: Some(node_id.to_string()),
@@ -741,7 +744,7 @@ impl GraphRunner {
             let start = Instant::now();
 
             // Hook: pre_llm_call for AI blocks
-            if node.tool_type.starts_with("ai/") {
+            if node.tool_type.starts_with(wk::AI_TOOL_PREFIX) {
                 if let Some(ref hook) = self.hook_handler {
                     let _ = run_hook_with_timeout(
                         hook.pre_llm_call(node, context),
@@ -763,7 +766,7 @@ impl GraphRunner {
                 // ---- Success ----
                 Ok((mut output, retries)) => {
                     // Hook: post_llm_call for AI blocks
-                    if node.tool_type.starts_with("ai/") {
+                    if node.tool_type.starts_with(wk::AI_TOOL_PREFIX) {
                         if let Some(ref hook) = self.hook_handler {
                             let mut response_val =
                                 serde_json::to_value(&output).unwrap_or(Value::Null);
@@ -814,7 +817,7 @@ impl GraphRunner {
 
                     // Transcript: block completed
                     transcript.push(TranscriptEntry {
-                        entry_type: "block_end".to_string(),
+                        entry_type: wk::TRANSCRIPT_BLOCK_END.to_string(),
                         message: format!(
                             "Completed {} in {}ms",
                             node.tool_type, elapsed_ms
@@ -899,7 +902,7 @@ impl GraphRunner {
                                     .unwrap_or_default();
 
                                 transcript.push(TranscriptEntry {
-                                    entry_type: "decision".to_string(),
+                                    entry_type: wk::TRANSCRIPT_DECISION.to_string(),
                                     message: format!(
                                         "Decision: following edge {} (condition: {})",
                                         edge_id, cond_desc
@@ -938,7 +941,7 @@ impl GraphRunner {
                     if matches!(hook_action, HookResult::Retry) {
                         // Transcript: error noted but retrying via hook
                         transcript.push(TranscriptEntry {
-                            entry_type: "error".to_string(),
+                            entry_type: wk::TRANSCRIPT_ERROR.to_string(),
                             message: format!(
                                 "Error in {}: {} (retrying via hook)",
                                 node.tool_type, err_msg
@@ -954,7 +957,7 @@ impl GraphRunner {
 
                     // Transcript: error
                     transcript.push(TranscriptEntry {
-                        entry_type: "error".to_string(),
+                        entry_type: wk::TRANSCRIPT_ERROR.to_string(),
                         message: format!("Error in {}: {}", node.tool_type, err_msg),
                         timestamp: now_ts(),
                         node_id: Some(node_id.to_string()),
@@ -1043,7 +1046,7 @@ impl GraphRunner {
 
                             let mut error_output: HashMap<String, Value> = HashMap::new();
                             error_output.insert(
-                                "__error__".to_string(),
+                                wk::ERROR_FIELD.to_string(),
                                 Value::String(err_msg.clone()),
                             );
                             let _ = state.set(node_id, error_output.clone(), true);
@@ -1084,7 +1087,7 @@ impl GraphRunner {
 
         // Transcript: completed
         transcript.push(TranscriptEntry {
-            entry_type: "completed".to_string(),
+            entry_type: wk::TRANSCRIPT_COMPLETED.to_string(),
             message: format!("Execution completed ({} blocks)", trace.len()),
             timestamp: now_ts(),
             node_id: None,
@@ -1317,7 +1320,7 @@ impl GraphRunner {
         let mut transcript_entries = Vec::new();
 
         transcript_entries.push(TranscriptEntry {
-            entry_type: "fanout_start".to_string(),
+            entry_type: wk::TRANSCRIPT_FANOUT_START.to_string(),
             message: format!(
                 "Fan-out: executing {} nodes in parallel: [{}]",
                 node_ids.len(),
@@ -1380,7 +1383,7 @@ impl GraphRunner {
                     });
 
                     transcript_entries.push(TranscriptEntry {
-                        entry_type: "fanout_node_done".to_string(),
+                        entry_type: wk::TRANSCRIPT_FANOUT_NODE_DONE.to_string(),
                         message: format!(
                             "Fan-out node '{}' ({}) completed in {}ms",
                             node_id, tool_type, elapsed_ms
@@ -1402,7 +1405,7 @@ impl GraphRunner {
                     });
 
                     transcript_entries.push(TranscriptEntry {
-                        entry_type: "fanout_node_error".to_string(),
+                        entry_type: wk::TRANSCRIPT_FANOUT_NODE_ERROR.to_string(),
                         message: format!("Fan-out node '{}' failed: {}", node_id, tool_err),
                         timestamp: now_ts(),
                         node_id: Some(node_id),
@@ -1413,7 +1416,7 @@ impl GraphRunner {
         }
 
         transcript_entries.push(TranscriptEntry {
-            entry_type: "fanout_end".to_string(),
+            entry_type: wk::TRANSCRIPT_FANOUT_END.to_string(),
             message: format!(
                 "Fan-out completed: {} succeeded, {} failed",
                 node_ids.len() - failed_count,
@@ -1998,7 +2001,13 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let runner = GraphRunner::new(Box::new(FailExecutor));
+        let runner = GraphRunner::new(Box::new(FailExecutor))
+            .with_default_retry_policy(RetryPolicy {
+                max_retries: 0,
+                backoff: BackoffStrategy::None,
+                initial_delay_secs: 0.0,
+                on_failure: FailureMode::Stop,
+            });
         let ctx = TestContext::new();
         let result = runner.run(&graph, &ctx).await.unwrap();
 
@@ -2073,7 +2082,7 @@ mod tests {
                     source: "a".into(),
                     target: "error_handler".into(),
                     condition: Some(EdgeCondition {
-                        field: "__error__".to_string(),
+                        field: wk::ERROR_FIELD.to_string(),
                         op: ComparisonOp::Neq,
                         value: json!(null),
                     }),
@@ -2085,12 +2094,18 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let runner = GraphRunner::new(Box::new(FailExecutor));
+        let runner = GraphRunner::new(Box::new(FailExecutor))
+            .with_default_retry_policy(RetryPolicy {
+                max_retries: 0,
+                backoff: BackoffStrategy::None,
+                initial_delay_secs: 0.0,
+                on_failure: FailureMode::Stop,
+            });
         let ctx = TestContext::new();
         let result = runner.run(&graph, &ctx).await.unwrap();
 
         // "a" fails with RouteToError → sets __error__ → conditional edge to error_handler matches.
-        // error_handler also fails (FailExecutor) with default Stop policy.
+        // error_handler also fails (FailExecutor) with default Stop policy (set via runner default).
         assert_eq!(result.trace[0].node_id, "a");
         assert_eq!(result.trace[0].status, TraceStatus::Error);
         assert_eq!(result.trace[1].node_id, "error_handler");

@@ -17,7 +17,7 @@ use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
 use crate::core::runner::{ExecutionResult, ExecutionStatus, GraphRunner, TraceEntry};
 use crate::tools::registry::RegistryExecutor;
 use crate::core::state::SharedState;
-use crate::resources::{SimpleExecutionContext, InMemoryDBResource, InMemoryStorageResource};
+use crate::adapters::{SimpleExecutionContext, InMemoryDBResource, InMemoryStorageResource};
 use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
 
@@ -1201,7 +1201,7 @@ mod tests {
 
     /// Mock LLM factory for unit tests ONLY (#[cfg(test)]).
     fn test_llm_factory() -> LLMFactory {
-        use crate::resources::MockLLMResource;
+        use crate::adapters::MockLLMResource;
         Arc::new(|| Box::new(MockLLMResource::new()))
     }
 

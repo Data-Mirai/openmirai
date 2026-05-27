@@ -1,5 +1,4 @@
 pub mod benchmark;
-pub mod channels;
 pub mod core;
 pub mod db;
 pub mod energy;
@@ -11,7 +10,7 @@ pub mod memory;
 pub mod observability;
 pub mod rag;
 pub mod render;
-pub mod resources;
+pub mod adapters;
 pub mod security;
 pub mod runtime;
 pub mod sandbox;
@@ -24,7 +23,6 @@ pub mod tools;
 pub mod triggers;
 pub mod universe;
 pub mod vault;
-pub mod voice;
 
 // Re-export core types explicitly (no glob).
 pub use crate::core::agent_spec::{
@@ -69,8 +67,13 @@ pub use crate::db::{
 // Re-export runtime types.
 pub use crate::runtime::{AgentRuntime, RuntimeAgentRecord, RuntimeAgentStatus, RuntimeError, Scheduler};
 
-// Re-export resource types.
-pub use crate::resources::{
+// Re-export adapter types (formerly "resources").
+pub use crate::adapters::{
     AdapterBridgeLLMResource, InMemoryDBResource, InMemoryStorageResource, MockLLMResource,
     OllamaLLMResource, SimpleExecutionContext,
 };
+
+// Backward-compat alias: `resources` → `adapters`.
+pub mod resources {
+    pub use crate::adapters::*;
+}

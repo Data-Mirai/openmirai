@@ -196,21 +196,6 @@ impl GeminiAdapter {
             .collect()
     }
 
-    /// Map a reqwest error to [`LLMError`].
-    fn map_reqwest_error(err: reqwest::Error) -> LLMError {
-        if err.is_timeout() {
-            LLMError::Timeout
-        } else if err.is_connect() {
-            LLMError::ConnectionError(err.to_string())
-        } else if let Some(status) = err.status() {
-            LLMError::RequestFailed {
-                status: status.as_u16(),
-                body: err.to_string(),
-            }
-        } else {
-            LLMError::ConnectionError(err.to_string())
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +241,7 @@ impl LLMAdapter for GeminiAdapter {
             .json(&payload)
             .send()
             .await
-            .map_err(Self::map_reqwest_error)?;
+            .map_err(super::error::map_reqwest_error)?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -338,7 +323,7 @@ impl LLMAdapter for GeminiAdapter {
             .json(&payload)
             .send()
             .await
-            .map_err(Self::map_reqwest_error)?;
+            .map_err(super::error::map_reqwest_error)?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -399,7 +384,7 @@ impl LLMAdapter for GeminiAdapter {
             .get(&url)
             .send()
             .await
-            .map_err(Self::map_reqwest_error)?;
+            .map_err(super::error::map_reqwest_error)?;
 
         let status = resp.status();
         if !status.is_success() {

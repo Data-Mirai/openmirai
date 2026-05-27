@@ -516,9 +516,10 @@ impl AgentSpec {
             }
         }
 
-        // Delegate to GraphDef::validate() for self-loops, empty graph
-        let mut graph = self.to_graph(None);
-        graph.auto_generate_edge_ids();
+        // Delegate to GraphDef::validate() for self-loops, empty graph.
+        // Edge IDs are already generated above — to_graph() copies them, so
+        // no need to call graph.auto_generate_edge_ids() again.
+        let graph = self.to_graph(None);
         graph.validate().map_err(AgentSpecError::Graph)?;
 
         Ok(())

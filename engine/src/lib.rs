@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod memory;
 pub mod render;
 pub mod resources;
+pub mod security;
 pub mod runtime;
 pub mod search;
 pub mod server;

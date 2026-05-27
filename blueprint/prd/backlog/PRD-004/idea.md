@@ -66,10 +66,12 @@
 │  │ 5. state.set(node_id, output)            │                      │
 │  └──────────────────────────────────────────┘                      │
 │                                                                     │
-│  YAML CANONICO                                                      │
-│  ─────────────                                                     │
-│  YAML = formato primario. JSON sigue soportado.                    │
-│  Toda documentacion, templates, ejemplos → YAML.                   │
+│  YAML-ONLY PARA AGENT SPECS                                        │
+│  ───────────────────────────                                       │
+│  YAML = unico formato para specs. JSON eliminado.                  │
+│  from_file() → siempre serde_yaml (parsea YAML y JSON syntax).    │
+│  Eliminar from_json(), to_json() publicos.                         │
+│  HTTP API body → sigue JSON (es HTTP standard).                    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -330,11 +332,11 @@ STORE  TOOL_ERROR  → apply retry/failure_mode
 - **Cuando se verifica**: trigger.execute()
 - **Si se viola**: data_map expressions con `trigger.payload.x` no resuelven
 
-### R8: YAML canonico
+### R8: YAML-only para agent specs
 
-- **Invariante**: YAML es el formato primario para AgentSpecs. JSON sigue soportado (deserializacion), pero documentacion, templates, ejemplos, y CLI defaults usan YAML.
-- **Cuando se verifica**: documentacion, templates
-- **Si se viola**: inconsistencia en DX
+- **Invariante**: YAML es el UNICO formato para AgentSpecs. `from_json()` y `to_json()` eliminados como metodos publicos. `from_file()` usa `serde_yaml` para todo (YAML es superset de JSON — si alguien pasa JSON, serde_yaml lo parsea igual). `to_file()` siempre produce YAML. HTTP API bodies siguen siendo JSON (estandar HTTP).
+- **Cuando se verifica**: al parsear specs, al serializar
+- **Si se viola**: error de compilacion (metodos eliminados)
 
 ---
 
@@ -656,10 +658,12 @@ graph:
 
 | Flujo | Permutacion | Actor | Resultado esperado |
 |---|---|---|---|
-| backward_compat | Spec JSON sin inputs/outputs | Developer | Parsea OK, sin validacion |
-| backward_compat | Spec YAML sin inputs/outputs | Developer | Parsea OK, sin validacion |
+| yaml_only | Spec YAML sin inputs/outputs | Developer | Parsea OK, sin validacion |
+| yaml_only | Archivo .json pasado a from_file | Developer | Parsea OK (serde_yaml come JSON) |
+| yaml_only | from_json() llamado en codigo | Developer | Error de compilacion (metodo eliminado) |
 | backward_compat | data_map con 1 nivel (trigger.user_input) | Developer | Funciona (user_input alias) |
 | backward_compat | CLI --input sin spec.inputs | Developer | Inyecta sin validar (como hoy) |
+| yaml_only | to_file() siempre produce YAML | Developer | Archivo .yaml generado |
 
 ---
 
@@ -788,6 +792,18 @@ TEST-077: YAML spec round-trip
   Then: Spec original y reparsed son logicamente identicos
   And: inputs/outputs preservados
 
+TEST-078: YAML-only — from_file parsea cualquier sintaxis
+  Given: Archivo agent.json con spec en JSON syntax
+  When: AgentSpec::from_file("agent.json")
+  Then: Parsea OK (serde_yaml es superset de JSON)
+  And: Spec identico al equivalente YAML
+
+TEST-079: YAML-only — to_file siempre produce YAML
+  Given: AgentSpec cargado en memoria
+  When: spec.to_file("output.yaml")
+  Then: Archivo generado en sintaxis YAML (no JSON)
+  And: Sin llaves, sin comillas innecesarias, con indentacion YAML
+
 ---
 
 ## Fuera de Alcance
@@ -807,8 +823,10 @@ TEST-077: YAML spec round-trip
 - **No depende de PRD-002**: los cambios son al parser de AgentSpec y al runner core, no al server. Puede implementarse en paralelo.
 - **No depende de PRD-003**: MCP tools se benefician de la validacion automaticamente (Capa 2 valida contra ToolSpec de mcp/call).
 - **Dependencia interna**: `tools/base.rs` (ToolSpec, FieldType, ToolField) ya existe. Este PRD lo usa, no lo modifica.
-- **serde_yaml**: ya es dependencia. No se agrega nada nuevo.
+- **serde_yaml**: ya es dependencia. Se convierte en el UNICO parser de specs. `serde_json` se mantiene solo para tipos internos (`Value`) y HTTP API.
 - **indexmap** (recomendado): para preservar orden de campos en inputs/outputs en YAML. Opcional — HashMap funciona pero no preserva orden.
+- **Eliminar**: `AgentSpec::from_json()`, `AgentSpec::to_json()` como metodos publicos. Codigo interno que los use → migrar a `from_yaml()`/`to_yaml()`.
+
 
 ### Orden de implementacion recomendado
 

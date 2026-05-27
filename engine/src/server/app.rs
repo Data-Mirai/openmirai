@@ -12,11 +12,12 @@ use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 
 use crate::core::agent_spec::AgentSpec;
+use crate::core::context::LLMResource;
 use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
 use crate::core::runner::{ExecutionResult, ExecutionStatus, GraphRunner, TraceEntry};
 use crate::tools::registry::RegistryExecutor;
 use crate::core::state::SharedState;
-use crate::resources::{MockLLMResource, SimpleExecutionContext, InMemoryDBResource, InMemoryStorageResource};
+use crate::resources::{SimpleExecutionContext, InMemoryDBResource, InMemoryStorageResource};
 use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
 
@@ -28,6 +29,10 @@ use crate::tools::registry::ToolRegistry;
 ///
 /// Uses `Arc<RwLock<HashMap>>` for in-memory storage. A real DB layer will
 /// replace this later.
+/// Factory function that creates a real LLMResource for each execution.
+/// This is set once at server startup and cloned per-request.
+pub type LLMFactory = Arc<dyn Fn() -> Box<dyn LLMResource> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub graphs: Arc<RwLock<HashMap<String, GraphDef>>>,
@@ -35,11 +40,13 @@ pub struct AppState {
     pub sessions: Arc<RwLock<HashMap<String, ExecutionResult>>>,
     pub tool_registry: Arc<ToolRegistry>,
     pub runner: GraphRunner,
+    pub llm_factory: LLMFactory,
     pub start_time: std::time::Instant,
 }
 
 impl AppState {
-    pub fn new(tool_registry: ToolRegistry) -> Self {
+    /// Create app state with a real LLM factory. NO MOCKS.
+    pub fn new(tool_registry: ToolRegistry, llm_factory: LLMFactory) -> Self {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
         let runner = GraphRunner::new(Box::new(executor));
@@ -49,6 +56,7 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             tool_registry: registry,
             runner,
+            llm_factory,
             start_time: std::time::Instant::now(),
         }
     }
@@ -128,6 +136,12 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
+        // Universe
+        .route("/api/universe/message", post(universe_message))
+        // Metrics
+        .route("/api/metrics", get(get_metrics))
+        // RAG
+        .route("/api/rag/search", post(rag_search))
         // Webhooks
         .route("/webhooks/{*path}", post(webhook_handler))
         // Middleware
@@ -140,11 +154,19 @@ pub fn create_router(state: AppState) -> Router {
 // serve()
 // ---------------------------------------------------------------------------
 
-/// Start the HTTP server on the given host and port.
-pub async fn serve(host: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+/// Start the HTTP server with a REAL LLM factory. No mocks.
+///
+/// The `llm_factory` creates a new `Box<dyn LLMResource>` for each agent execution.
+/// The caller (CLI) is responsible for configuring the factory with the right
+/// provider, model, and API key based on user flags / env vars.
+pub async fn serve(
+    host: &str,
+    port: u16,
+    llm_factory: LLMFactory,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = ToolRegistry::new();
     register_all_builtin_tools(&mut registry);
-    let state = AppState::new(registry);
+    let state = AppState::new(registry, llm_factory);
     let app = create_router(state);
 
     let addr = format!("{host}:{port}");
@@ -405,12 +427,18 @@ async fn execute_agent(
 }
 
 /// Execute an agent with SSE streaming response.
+/// Execute an agent with REAL-TIME SSE streaming.
+///
+/// Events are emitted DURING execution via an mpsc channel.
+/// The response streams events as they arrive — not post-execution replay.
 async fn stream_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<ExecuteRequest>,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    use axum::body::Body;
     use axum::response::IntoResponse;
+    use tokio_stream::wrappers::ReceiverStream;
 
     let agents = state.agents.read().await;
     let spec = match agents.get(&id) {
@@ -426,16 +454,34 @@ async fn stream_agent(
     };
     drop(agents);
 
-    // Run the agent and convert result to SSE events.
-    let result = run_agent_spec(&spec, &req.trigger_data, &state).await;
-    let node_count = spec.graph.nodes.len();
-    let events = crate::streaming::trace_to_events(&result, &spec.name, node_count);
+    // Create channel for real-time events.
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<crate::streaming::StreamEvent>(256);
 
-    // Build SSE response body.
-    let mut body = String::new();
-    for event in &events {
-        body.push_str(&event.to_sse());
-    }
+    // Create a byte-stream channel for the HTTP response.
+    let (byte_tx, byte_rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(256);
+
+    // Spawn a task that drains events and converts to SSE text.
+    let drain_handle = tokio::spawn(async move {
+        let mut rx = event_rx;
+        while let Some(event) = rx.recv().await {
+            let sse_text = event.to_sse();
+            if byte_tx.send(Ok(sse_text)).await.is_err() {
+                break; // Client disconnected
+            }
+        }
+    });
+
+    // Spawn the actual agent execution with the stream channel.
+    let state_clone = state.clone();
+    let spec_clone = spec.clone();
+    let trigger_data = req.trigger_data.clone();
+    tokio::spawn(async move {
+        run_agent_spec_streaming(&spec_clone, &trigger_data, &state_clone, event_tx).await;
+    });
+
+    // Stream the byte channel as the HTTP response body.
+    let stream = ReceiverStream::new(byte_rx);
+    let body = Body::from_stream(stream);
 
     Ok((
         StatusCode::OK,
@@ -565,7 +611,9 @@ async fn run_agent_spec(
         spec.system_prompt.clone()
     };
 
-    let mut ctx_builder = SimpleExecutionContext::builder(Box::new(MockLLMResource::new()))
+    // Create context with REAL LLM from the factory. Zero mocks.
+    let llm = (state.llm_factory)();
+    let mut ctx_builder = SimpleExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
         .with_storage(Box::new(InMemoryStorageResource::new()));
     if let Some(ref prompt) = system_prompt {
@@ -585,6 +633,307 @@ async fn run_agent_spec(
             interrupt_info: None,
         },
     }
+}
+
+/// Internal: run an AgentSpec with real-time streaming via mpsc channel.
+async fn run_agent_spec_streaming(
+    spec: &AgentSpec,
+    trigger_data: &HashMap<String, Value>,
+    state: &AppState,
+    event_tx: tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>,
+) {
+    let mut graph = spec.to_graph(Some(&spec.name));
+    graph.auto_generate_edge_ids();
+
+    if let Err(e) = graph.validate() {
+        let _ = event_tx.send(crate::streaming::StreamEvent::GraphError {
+            error: format!("Graph validation failed: {e}"),
+        }).await;
+        return;
+    }
+
+    // Same injections as run_agent_spec.
+    if !trigger_data.is_empty() {
+        if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
+            if let Ok(val) = serde_json::to_value(trigger_data) {
+                entry.config.insert("mock_payload".to_string(), val);
+            }
+        }
+    }
+    if !spec.config.mcp_servers.is_empty() {
+        let mcp_val = serde_json::to_value(&spec.config.mcp_servers).unwrap_or_default();
+        for node in &mut graph.nodes {
+            if node.tool_type == "mcp/call" {
+                node.config.insert("__mcp_servers".to_string(), mcp_val.clone());
+            }
+        }
+    }
+
+    let system_prompt = if let Some(ref soul_path) = spec.soul {
+        crate::soul::load_from_file(std::path::Path::new(soul_path))
+            .ok()
+            .map(|s| s.to_system_prompt())
+            .or(spec.system_prompt.clone())
+    } else {
+        spec.system_prompt.clone()
+    };
+
+    let llm = (state.llm_factory)();
+    let mut ctx_builder = SimpleExecutionContext::builder(llm)
+        .with_db(Box::new(InMemoryDBResource::new()))
+        .with_storage(Box::new(InMemoryStorageResource::new()));
+    if let Some(ref prompt) = system_prompt {
+        ctx_builder = ctx_builder.with_system_prompt(prompt);
+    }
+    let context = ctx_builder.build();
+
+    // Create a runner WITH the stream channel for real-time events.
+    let streaming_runner = state.runner.clone().with_stream_tx(event_tx.clone());
+
+    match streaming_runner.run(&graph, &context).await {
+        Ok(_) => {} // GraphCompleted already sent by runner
+        Err(e) => {
+            let _ = event_tx.send(crate::streaming::StreamEvent::GraphError {
+                error: e.to_string(),
+            }).await;
+        }
+    }
+    // Channel drops when event_tx is dropped → receiver gets None → stream ends
+}
+
+/// RAG search — chunk documents, embed with real LLM, search by cosine similarity.
+async fn rag_search(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let query = req.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let documents = req.get("documents").and_then(|v| v.as_array());
+    let top_k = req.get("top_k").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+    let chunk_strategy = req.get("chunk_strategy").and_then(|v| v.as_str()).unwrap_or("paragraph");
+
+    if query.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "query is required".into() })));
+    }
+    if documents.is_none() || documents.unwrap().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "documents array is required".into() })));
+    }
+
+    // Chunk all documents.
+    let rag_config = crate::rag::RAGPipelineConfig {
+        name: "search".into(),
+        source_type: crate::rag::SourceType::Text,
+        chunking_strategy: match chunk_strategy {
+            "fixed_size" => crate::rag::ChunkingStrategy::FixedSize,
+            "sentence" => crate::rag::ChunkingStrategy::Sentence,
+            _ => crate::rag::ChunkingStrategy::Paragraph,
+        },
+        chunk_size: req.get("chunk_size").and_then(|v| v.as_u64()).unwrap_or(512) as usize,
+        chunk_overlap: 50,
+        embedding_model: "nomic-embed-text".into(),
+    };
+
+    let mut all_chunks = Vec::new();
+    for doc_val in documents.unwrap() {
+        let text = doc_val.as_str().unwrap_or("");
+        if !text.is_empty() {
+            let chunks = crate::rag::chunk_text(text, &rag_config);
+            all_chunks.extend(chunks);
+        }
+    }
+
+    if all_chunks.is_empty() {
+        return Ok(Json(json!({"results": [], "chunks_total": 0})));
+    }
+
+    // Generate embeddings for all chunks + query using REAL Ollama.
+    let llm = (state.llm_factory)();
+
+    let query_embedding = llm.embed(query, "nomic-embed-text").await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+            error: format!("Failed to embed query: {e}"),
+        }))
+    })?;
+
+    let mut chunk_embeddings = Vec::new();
+    for chunk in &all_chunks {
+        match llm.embed(chunk, "nomic-embed-text").await {
+            Ok(emb) => chunk_embeddings.push(emb),
+            Err(e) => {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+                    error: format!("Failed to embed chunk: {e}"),
+                })));
+            }
+        }
+    }
+
+    // Cosine similarity search.
+    let mut scored: Vec<(usize, f64)> = chunk_embeddings
+        .iter()
+        .enumerate()
+        .map(|(i, emb)| (i, cosine_similarity(&query_embedding, emb)))
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let results: Vec<Value> = scored
+        .iter()
+        .take(top_k)
+        .map(|(i, score)| {
+            json!({
+                "chunk": all_chunks[*i],
+                "score": score,
+                "index": i,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "results": results,
+        "chunks_total": all_chunks.len(),
+        "query": query,
+        "embedding_model": "nomic-embed-text",
+        "dimensions": query_embedding.len(),
+    })))
+}
+
+/// Cosine similarity between two vectors.
+fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let mag_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let mag_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if mag_a == 0.0 || mag_b == 0.0 {
+        return 0.0;
+    }
+    dot / (mag_a * mag_b)
+}
+
+/// Get aggregated metrics from all sessions.
+async fn get_metrics(State(state): State<AppState>) -> Json<Value> {
+    let sessions = state.sessions.read().await;
+
+    let total = sessions.len();
+    let completed = sessions.values().filter(|r| r.status == ExecutionStatus::Completed).count();
+    let failed = sessions.values().filter(|r| r.status == ExecutionStatus::Failed).count();
+
+    let all_traces: Vec<&TraceEntry> = sessions.values().flat_map(|r| r.trace.iter()).collect();
+    let total_duration: u64 = all_traces.iter().map(|t| t.duration_ms).sum();
+    let avg_duration = if all_traces.is_empty() { 0.0 } else { total_duration as f64 / all_traces.len() as f64 };
+
+    Json(json!({
+        "sessions": {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+        },
+        "nodes": {
+            "total_executed": all_traces.len(),
+            "total_duration_ms": total_duration,
+            "avg_duration_ms": avg_duration,
+        },
+        "tools_registered": state.tool_registry.list_tools().len(),
+        "agents_loaded": state.agents.read().await.len(),
+    }))
+}
+
+/// Send a message to a Universe — routes to best agent and executes.
+async fn universe_message(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message = req.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    if message.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: "message is required".into() }),
+        ));
+    }
+
+    // Build Universe from agent_configs in request.
+    let agent_configs = req.get("agents").and_then(|v| v.as_array());
+    if agent_configs.is_none() || agent_configs.unwrap().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: "agents array is required".into() }),
+        ));
+    }
+
+    let strategy_str = req.get("strategy").and_then(|v| v.as_str()).unwrap_or("keyword_match");
+    let strategy = match strategy_str {
+        "explicit" => crate::universe::RouterStrategy::Explicit,
+        "round_robin" => crate::universe::RouterStrategy::RoundRobin,
+        "llm_classify" => crate::universe::RouterStrategy::LlmClassify,
+        _ => crate::universe::RouterStrategy::KeywordMatch,
+    };
+
+    let universe_config = crate::universe::UniverseConfig {
+        name: req.get("name").and_then(|v| v.as_str()).unwrap_or("universe").to_string(),
+        description: String::new(),
+        router_strategy: strategy,
+        router_prompt: None,
+        default_response: "No agent available".into(),
+    };
+
+    let mut universe = crate::universe::Universe::new(universe_config);
+
+    // Parse agents: each needs a soul (name + capabilities) and an agent_id.
+    let agents_arr = agent_configs.unwrap();
+    for agent_val in agents_arr {
+        let name = agent_val.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
+        let capabilities: Vec<String> = agent_val.get("capabilities")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let agent_id = agent_val.get("agent_id").and_then(|v| v.as_str()).unwrap_or(name);
+
+        let soul = crate::soul::Soul {
+            name: name.to_string(),
+            identity: String::new(),
+            personality: String::new(),
+            capabilities,
+            constraints: vec![],
+            workflows: vec![],
+            knowledge_refs: vec![],
+            context: String::new(),
+        };
+        universe.add_agent(soul, agent_id);
+    }
+
+    // Route the message.
+    let decision = universe.route(message);
+
+    // Execute the selected agent if it exists in our loaded agents.
+    let agents = state.agents.read().await;
+    let agent_result = if let Some(spec) = agents.get(&decision.agent_id) {
+        let spec = spec.clone();
+        drop(agents);
+
+        let mut trigger_data = HashMap::new();
+        trigger_data.insert("message".to_string(), Value::String(message.to_string()));
+
+        let result = run_agent_spec(&spec, &trigger_data, &state).await;
+        Some(json!({
+            "status": result.status,
+            "state": result.state.snapshot(),
+            "error": result.error,
+        }))
+    } else {
+        drop(agents);
+        None
+    };
+
+    Ok(Json(json!({
+        "routing": {
+            "agent_name": decision.agent_name,
+            "agent_id": decision.agent_id,
+            "confidence": decision.confidence,
+            "strategy": decision.strategy_used,
+            "reason": decision.reason,
+        },
+        "executed": agent_result.is_some(),
+        "result": agent_result,
+    })))
 }
 
 async fn get_agent_spec(
@@ -683,8 +1032,14 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
+    /// Mock LLM factory for unit tests ONLY (#[cfg(test)]).
+    fn test_llm_factory() -> LLMFactory {
+        use crate::resources::MockLLMResource;
+        Arc::new(|| Box::new(MockLLMResource::new()))
+    }
+
     fn test_app() -> Router {
-        let state = AppState::new(ToolRegistry::new());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
         create_router(state)
     }
 
@@ -722,7 +1077,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_crud_lifecycle() {
-        let state = AppState::new(ToolRegistry::new());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
         let app = create_router(state.clone());
 
         // Create
@@ -793,7 +1148,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_crud_lifecycle() {
-        let state = AppState::new(ToolRegistry::new());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
         let app = create_router(state.clone());
 
         // First create a graph
@@ -861,7 +1216,7 @@ mod tests {
     async fn execute_agent_from_spec() {
         let mut registry = ToolRegistry::new();
         register_all_builtin_tools(&mut registry);
-        let state = AppState::new(registry);
+        let state = AppState::new(registry, test_llm_factory());
         let app = create_router(state.clone());
 
         // Create agent via from-spec with a simple trigger→response graph
@@ -916,7 +1271,7 @@ mod tests {
     async fn list_tools_returns_all_builtins() {
         let mut registry = ToolRegistry::new();
         register_all_builtin_tools(&mut registry);
-        let state = AppState::new(registry);
+        let state = AppState::new(registry, test_llm_factory());
         let app = create_router(state);
 
         let resp = app

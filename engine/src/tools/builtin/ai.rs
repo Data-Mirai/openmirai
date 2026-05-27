@@ -246,7 +246,7 @@ impl Tool for LlmCallTool {
         let model = config
             .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or("claude");
+            .unwrap_or("");
         let temperature = config
             .get("temperature")
             .and_then(|v| v.as_f64())
@@ -256,7 +256,11 @@ impl Tool for LlmCallTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(1024) as u32;
 
-        let context_messages = vec![Value::String(combined_context)];
+        // Build context as proper message objects for the LLM adapter.
+        let mut context_messages = Vec::new();
+        if !combined_context.is_empty() {
+            context_messages.push(json!({"role": "system", "content": combined_context}));
+        }
 
         // --- Execute with optional schema validation + retries ---
         let mut current_prompt = effective_prompt.clone();

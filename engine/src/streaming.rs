@@ -4,8 +4,6 @@
 //! via SSE (text/event-stream). Used by the HTTP server's /stream endpoint.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Event types

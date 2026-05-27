@@ -7,7 +7,6 @@
 //! - Filesystem access control (temp_only, readonly, none)
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 

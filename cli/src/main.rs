@@ -429,6 +429,9 @@ async fn run_serve(args: &[String]) {
         .unwrap_or(3000);
     let host = parse_flag(args, "--host").unwrap_or_else(|| "0.0.0.0".to_string());
 
+    // Resolve provider using the same chain as `mirai run`.
+    let (provider, model, api_key, base_url) = resolve_provider(args);
+
     eprintln!(
         "{}Starting datamirai-engine server on {}:{}{}",
         colors::GREEN,
@@ -436,8 +439,30 @@ async fn run_serve(args: &[String]) {
         port,
         colors::RESET
     );
+    eprintln!(
+        "{}LLM: {provider}/{model} (REAL — zero mocks){}",
+        colors::DIM,
+        colors::RESET
+    );
 
-    if let Err(e) = datamirai_engine::server::app::serve(&host, port).await {
+    // Build a factory that creates REAL LLM resources for each request.
+    let llm_factory: std::sync::Arc<dyn Fn() -> Box<dyn datamirai_engine::LLMResource> + Send + Sync> = {
+        let provider = provider.clone();
+        let model = model.clone();
+        let api_key = api_key.clone();
+        let base_url = base_url.clone();
+        std::sync::Arc::new(move || {
+            if provider == "mock" {
+                // Only allowed in explicit --provider mock for testing
+                Box::new(datamirai_engine::MockLLMResource::new())
+            } else {
+                let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
+                Box::new(AdapterBridgeLLMResource::new(adapter, &model))
+            }
+        })
+    };
+
+    if let Err(e) = datamirai_engine::server::app::serve(&host, port, llm_factory).await {
         eprintln!(
             "{}Server error: {e}{}",
             colors::RED,

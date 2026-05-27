@@ -12,11 +12,12 @@ use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 
 use crate::core::agent_spec::AgentSpec;
+use crate::core::context::LLMResource;
 use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
 use crate::core::runner::{ExecutionResult, ExecutionStatus, GraphRunner, TraceEntry};
 use crate::tools::registry::RegistryExecutor;
 use crate::core::state::SharedState;
-use crate::resources::{MockLLMResource, SimpleExecutionContext, InMemoryDBResource, InMemoryStorageResource};
+use crate::resources::{SimpleExecutionContext, InMemoryDBResource, InMemoryStorageResource};
 use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
 
@@ -28,6 +29,10 @@ use crate::tools::registry::ToolRegistry;
 ///
 /// Uses `Arc<RwLock<HashMap>>` for in-memory storage. A real DB layer will
 /// replace this later.
+/// Factory function that creates a real LLMResource for each execution.
+/// This is set once at server startup and cloned per-request.
+pub type LLMFactory = Arc<dyn Fn() -> Box<dyn LLMResource> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub graphs: Arc<RwLock<HashMap<String, GraphDef>>>,
@@ -35,11 +40,13 @@ pub struct AppState {
     pub sessions: Arc<RwLock<HashMap<String, ExecutionResult>>>,
     pub tool_registry: Arc<ToolRegistry>,
     pub runner: GraphRunner,
+    pub llm_factory: LLMFactory,
     pub start_time: std::time::Instant,
 }
 
 impl AppState {
-    pub fn new(tool_registry: ToolRegistry) -> Self {
+    /// Create app state with a real LLM factory. NO MOCKS.
+    pub fn new(tool_registry: ToolRegistry, llm_factory: LLMFactory) -> Self {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
         let runner = GraphRunner::new(Box::new(executor));
@@ -49,6 +56,7 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             tool_registry: registry,
             runner,
+            llm_factory,
             start_time: std::time::Instant::now(),
         }
     }
@@ -140,11 +148,19 @@ pub fn create_router(state: AppState) -> Router {
 // serve()
 // ---------------------------------------------------------------------------
 
-/// Start the HTTP server on the given host and port.
-pub async fn serve(host: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+/// Start the HTTP server with a REAL LLM factory. No mocks.
+///
+/// The `llm_factory` creates a new `Box<dyn LLMResource>` for each agent execution.
+/// The caller (CLI) is responsible for configuring the factory with the right
+/// provider, model, and API key based on user flags / env vars.
+pub async fn serve(
+    host: &str,
+    port: u16,
+    llm_factory: LLMFactory,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = ToolRegistry::new();
     register_all_builtin_tools(&mut registry);
-    let state = AppState::new(registry);
+    let state = AppState::new(registry, llm_factory);
     let app = create_router(state);
 
     let addr = format!("{host}:{port}");
@@ -565,7 +581,9 @@ async fn run_agent_spec(
         spec.system_prompt.clone()
     };
 
-    let mut ctx_builder = SimpleExecutionContext::builder(Box::new(MockLLMResource::new()))
+    // Create context with REAL LLM from the factory. Zero mocks.
+    let llm = (state.llm_factory)();
+    let mut ctx_builder = SimpleExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
         .with_storage(Box::new(InMemoryStorageResource::new()));
     if let Some(ref prompt) = system_prompt {
@@ -683,8 +701,14 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
+    /// Mock LLM factory for unit tests ONLY (#[cfg(test)]).
+    fn test_llm_factory() -> LLMFactory {
+        use crate::resources::MockLLMResource;
+        Arc::new(|| Box::new(MockLLMResource::new()))
+    }
+
     fn test_app() -> Router {
-        let state = AppState::new(ToolRegistry::new());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
         create_router(state)
     }
 
@@ -722,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_crud_lifecycle() {
-        let state = AppState::new(ToolRegistry::new());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
         let app = create_router(state.clone());
 
         // Create
@@ -793,7 +817,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_crud_lifecycle() {
-        let state = AppState::new(ToolRegistry::new());
+        let state = AppState::new(ToolRegistry::new(), test_llm_factory());
         let app = create_router(state.clone());
 
         // First create a graph
@@ -861,7 +885,7 @@ mod tests {
     async fn execute_agent_from_spec() {
         let mut registry = ToolRegistry::new();
         register_all_builtin_tools(&mut registry);
-        let state = AppState::new(registry);
+        let state = AppState::new(registry, test_llm_factory());
         let app = create_router(state.clone());
 
         // Create agent via from-spec with a simple trigger→response graph
@@ -916,7 +940,7 @@ mod tests {
     async fn list_tools_returns_all_builtins() {
         let mut registry = ToolRegistry::new();
         register_all_builtin_tools(&mut registry);
-        let state = AppState::new(registry);
+        let state = AppState::new(registry, test_llm_factory());
         let app = create_router(state);
 
         let resp = app

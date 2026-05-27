@@ -136,6 +136,10 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
+        // Universe
+        .route("/api/universe/message", post(universe_message))
+        // Metrics
+        .route("/api/metrics", get(get_metrics))
         // Webhooks
         .route("/webhooks/{*path}", post(webhook_handler))
         // Middleware
@@ -694,6 +698,133 @@ async fn run_agent_spec_streaming(
         }
     }
     // Channel drops when event_tx is dropped → receiver gets None → stream ends
+}
+
+/// Get aggregated metrics from all sessions.
+async fn get_metrics(State(state): State<AppState>) -> Json<Value> {
+    let sessions = state.sessions.read().await;
+
+    let total = sessions.len();
+    let completed = sessions.values().filter(|r| r.status == ExecutionStatus::Completed).count();
+    let failed = sessions.values().filter(|r| r.status == ExecutionStatus::Failed).count();
+
+    let all_traces: Vec<&TraceEntry> = sessions.values().flat_map(|r| r.trace.iter()).collect();
+    let total_duration: u64 = all_traces.iter().map(|t| t.duration_ms).sum();
+    let avg_duration = if all_traces.is_empty() { 0.0 } else { total_duration as f64 / all_traces.len() as f64 };
+
+    Json(json!({
+        "sessions": {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+        },
+        "nodes": {
+            "total_executed": all_traces.len(),
+            "total_duration_ms": total_duration,
+            "avg_duration_ms": avg_duration,
+        },
+        "tools_registered": state.tool_registry.list_tools().len(),
+        "agents_loaded": state.agents.read().await.len(),
+    }))
+}
+
+/// Send a message to a Universe — routes to best agent and executes.
+async fn universe_message(
+    State(state): State<AppState>,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message = req.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    if message.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: "message is required".into() }),
+        ));
+    }
+
+    // Build Universe from agent_configs in request.
+    let agent_configs = req.get("agents").and_then(|v| v.as_array());
+    if agent_configs.is_none() || agent_configs.unwrap().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: "agents array is required".into() }),
+        ));
+    }
+
+    let strategy_str = req.get("strategy").and_then(|v| v.as_str()).unwrap_or("keyword_match");
+    let strategy = match strategy_str {
+        "explicit" => crate::universe::RouterStrategy::Explicit,
+        "round_robin" => crate::universe::RouterStrategy::RoundRobin,
+        "llm_classify" => crate::universe::RouterStrategy::LlmClassify,
+        _ => crate::universe::RouterStrategy::KeywordMatch,
+    };
+
+    let universe_config = crate::universe::UniverseConfig {
+        name: req.get("name").and_then(|v| v.as_str()).unwrap_or("universe").to_string(),
+        description: String::new(),
+        router_strategy: strategy,
+        router_prompt: None,
+        default_response: "No agent available".into(),
+    };
+
+    let mut universe = crate::universe::Universe::new(universe_config);
+
+    // Parse agents: each needs a soul (name + capabilities) and an agent_id.
+    let agents_arr = agent_configs.unwrap();
+    for agent_val in agents_arr {
+        let name = agent_val.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
+        let capabilities: Vec<String> = agent_val.get("capabilities")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let agent_id = agent_val.get("agent_id").and_then(|v| v.as_str()).unwrap_or(name);
+
+        let soul = crate::soul::Soul {
+            name: name.to_string(),
+            identity: String::new(),
+            personality: String::new(),
+            capabilities,
+            constraints: vec![],
+            workflows: vec![],
+            knowledge_refs: vec![],
+            context: String::new(),
+        };
+        universe.add_agent(soul, agent_id);
+    }
+
+    // Route the message.
+    let decision = universe.route(message);
+
+    // Execute the selected agent if it exists in our loaded agents.
+    let agents = state.agents.read().await;
+    let agent_result = if let Some(spec) = agents.get(&decision.agent_id) {
+        let spec = spec.clone();
+        drop(agents);
+
+        let mut trigger_data = HashMap::new();
+        trigger_data.insert("message".to_string(), Value::String(message.to_string()));
+
+        let result = run_agent_spec(&spec, &trigger_data, &state).await;
+        Some(json!({
+            "status": result.status,
+            "state": result.state.snapshot(),
+            "error": result.error,
+        }))
+    } else {
+        drop(agents);
+        None
+    };
+
+    Ok(Json(json!({
+        "routing": {
+            "agent_name": decision.agent_name,
+            "agent_id": decision.agent_id,
+            "confidence": decision.confidence,
+            "strategy": decision.strategy_used,
+            "reason": decision.reason,
+        },
+        "executed": agent_result.is_some(),
+        "result": agent_result,
+    })))
 }
 
 async fn get_agent_spec(

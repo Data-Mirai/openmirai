@@ -279,6 +279,25 @@ async fn run_agent(args: &[String]) {
     match runner.run(&graph, &context).await {
         Ok(result) => {
             let exec_ms = exec_start.elapsed().as_millis() as u64;
+            let trace_enabled = has_flag(args, "--trace");
+
+            // Print trace tree if --trace
+            if trace_enabled {
+                let tree = datamirai_engine::observability::build_trace_tree(&result, &spec.name);
+                let rendered = datamirai_engine::observability::render_trace_tree(&tree);
+                eprintln!("\n{}Trace:{}\n{}\n", colors::BOLD, colors::RESET, rendered);
+
+                let metrics = datamirai_engine::observability::compute_metrics(&result.trace);
+                eprintln!(
+                    "{}Metrics:{} {} nodes, {}ms total, {:.1}ms avg, {} retries\n",
+                    colors::BOLD,
+                    colors::RESET,
+                    metrics.total_nodes,
+                    metrics.total_duration_ms,
+                    metrics.avg_node_duration_ms,
+                    metrics.total_retries,
+                );
+            }
 
             // Log benchmarks
             if benchmark_enabled {

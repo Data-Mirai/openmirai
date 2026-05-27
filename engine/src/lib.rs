@@ -6,6 +6,7 @@ pub mod intelligence;
 pub mod llm;
 pub mod mcp;
 pub mod memory;
+pub mod observability;
 pub mod render;
 pub mod resources;
 pub mod security;

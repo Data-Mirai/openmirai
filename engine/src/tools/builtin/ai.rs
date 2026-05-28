@@ -8,26 +8,8 @@ use tracing::{info, warn};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{FieldType, ToolField, ToolSpec};
+use crate::tools::base::{field, FieldType, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
-
-// ---------------------------------------------------------------------------
-// Helper: field builder (same pattern as logic.rs)
-// ---------------------------------------------------------------------------
-
-fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
-    ToolField {
-        name: name.into(),
-        field_type,
-        required,
-        description: if desc.is_empty() {
-            None
-        } else {
-            Some(desc.into())
-        },
-        default: None,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Macro: simplify boilerplate for struct + factory + spec
@@ -676,17 +658,8 @@ fn check_json_type(value: &Value, expected: &str) -> bool {
     }
 }
 
-/// Get a human-readable type name for a JSON value.
-fn json_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
+// json_type_name: use canonical source
+use crate::core::value_type::value_type_label as json_type_name;
 
 /// Build a retry prompt with error feedback.
 fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[String]) -> String {

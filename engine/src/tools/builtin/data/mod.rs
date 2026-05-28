@@ -9,26 +9,8 @@ use tokio::sync::Mutex;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{FieldType, ToolField, ToolSpec};
+use crate::tools::base::{field, FieldType, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
-
-// ---------------------------------------------------------------------------
-// Helper: field builder (same pattern as logic.rs)
-// ---------------------------------------------------------------------------
-
-fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
-    ToolField {
-        name: name.into(),
-        field_type,
-        required,
-        description: if desc.is_empty() {
-            None
-        } else {
-            Some(desc.into())
-        },
-        default: None,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Macro: simplify boilerplate for struct + factory + spec

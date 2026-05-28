@@ -4,6 +4,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
+// ToolField constructor (single source — used by all tool modules)
+// ---------------------------------------------------------------------------
+
+/// Build a `ToolField` with the given name, type, required flag, and description.
+/// This is the canonical constructor — every tool module imports it instead of
+/// defining a local copy.
+pub fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
+    ToolField {
+        name: name.into(),
+        field_type,
+        required,
+        description: if desc.is_empty() {
+            None
+        } else {
+            Some(desc.into())
+        },
+        default: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // FieldType
 // ---------------------------------------------------------------------------
 
@@ -136,16 +157,8 @@ pub fn validate_node_inputs(
     }
 }
 
-fn value_type_label(v: &Value) -> &'static str {
-    match v {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
+// value_type_label: canonical source is core::value_type::value_type_label
+use crate::core::value_type::value_type_label;
 
 // ---------------------------------------------------------------------------
 // Tests

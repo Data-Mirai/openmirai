@@ -100,7 +100,7 @@ pub fn value_type_label(v: &Value) -> &'static str {
         Value::Null => "null",
         Value::Bool(_) => "boolean",
         Value::Number(_) => "number",
-        Value::String(_) => "text",
+        Value::String(_) => "string",
         Value::Array(_) => "array",
         Value::Object(_) => "object",
     }

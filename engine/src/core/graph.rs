@@ -43,7 +43,17 @@ pub enum ComparisonOp {
     Contains,
 }
 
-/// Accept both PascalCase ("Eq") and lowercase ("eq") in YAML/JSON.
+/// Accept full words, abbreviations, and PascalCase in YAML/JSON.
+///
+/// Recommended (readable):
+/// ```yaml
+/// op: equals              # or: not_equals, greater_than, less_than,
+///                         #     greater_or_equal, less_or_equal,
+///                         #     in, contains
+/// ```
+///
+/// Also accepted (short form): `eq`, `neq`, `gt`, `lt`, `gte`, `lte`
+/// Also accepted (PascalCase): `Eq`, `Neq`, `Gt`, `Lt`, `Gte`, `Lte`
 impl<'de> serde::Deserialize<'de> for ComparisonOp {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -51,17 +61,21 @@ impl<'de> serde::Deserialize<'de> for ComparisonOp {
     {
         let s = String::deserialize(deserializer)?;
         match s.as_str() {
-            "Eq" | "eq" => Ok(ComparisonOp::Eq),
-            "Neq" | "neq" => Ok(ComparisonOp::Neq),
-            "Gt" | "gt" => Ok(ComparisonOp::Gt),
-            "Lt" | "lt" => Ok(ComparisonOp::Lt),
-            "Gte" | "gte" => Ok(ComparisonOp::Gte),
-            "Lte" | "lte" => Ok(ComparisonOp::Lte),
-            "In" | "in" => Ok(ComparisonOp::In),
-            "Contains" | "contains" => Ok(ComparisonOp::Contains),
+            "equals" | "equal" | "Eq" | "eq" => Ok(ComparisonOp::Eq),
+            "not_equals" | "not_equal" | "Neq" | "neq" => Ok(ComparisonOp::Neq),
+            "greater_than" | "Gt" | "gt" => Ok(ComparisonOp::Gt),
+            "less_than" | "Lt" | "lt" => Ok(ComparisonOp::Lt),
+            "greater_or_equal" | "greater_than_or_equal" | "Gte" | "gte" => Ok(ComparisonOp::Gte),
+            "less_or_equal" | "less_than_or_equal" | "Lte" | "lte" => Ok(ComparisonOp::Lte),
+            "in" | "In" => Ok(ComparisonOp::In),
+            "contains" | "Contains" => Ok(ComparisonOp::Contains),
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["Eq", "Neq", "Gt", "Lt", "Gte", "Lte", "In", "Contains"],
+                &[
+                    "equals", "not_equals", "greater_than", "less_than",
+                    "greater_or_equal", "less_or_equal", "in", "contains",
+                    "eq", "neq", "gt", "lt", "gte", "lte",
+                ],
             )),
         }
     }
@@ -457,5 +471,50 @@ mod tests {
         assert_eq!(g2.id, g.id);
         assert_eq!(g2.nodes.len(), g.nodes.len());
         assert_eq!(g2.edges.len(), g.edges.len());
+    }
+
+    #[test]
+    fn comparison_op_full_words() {
+        for (input, expected) in [
+            ("\"equals\"", ComparisonOp::Eq),
+            ("\"equal\"", ComparisonOp::Eq),
+            ("\"not_equals\"", ComparisonOp::Neq),
+            ("\"not_equal\"", ComparisonOp::Neq),
+            ("\"greater_than\"", ComparisonOp::Gt),
+            ("\"less_than\"", ComparisonOp::Lt),
+            ("\"greater_or_equal\"", ComparisonOp::Gte),
+            ("\"greater_than_or_equal\"", ComparisonOp::Gte),
+            ("\"less_or_equal\"", ComparisonOp::Lte),
+            ("\"less_than_or_equal\"", ComparisonOp::Lte),
+            ("\"in\"", ComparisonOp::In),
+            ("\"contains\"", ComparisonOp::Contains),
+        ] {
+            let op: ComparisonOp = serde_json::from_str(input)
+                .unwrap_or_else(|e| panic!("failed to parse {input}: {e}"));
+            assert_eq!(op, expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn comparison_op_abbreviations_still_work() {
+        for (input, expected) in [
+            ("\"eq\"", ComparisonOp::Eq),
+            ("\"neq\"", ComparisonOp::Neq),
+            ("\"gt\"", ComparisonOp::Gt),
+            ("\"lt\"", ComparisonOp::Lt),
+            ("\"gte\"", ComparisonOp::Gte),
+            ("\"lte\"", ComparisonOp::Lte),
+            ("\"Eq\"", ComparisonOp::Eq),
+            ("\"Gt\"", ComparisonOp::Gt),
+        ] {
+            let op: ComparisonOp = serde_json::from_str(input).unwrap();
+            assert_eq!(op, expected);
+        }
+    }
+
+    #[test]
+    fn comparison_op_rejects_invalid() {
+        let result: Result<ComparisonOp, _> = serde_json::from_str("\"banana\"");
+        assert!(result.is_err());
     }
 }

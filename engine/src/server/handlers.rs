@@ -13,7 +13,7 @@ use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
 use crate::core::runner::{ExecutionStatus, TraceEntry};
 
 use super::state::{AppState, ErrorResponse, ExecuteRequest, GraphCreateRequest, AgentCreateRequest, SessionListQuery};
-use super::helpers::{run_agent_spec, run_agent_spec_streaming};
+use super::helpers::{persist_memory_after_execution, run_agent_spec, run_agent_spec_streaming};
 pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
     let uptime_secs = state.start_time.elapsed().as_secs();
     let agents_count = state.agents.read().await.len();
@@ -170,6 +170,7 @@ pub(crate) async fn create_agent(
         inputs: None,
         outputs: None,
         graph: Default::default(),
+        schedule: None,
         triggers: Vec::new(),
         config: Default::default(),
         resources: Vec::new(),
@@ -286,6 +287,16 @@ pub(crate) async fn execute_agent(
         req.trigger_data.clone()
     };
 
+    // PRD-008: Reject execute on live agents
+    if spec.agent_type == crate::core::agent_spec::AgentType::Live {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse {
+                error: "live agents are controlled via play/stop, not execute".to_string(),
+            }),
+        ));
+    }
+
     // Run the agent graph with timeout protection.
     let timeout = std::time::Duration::from_secs(state.timeout_secs);
     let result = match tokio::time::timeout(timeout, run_agent_spec(&spec, &trigger_data, &state)).await {
@@ -299,6 +310,9 @@ pub(crate) async fn execute_agent(
             ));
         }
     };
+
+    // PRD-008: persist memory after successful execution
+    persist_memory_after_execution(&spec, &id, &result, &state).await;
 
     let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
     let body = json!({
@@ -798,6 +812,190 @@ pub(crate) async fn webhook_handler(
         "received": true,
         "path": path,
         "body": body,
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// PRD-008: Live agent play/stop/cycles/memory handlers
+// ---------------------------------------------------------------------------
+
+/// POST /api/v1/agents/{id}/play — Start cycling a live agent.
+pub(crate) async fn play_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let agents = state.agents.read().await;
+    let spec = match agents.get(&id) {
+        Some(s) => s.clone(),
+        None => {
+            return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Agent not found".into() })));
+        }
+    };
+    drop(agents);
+
+    // Must be a live agent
+    if spec.agent_type != crate::core::agent_spec::AgentType::Live {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse { error: "only live agents support play/stop".into() }),
+        ));
+    }
+
+    // Must have a schedule
+    let schedule = match &spec.schedule {
+        Some(s) => s.clone(),
+        None => {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse { error: "live agent has no schedule configured".into() }),
+            ));
+        }
+    };
+
+    // Check not already playing
+    if state.scheduler.is_scheduled(&id).await {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse { error: "agent is already playing".into() }),
+        ));
+    }
+
+    let interval = schedule.interval_seconds.unwrap_or(60);
+    let max_cycles = schedule.max_cycles;
+    let on_error = match schedule.on_cycle_error {
+        crate::core::agent_spec::CycleErrorMode::Continue => "continue",
+        crate::core::agent_spec::CycleErrorMode::Stop => "stop",
+    };
+
+    // Clear cycle memory on new play session (persist: cycle resets)
+    state.memory_store.clear_cycle_memory(&id).await;
+
+    // Build the cycle callback that executes the agent's graph
+    let agent_id = id.clone();
+    let app_state = state.clone();
+    let agent_spec = spec.clone();
+    let callback: crate::runtime::scheduler::CycleCallback = std::sync::Arc::new(move |aid, cycle_num, is_first| {
+        let s = app_state.clone();
+        let sp = agent_spec.clone();
+        Box::pin(async move {
+            let trigger_data = {
+                let mut td = HashMap::new();
+                td.insert("cycle_number".to_string(), serde_json::json!(cycle_num));
+                td.insert("triggered_by".to_string(), serde_json::json!("scheduler"));
+                td
+            };
+            let result = super::helpers::run_agent_spec_with_memory(
+                &sp,
+                &trigger_data,
+                &s,
+                &aid,
+                is_first,
+            ).await;
+
+            // Persist memory after execution
+            super::helpers::persist_memory_after_execution(&sp, &aid, &result, &s).await;
+
+            match result.status {
+                ExecutionStatus::Completed => Ok(()),
+                _ => Err(result.error.unwrap_or_else(|| "cycle failed".into())),
+            }
+        })
+    });
+
+    state.scheduler.schedule_agent(&agent_id, interval, max_cycles, on_error, callback).await;
+
+    let memory_keys: Vec<String> = spec.graph.memory
+        .as_ref()
+        .map(|m| m.keys.keys().cloned().collect())
+        .unwrap_or_default();
+
+    Ok(Json(json!({
+        "agent_id": id,
+        "status": "playing",
+        "schedule": { "interval_seconds": interval },
+        "memory_keys": memory_keys,
+    })))
+}
+
+/// POST /api/v1/agents/{id}/stop — Stop cycling a live agent.
+pub(crate) async fn stop_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    if !state.scheduler.is_scheduled(&id).await {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse { error: "agent is not playing".into() }),
+        ));
+    }
+
+    let cycles_completed = state.scheduler.get_cycle_count(&id).await;
+    state.scheduler.unschedule_agent(&id).await;
+
+    Ok(Json(json!({
+        "agent_id": id,
+        "status": "enabled",
+        "cycles_completed": cycles_completed,
+    })))
+}
+
+/// GET /api/v1/agents/{id}/cycles — Get cycle history.
+pub(crate) async fn get_agent_cycles(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let limit: usize = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50);
+    let cycles = state.scheduler.get_cycles(&id, limit).await;
+    let total = state.scheduler.get_cycle_count(&id).await;
+
+    Ok(Json(json!({
+        "agent_id": id,
+        "total_cycles": total,
+        "cycles": cycles,
+    })))
+}
+
+/// GET /api/v1/agents/{id}/memory — Get current agent memory.
+pub(crate) async fn get_agent_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let memory = state.memory_store.get_all_memory(&id).await;
+
+    Ok(Json(json!({
+        "agent_id": id,
+        "memory": memory,
+    })))
+}
+
+/// DELETE /api/v1/agents/{id}/memory — Clear agent memory to initial values.
+pub(crate) async fn clear_agent_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Cannot clear while playing
+    if state.scheduler.is_scheduled(&id).await {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse { error: "cannot clear memory while agent is playing".into() }),
+        ));
+    }
+
+    // Get initial values from spec
+    let agents = state.agents.read().await;
+    let initial_values = agents
+        .get(&id)
+        .and_then(|spec| spec.graph.memory.as_ref())
+        .map(|m| m.keys.clone());
+    drop(agents);
+
+    state.memory_store.clear_all_memory(&id, initial_values.as_ref()).await;
+
+    Ok(Json(json!({
+        "agent_id": id,
+        "memory": initial_values.unwrap_or_default(),
+        "reset_to": "initial_values",
     })))
 }
 

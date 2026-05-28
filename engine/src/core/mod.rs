@@ -10,8 +10,9 @@ pub mod value_type;
 pub mod well_known;
 
 pub use agent_spec::{
-    AgentConfig, AgentEdgeSpec, AgentGraphSpec, AgentHookSpec, AgentMcpServerSpec, AgentNodeSpec,
-    AgentResourceRef, AgentRetryConfig, AgentSpec, AgentSpecError, AgentTriggerSpec, AgentType,
+    AgentConfig, AgentEdgeSpec, AgentGraphSpec, AgentHookSpec, AgentMcpServerSpec, AgentMemorySpec,
+    AgentNodeSpec, AgentResourceRef, AgentRetryConfig, AgentScheduleSpec, AgentSpec, AgentSpecError,
+    AgentTriggerSpec, AgentType, CycleErrorMode, MemoryPersistMode,
 };
 pub use auth::{AuthError, Permission, PermissionEvaluator, Resource, SingleUserAuth};
 pub use context::{

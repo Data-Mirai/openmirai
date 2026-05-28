@@ -38,6 +38,13 @@ pub enum EventType {
     BrowserAction,
     BrowserNavigation,
     BrowserCompleted,
+
+    // PRD-008: Live agent lifecycle events
+    AgentPlaying,
+    AgentStopped,
+    CycleStarted,
+    CycleCompleted,
+    CycleFailed,
 }
 
 impl std::fmt::Display for EventType {
@@ -62,6 +69,11 @@ impl std::fmt::Display for EventType {
             Self::BrowserAction => "browser_action",
             Self::BrowserNavigation => "browser_navigation",
             Self::BrowserCompleted => "browser_completed",
+            Self::AgentPlaying => "agent_playing",
+            Self::AgentStopped => "agent_stopped",
+            Self::CycleStarted => "cycle_started",
+            Self::CycleCompleted => "cycle_completed",
+            Self::CycleFailed => "cycle_failed",
         };
         f.write_str(s)
     }

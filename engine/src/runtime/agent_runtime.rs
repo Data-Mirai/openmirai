@@ -48,6 +48,8 @@ pub enum RuntimeError {
 pub enum RuntimeAgentStatus {
     Enabled,
     Disabled,
+    /// PRD-008: Live agent actively cycling.
+    Playing,
     Error(String),
 }
 
@@ -56,6 +58,7 @@ impl std::fmt::Display for RuntimeAgentStatus {
         match self {
             Self::Enabled => write!(f, "enabled"),
             Self::Disabled => write!(f, "disabled"),
+            Self::Playing => write!(f, "playing"),
             Self::Error(msg) => write!(f, "error: {}", msg),
         }
     }
@@ -68,6 +71,32 @@ pub struct RuntimeAgentRecord {
     pub spec: AgentSpec,
     pub status: RuntimeAgentStatus,
     pub registered_at: f64,
+}
+
+// ---------------------------------------------------------------------------
+// CycleRecord (PRD-008)
+// ---------------------------------------------------------------------------
+
+/// Status of a single cycle execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CycleStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+/// Record of a single cycle execution for a live agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CycleRecord {
+    pub cycle_id: String,
+    pub agent_id: String,
+    pub cycle_number: u64,
+    pub started_at: f64,
+    pub completed_at: Option<f64>,
+    pub status: CycleStatus,
+    pub duration_ms: Option<u64>,
+    pub error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +336,7 @@ mod tests {
             inputs: None,
             outputs: None,
             graph: AgentGraphSpec::default(),
+            schedule: None,
             triggers: vec![],
             config: AgentConfig::default(),
             resources: vec![],

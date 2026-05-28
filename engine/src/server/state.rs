@@ -11,6 +11,8 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
+use crate::runtime::agent_memory_store::AgentMemoryStore;
+use crate::runtime::scheduler::Scheduler;
 use crate::tools::registry::{RegistryExecutor, ToolRegistry};
 /// Shared application state passed to all handlers via axum's `State`.
 ///
@@ -43,6 +45,10 @@ pub struct AppState {
     pub max_sessions: usize,
     /// Execution timeout in seconds for agent run endpoints.
     pub timeout_secs: u64,
+    /// Per-agent persistent memory store (PRD-008).
+    pub memory_store: AgentMemoryStore,
+    /// Background scheduler for live agent cycles (PRD-008).
+    pub scheduler: Arc<Scheduler>,
 }
 
 impl AppState {
@@ -63,6 +69,8 @@ impl AppState {
             api_key,
             max_sessions: DEFAULT_MAX_SESSIONS,
             timeout_secs: DEFAULT_TIMEOUT_SECS,
+            memory_store: AgentMemoryStore::new(),
+            scheduler: Arc::new(Scheduler::new()),
         }
     }
 

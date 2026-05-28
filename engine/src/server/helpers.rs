@@ -8,17 +8,94 @@ use axum::Json;
 use serde_json::{json, Value};
 use tracing::warn;
 
-use crate::core::agent_spec::AgentSpec;
+use crate::core::agent_spec::{AgentSpec, MemoryPersistMode};
 use crate::core::runner::{ExecutionResult, ExecutionStatus};
 use crate::core::state::SharedState;
 use crate::adapters::{InMemoryDBResource, InMemoryStorageResource, DefaultExecutionContext};
 
 use super::state::{AppState, ErrorResponse};
 
+/// Build a SharedState pre-populated with agent memory (PRD-008).
+///
+/// Reads from the appropriate store based on persist mode and injects
+/// as a virtual "memory" node in the state.
+pub(crate) async fn build_state_with_memory(
+    spec: &AgentSpec,
+    agent_id: &str,
+    app_state: &AppState,
+    is_first_cycle_of_session: bool,
+) -> SharedState {
+    let shared_state = SharedState::new();
+
+    let mem_spec = match &spec.graph.memory {
+        Some(m) => m,
+        None => return shared_state,
+    };
+
+    let memory_values = match mem_spec.persist {
+        MemoryPersistMode::None => {
+            // Always use initial values
+            mem_spec.keys.clone()
+        }
+        MemoryPersistMode::Cycle => {
+            if is_first_cycle_of_session {
+                mem_spec.keys.clone()
+            } else {
+                let stored = app_state.memory_store.get_cycle_memory(agent_id).await;
+                if stored.is_empty() {
+                    mem_spec.keys.clone()
+                } else {
+                    merge_with_initials(&mem_spec.keys, &stored)
+                }
+            }
+        }
+        MemoryPersistMode::Execution => {
+            let stored = app_state.memory_store.get_execution_memory(agent_id).await;
+            if stored.is_empty() {
+                mem_spec.keys.clone()
+            } else {
+                merge_with_initials(&mem_spec.keys, &stored)
+            }
+        }
+    };
+
+    // Inject as virtual node "memory" so ${memory.key} resolves
+    let _ = shared_state.set("memory", memory_values, true);
+    shared_state
+}
+
+/// Merge stored values with initial values (stored takes precedence for existing keys).
+fn merge_with_initials(
+    initials: &HashMap<String, Value>,
+    stored: &HashMap<String, Value>,
+) -> HashMap<String, Value> {
+    let mut merged = initials.clone();
+    for (key, value) in stored {
+        if initials.contains_key(key) {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    merged
+}
+
 pub(crate) async fn run_agent_spec(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
+) -> ExecutionResult {
+    run_agent_spec_with_memory(spec, trigger_data, state, &spec.name, true).await
+}
+
+/// Run an agent spec with memory support (PRD-008).
+///
+/// `agent_id`: used to key the memory store.
+/// `is_first_cycle_of_session`: controls cycle-mode memory behavior.
+pub(crate) async fn run_agent_spec_with_memory(
+    spec: &AgentSpec,
+    trigger_data: &HashMap<String, Value>,
+    state: &AppState,
+    agent_id: &str,
+    is_first_cycle_of_session: bool,
 ) -> ExecutionResult {
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
@@ -54,6 +131,18 @@ pub(crate) async fn run_agent_spec(
         }
     }
 
+    // PRD-008: inject memory spec into state/memory nodes so they know
+    // which keys are declared and what persist mode to use.
+    if let Some(ref mem_spec) = spec.graph.memory {
+        let mem_meta = serde_json::to_value(mem_spec).unwrap_or_default();
+        for node in &mut graph.nodes {
+            if node.tool_type == "state/memory" {
+                node.config.insert("__memory_spec".to_string(), mem_meta.clone());
+                node.config.insert("__agent_id".to_string(), Value::String(agent_id.to_string()));
+            }
+        }
+    }
+
     // Resolve system prompt from Soul or spec.
     let system_prompt = if let Some(ref soul_path) = spec.soul {
         match crate::soul::load_from_file(std::path::Path::new(soul_path)) {
@@ -77,7 +166,10 @@ pub(crate) async fn run_agent_spec(
     }
     let context = ctx_builder.build();
 
-    match state.runner.run(&graph, &context).await {
+    // PRD-008: Build state with memory injected
+    let initial_state = build_state_with_memory(spec, agent_id, state, is_first_cycle_of_session).await;
+
+    match state.runner.run_with_state(&graph, &context, initial_state).await {
         Ok(result) => result,
         Err(e) => ExecutionResult {
             status: ExecutionStatus::Failed,
@@ -158,6 +250,61 @@ pub(crate) async fn run_agent_spec_streaming(
         }
     }
     // Channel drops when event_tx is dropped → receiver gets None → stream ends
+}
+
+/// Persist memory after a successful execution (PRD-008).
+///
+/// Reads `__memory_write` from any `state/memory` node's output in the state
+/// and writes it to the appropriate store based on persist mode.
+pub(crate) async fn persist_memory_after_execution(
+    spec: &AgentSpec,
+    agent_id: &str,
+    result: &ExecutionResult,
+    app_state: &AppState,
+) {
+    let mem_spec = match &spec.graph.memory {
+        Some(m) => m,
+        None => return,
+    };
+
+    // Only persist on success
+    if result.status != ExecutionStatus::Completed {
+        return;
+    }
+
+    // Find state/memory node outputs — look for __memory_write
+    let state_snapshot = result.state.snapshot();
+    let mut write_data: HashMap<String, Value> = HashMap::new();
+
+    for (_node_id, node_output) in &state_snapshot {
+        if let Some(mw) = node_output.get("__memory_write") {
+            if let Ok(data) = serde_json::from_value::<HashMap<String, Value>>(mw.clone()) {
+                write_data.extend(data);
+            }
+        }
+    }
+
+    if write_data.is_empty() {
+        return;
+    }
+
+    match mem_spec.persist {
+        MemoryPersistMode::None => {
+            // No-op
+        }
+        MemoryPersistMode::Cycle => {
+            app_state
+                .memory_store
+                .set_cycle_memory(agent_id, write_data, &mem_spec.keys)
+                .await;
+        }
+        MemoryPersistMode::Execution => {
+            app_state
+                .memory_store
+                .set_execution_memory(agent_id, write_data, &mem_spec.keys)
+                .await;
+        }
+    }
 }
 
 /// RAG search — chunk documents, embed with real LLM, search by cosine similarity.

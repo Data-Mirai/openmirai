@@ -27,8 +27,9 @@ pub mod vault;
 
 // Re-export core types explicitly (no glob).
 pub use crate::core::agent_spec::{
-    AgentConfig, AgentEdgeSpec, AgentGraphSpec, AgentHookSpec, AgentMcpServerSpec, AgentNodeSpec,
-    AgentResourceRef, AgentRetryConfig, AgentSpec, AgentSpecError, AgentTriggerSpec, AgentType,
+    AgentConfig, AgentEdgeSpec, AgentGraphSpec, AgentHookSpec, AgentMcpServerSpec, AgentMemorySpec,
+    AgentNodeSpec, AgentResourceRef, AgentRetryConfig, AgentScheduleSpec, AgentSpec, AgentSpecError,
+    AgentTriggerSpec, AgentType, CycleErrorMode, MemoryPersistMode,
 };
 pub use crate::core::auth::{AuthError, Permission, PermissionEvaluator, Resource, SingleUserAuth};
 pub use crate::core::context::{
@@ -67,7 +68,9 @@ pub use crate::db::{
 };
 
 // Re-export runtime types.
-pub use crate::runtime::{AgentRuntime, RuntimeAgentRecord, RuntimeAgentStatus, RuntimeError, Scheduler};
+pub use crate::runtime::{
+    AgentMemoryStore, AgentRuntime, RuntimeAgentRecord, RuntimeAgentStatus, RuntimeError, Scheduler,
+};
 
 // Re-export adapter types (formerly "resources").
 pub use crate::adapters::{

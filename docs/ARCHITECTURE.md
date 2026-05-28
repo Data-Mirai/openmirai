@@ -1,274 +1,218 @@
-# Data Mirai Engine — Arquitectura
+# Data Mirai Engine — Architecture
 
 ## 1. Stack
 
-| Capa | Tecnologia | Version |
+| Layer | Technology | Version |
 |---|---|---|
-| Core/Runtime | Python | 3.12+ |
-| Web framework | FastAPI | latest |
-| Editor frontend | Next.js + TypeScript + React Flow | Next.js 15 |
-| Base de datos | PostgreSQL + pgvector | PG 16+ |
-| Storage | S3-compatible (MinIO self-hosted, R2 cloud, cualquier S3) | — |
-| LLM | Model-agnostic (cualquier provider via interfaces) | — |
+| Core / Runtime | Rust | 2021 edition |
+| HTTP Server | Axum + Tower | 0.8 |
+| Database | SQLite (rusqlite, bundled) | 0.35 |
+| Vector Search | SQLite FTS5 | built-in |
+| LLM | 7 providers via trait adapters | — |
+| Agent Specs | YAML-only (serde_yaml) | — |
+| SDK | Python (datamirai) | 3.10+ |
 
-## 2. Distribución
+## 2. Distribution
 
-Un solo artefacto PyPI: `datamirai-engine`
+Single compiled binary: `mirai`
 
-| Modo | Comando / Uso | Incluye |
+| Mode | Usage | What it includes |
 |---|---|---|
-| **Standalone** | `pip install datamirai-engine && datamirai serve` o Docker | Editor (UI pre-built) + Runtime + API |
-| **Embebido** | `from datamirai_engine import GraphRunner` + opcionalmente `app.mount("/datamirai", editor_app)` | SDK Python + editor montable |
-| **Cloud** (datamirai-cloud) | Dep interna del producto cloud | Engine como librería, cloud agrega orquestación |
+| **CLI** | `mirai run agent.yaml` | Execute agents from terminal |
+| **Server** | `mirai serve --port 3000` | HTTP API with SSE streaming |
+| **Library** | `cargo add datamirai-engine` | Embeddable Rust crate |
+| **Python SDK** | `pip install datamirai` | Thin wrapper over HTTP API or CLI |
 
-Frontend Next.js se compila a static assets en build time → FastAPI los sirve. Un solo proceso.
+No Docker, no Node.js, no Python runtime required for the engine itself. One binary, any platform.
 
-## 3. Recursos — Interfaces agnósticas
+## 3. Module Architecture
 
-ExecutionContext define contratos abstractos. Quién inyecta credenciales depende del modo:
+```
+engine/src/
+  core/                  # Heart of the engine
+    runner/              # GraphRunner — DAG traversal with hooks, retry, fan-out
+      graph_runner.rs    # Main execution loop (run_from + 10 submethods)
+      types.rs           # ExecutionResult, TraceEntry, RetryPolicy, etc.
+      traits.rs          # HookHandler, CheckpointCallback, ToolExecutor
+      helpers.rs         # Timestamps, hook timeouts
+    agent_spec.rs        # YAML parsing, validation, input/output contracts
+    graph.rs             # GraphDef, NodeDef, EdgeDef, conditions
+    context.rs           # ExecutionContext trait (ports for DB, LLM, Storage, Vector)
+    state.rs             # ExecutionState — thread-safe shared state
+    schema.rs            # Table schema definitions
+    auth.rs              # RBAC permission matrix
+    events.rs            # Event emission (broadcast channels)
+    value_type.rs        # Unified ValueType enum
+    well_known.rs        # Named constants (zero magic strings)
 
-| Recurso | Interfaz | Self-hosted | Cloud |
-|---|---|---|---|
-| DB relacional | `context.db` | User configura connection string | Auto-provisioned por ambiente |
-| DB vectorial | `context.vector` | User configura pgvector | Auto-provisioned |
-| Storage | `context.storage` | User configura S3 endpoint | R2/GCS auto-provisioned |
-| LLM | `context.llm` | User configura API keys | Keys del tenant |
-| Auth | `context.auth` | User implementa | Gestionado por cloud |
+  adapters/              # Concrete implementations (hexagonal architecture)
+    adapter_bridge.rs    # LLMAdapter → LLMResource bridge
+    context.rs           # DefaultExecutionContext (builder pattern)
+    sqlite_db.rs         # SQLite DBResource
+    ollama_llm.rs        # Ollama LLMResource
+    mock_llm.rs          # Mock for tests only
+    in_memory_db.rs      # In-memory DBResource
+    in_memory_storage.rs # In-memory StorageResource
+    local_storage.rs     # Filesystem StorageResource
+    simple_vector.rs     # SQLite FTS5 VectorResource
 
-Modelo híbrido (cloud hostea agentes, user tiene recursos externos) → API bridge con credenciales configuradas manualmente desde UI cloud.
+  llm/                   # LLM provider adapters
+    adapter.rs           # LLMAdapter trait + NormalizedResponse
+    error.rs             # Shared error mapping
+    claude.rs            # Anthropic Claude
+    gemini.rs            # Google Gemini
+    ollama.rs            # Local Ollama
+    openai_compat.rs     # OpenAI-compatible (base for Groq, NVIDIA, OpenRouter)
+    groq.rs              # Groq (thin wrapper)
+    nvidia.rs            # NVIDIA NIM (thin wrapper)
+    openrouter.rs        # OpenRouter (thin wrapper)
 
-## 4. Convenciones
+  tools/                 # Tool system
+    base.rs              # ToolSpec, ToolField, FieldType, validation
+    registry.rs          # ToolRegistry + RegistryExecutor
+    builtin/
+      ai/                # llm_call, embeddings, transcribe
+      data/              # db_read, db_write, storage_*, vault_*, web_scrape, rag_search
+      filesystem/        # read_file, write_file, edit_file, glob, grep, tree, etc.
+      logic/             # condition, switch, loop, merge, wait, human_input, deadline
+      system/            # bash, process_list, sandbox_exec
+      git/               # status, diff, log, commit
+      output/            # response
+      agent/             # run_agent (sub-agent execution)
+      trigger/           # webhook, manual, schedule, event, heartbeat
+      mcp/               # MCP protocol calls
 
-### Nombrado
+  server/                # HTTP API (feature-gated: optional)
+    mod.rs               # Router, serve(), auth middleware, graceful shutdown
+    state.rs             # AppState, LLMFactory, request/response types
+    handlers.rs          # All HTTP endpoint handlers
+    helpers.rs           # Agent execution helpers, RAG search
+    tests.rs             # API integration tests
 
-| Contexto | Convención |
+  intelligence/          # AI-powered meta-features
+    context_compiler.rs  # 5-phase prompt assembly
+    reflector.rs         # LLM-powered trace analysis
+    suggester.rs         # Graph improvement suggestions
+    memory_flusher.rs    # Auto-persist before context compression
+    playbook.rs          # Rule-based prompt injection
+    tracer.rs            # Passive execution tracing
+
+  memory/                # Short-term + long-term memory
+  energy/                # Cost tracking per operation
+  search/                # Hybrid vector + FTS search
+  render/                # Markdown → HTML + Chart.js
+  mcp/                   # Model Context Protocol client
+  vault/                 # Markdown note vault with frontmatter
+  runtime/               # AgentRuntime + Scheduler
+  triggers/              # Trigger type definitions
+
+  soul.rs                # SOUL.md personality system
+  universe.rs            # Multi-agent routing (keyword, round-robin, LLM, explicit)
+  security.rs            # Prompt injection scanner
+  sandbox.rs             # Code execution sandbox
+  streaming.rs           # SSE event types
+  templates.rs           # 10 pre-built agent templates
+  observability.rs       # Trace spans + metrics
+  eval.rs                # Evaluation framework (format, latency, LLM-as-judge)
+  benchmark.rs           # JSONL benchmark logging
+  rag.rs                 # RAG pipeline with chunking strategies
+```
+
+## 4. Two-Layer LLM Architecture
+
+```
+LLMAdapter (llm/adapter.rs)              LLMResource (core/context.rs)
+├── Provider-specific HTTP details       ├── Simplified domain interface
+├── Messages + tool calling              ├── Prompt-in, response-out
+├── Streaming support                    ├── Embeddings
+├── Model listing                        └── Used by tools + runner
+└── Implemented per-provider
+          │
+          └── AdapterBridgeLLMResource (adapters/adapter_bridge.rs)
+              bridges LLMAdapter → LLMResource
+```
+
+LLMAdapter = infrastructure (how to talk to a provider).
+LLMResource = domain (what a tool needs to call an LLM).
+Separate concerns — adding a provider never touches the execution engine.
+
+## 5. Resource Interfaces (Ports)
+
+ExecutionContext provides abstract access to resources:
+
+| Resource | Trait | Adapters |
+|---|---|---|
+| Relational DB | `DBResource` | SqliteDBResource, InMemoryDBResource |
+| LLM | `LLMResource` | AdapterBridgeLLMResource, OllamaLLMResource, MockLLMResource |
+| Object Storage | `StorageResource` | LocalStorageResource, InMemoryStorageResource |
+| Vector Search | `VectorResource` | SimpleVectorResource (SQLite FTS5) |
+
+## 6. Naming Conventions
+
+| Context | Convention |
 |---|---|
-| Archivos Python | snake_case |
-| Archivos TS/React componentes | PascalCase |
-| Archivos TS/React utils/hooks | camelCase |
-| Funciones Python | snake_case |
-| Funciones TS | camelCase |
-| Clases (ambos) | PascalCase |
-| Herramientas (tool_type) | `categoria/nombre_snake` |
+| Rust files | snake_case |
+| Rust structs/enums | PascalCase |
+| Rust functions | snake_case |
+| Tool types | `category/tool_name` (e.g., `ai/llm_call`, `filesystem/read_file`) |
+| Agent specs | YAML-only, `.yaml` or `.yml` extension |
+| Comparison operators | Full words recommended: `equals`, `greater_than`, `contains` |
 
-### Estructura del repo
+## 7. Testing
 
-```
-datamirai-engine/
-  framework/
-    src/datamirai_engine/        # Paquete Python principal (PyPI)
-      core/                    # GraphDef, GraphRunner, SharedState, ExecutionContext
-      tools/                   # ToolSpec, ToolRegistry, builtin/
-      triggers/                # webhook, schedule, event, manual
-      memory/                  # short_term, long_term
-      runtime/                 # AgentRuntime, Scheduler
-      resources/               # Interfaces agnósticas
-    tests/                     # pytest (framework)
-    pyproject.toml
-  app/                         # App local (usa framework como dep)
-    server/                    # FastAPI + SQLite persistence
-    web/                       # Next.js 15 + React Flow
-    e2e/                       # Playwright E2E tests
-  docs/
-  docker-compose.yml
-```
-
-## 5. Testing
-
-| Tipo | Herramienta | Scope |
+| Type | Tool | Count |
 |---|---|---|
-| Unit + Integration (Python) | pytest | core, blocks, triggers, memory |
-| Unit (Frontend) | vitest | editor components, hooks |
-| E2E (UI) | Playwright | editor visual, flujos completos |
+| Unit + Integration | `cargo test` | 665 tests |
 
-## 6. Linting y Formato
+All tests run with `cargo test`. No external services required (SQLite bundled, mocks for LLM in test-only code).
 
-| Lenguaje | Herramienta |
-|---|---|
-| Python | ruff (lint + format) |
-| TypeScript | eslint + prettier |
+Rule: **Mocks only in `#[cfg(test)]` unit tests.** Server, CLI, and integration paths use real implementations.
 
-## 7. Gestión de dependencias
+## 8. HTTP API
 
-| Lenguaje | Herramienta |
-|---|---|
-| Python | pyproject.toml (pip / uv compatible) |
-| Frontend | npm + package.json |
+Base URL: `/api/v1/`
 
-## 8. Relación con datamirai-cloud
-
-Engine = core open source. Cloud = producto privado que lo consume como dependencia.
-
-```
-datamirai-engine (público/PyPI)       datamirai-cloud (privado)
-┌─────────────────────────┐         ┌────────────────────────────────┐
-│ Motor de grafos          │         │ Control Plane (UI + billing)   │
-│ Sistema de bloques       │◄────────│ K8s Operator (provisioning)    │
-│ Editor visual            │  usa    │ Ambientes (dev/staging/prod)   │
-│ Runtime + triggers       │         │ Auto-conexión a providers      │
-│ Memoria                  │         │ Multi-tenancy                  │
-│ Interfaces de recursos   │         │ Temporal (durabilidad)         │
-│ Server (FastAPI)         │         │ Marketplace de bloques         │
-└─────────────────────────┘         └────────────────────────────────┘
-```
-
-Cloud no forkea engine → lo instala como dep. Diferencia = quién orquesta y quién inyecta recursos.
-
-## 9. Real-time — WebSocket + EventBus
-
-La app local opera en modo **full real-time**: toda mutación de datos se refleja instantáneamente en el frontend via WebSocket. No hay polling ni fetch-on-demand como patrón primario.
-
-### Transporte
-
-Un solo WebSocket por sesión de browser:
-
-```
-ws://localhost:8000/ws
-```
-
-Protocolo de mensajes (JSON):
-
-| Dirección | Tipo | Ejemplo |
+| Endpoint | Method | Description |
 |---|---|---|
-| Cliente → Server | `subscribe` | `{"action": "subscribe", "channel": "resources:env-123"}` |
-| Cliente → Server | `unsubscribe` | `{"action": "unsubscribe", "channel": "resources:env-123"}` |
-| Server → Cliente | `event` | `{"channel": "resources:env-123", "event": "created", "payload": {...}}` |
-| Server → Cliente | `ping` | `{"type": "ping"}` |
-| Cliente → Server | `pong` | `{"type": "pong"}` |
+| `/health` | GET | Health check (no auth) |
+| `/version` | GET | Version info (no auth) |
+| `/api/v1/agents` | GET, POST | List / create agents |
+| `/api/v1/agents/from-spec` | POST | Create agent from YAML spec |
+| `/api/v1/agents/{id}/execute` | POST | Execute agent (sync) |
+| `/api/v1/agents/{id}/stream` | POST | Execute agent (SSE streaming) |
+| `/api/v1/agents/{id}/spec` | GET | Get agent spec |
+| `/api/v1/agents/{id}/schema` | GET | Get input/output schema |
+| `/api/v1/graphs` | GET, POST | List / create graphs |
+| `/api/v1/graphs/{id}` | GET, DELETE | Get / delete graph |
+| `/api/v1/sessions` | GET | List sessions |
+| `/api/v1/sessions/{id}` | GET | Get session result |
+| `/api/v1/tools` | GET | List registered tools |
+| `/api/v1/templates` | GET | List agent templates |
+| `/api/v1/rag/search` | POST | RAG search with embeddings |
+| `/api/v1/eval` | POST | Evaluate session with LLM judge |
+| `/api/v1/universe/message` | POST | Route message to agent |
+| `/api/v1/universe/groupchat` | POST | Multi-agent debate |
+| `/api/v1/metrics` | GET | Server metrics |
+| `/webhooks/{path}` | POST | Webhook receiver |
 
-Heartbeat: server envía `ping` cada 30s. Cliente responde `pong`. Sin respuesta en 60s → server cierra conexión.
+Authentication: `X-API-Key` header (optional, configured via `MIRAI_API_KEY`).
 
-### EventBus
+## 9. Relation to Ecosystem
 
-Extiende `EventEmitter` (framework) con canales por entidad:
-
-| Canal | Eventos | Scope |
-|---|---|---|
-| `universes` | created, deleted | Global |
-| `environments:{universe_id}` | created, deleted, provisioned | Por universe |
-| `resources:{env_id}` | created, updated, deleted, tested, status_changed | Por environment |
-| `graphs:{env_id}` | created, updated | Por environment |
-| `agents:{env_id}` | created, updated, deleted, published, rolled_back | Por environment |
-| `sessions:{agent_id}` | created, status_changed | Por agent |
-| `session:{id}:events` | block.started, block.completed, block.error, session.completed, session.failed, session.interrupted, checkpoint.created, interrupt.created, interrupt.resolved | Por session |
-| `providers` | created, updated, deleted | Global |
-| `vaults` | created, deleted | Global |
-| `credentials:{vault_id}` | created, updated, deleted | Por vault |
-| `config` | updated | Global |
-| `memory:{agent_id}` | created, deleted | Por agent |
-
-### Convención obligatoria
-
-**Toda operación de escritura en un repositorio de database.py DEBE emitir un evento al EventBus.** Patrón:
-
-```python
-# En el endpoint o servicio, después de la mutación DB:
-await event_bus.emit(channel="resources:env-123", event="created", payload={...})
+```
+datamirai-engine (open source, MIT)     Mirai Local (free desktop app)
+┌──────────────────────────────┐       ┌─────────────────────────────┐
+│ Graph execution engine        │       │ Implements Engine            │
+│ 48+ built-in tools            │◄──────│ Desktop UI for agents        │
+│ 7 LLM providers              │  uses │ Local-first, no cloud needed │
+│ HTTP API + CLI                │       └─────────────────────────────┘
+│ YAML agent specs              │
+│ Soul + Universe               │       Mirai Cloud (paid SaaS)
+│ Memory + Energy tracking      │       ┌─────────────────────────────┐
+│ MCP + Security + Sandbox      │       │ Implements Engine            │
+└──────────────────────────────┘       │ 24/7 infrastructure          │
+                                        │ Auto-scaling, multi-tenant   │
+                                        └─────────────────────────────┘
 ```
 
-Nunca mutar la DB sin emitir. Si se agrega un nuevo endpoint con escritura, agregar emisión correspondiente.
-
-### Migración de SSE
-
-El endpoint SSE (`GET /api/sessions/{id}/stream`) queda **deprecado**. Las sesiones de ejecución se consumen via el canal `session:{id}:events` del WebSocket. Los mismos event types, mismo payload, distinto transporte.
-
-## 10. Frontend — Patrón reactivo
-
-### WebSocketManager
-
-Singleton que vive en `layout.tsx` como Context provider. Responsabilidades:
-
-- Mantener conexión WebSocket
-- Reconexión automática con exponential backoff (1s → 2s → 4s → 8s → 16s, max 5 intentos)
-- Registro de suscripciones activas por canal
-- Re-suscripción automática tras reconexión
-- Estado de conexión observable: `connected | connecting | reconnecting | disconnected`
-
-### Hook useReactive
-
-Patrón estándar para consumir datos reactivos:
-
-```typescript
-const { data, loading, error } = useReactive<Resource[]>(
-  "/api/environments/{envId}/resources",  // endpoint para fetch inicial
-  `resources:${envId}`,                    // canal WebSocket
-);
-```
-
-Comportamiento:
-1. **Mount**: fetch inicial al endpoint REST
-2. **Suscribe**: se registra al canal WebSocket
-3. **Evento llega**: re-fetch automático (estrategia de invalidación)
-4. **Unmount**: unsuscribe del canal
-
-Estrategia de invalidación (no delta): cuando llega un evento del canal, el hook hace re-fetch completo al endpoint REST. Simple, robusto, suficiente para latencia local (< 1ms).
-
-### Convención obligatoria
-
-**Toda página que muestra datos del backend DEBE usar `useReactive` en vez de `fetch` + `useState` directo.** Esto garantiza que los datos se actualicen automáticamente sin polling ni recarga manual.
-
-Excepciones permitidas:
-- Datos estáticos que no cambian (tool catalog, resource schemas)
-- Acciones one-shot (test connection, generate graph)
-
-### Loading & feedback
-
-- **Carga inicial**: skeleton con shimmer (obligatorio, nunca pantalla en blanco)
-- **Eventos de background**: toast automático para creaciones, eliminaciones y errores
-- **Indicador de conexión**: dot en el header que refleja estado del WebSocketManager
-
-## 11. Motion & Live UI
-
-### Stack de animación
-
-| Necesidad | Tecnología |
-|---|---|
-| Layout animations, stagger, enter/exit | Motion (Framer Motion) |
-| Glows, pulses, shimmer | CSS keyframes (globals.css) |
-| Edge particles | SVG `animateMotion` |
-| Counters numéricos | Motion AnimateNumber |
-| Toasts | Sonner o custom con Motion |
-
-### Convención: sin cambios abruptos
-
-**Toda transición de estado visible DEBE usar animación.** Nunca un elemento aparece/desaparece/cambia sin transición. Duración estándar:
-
-| Tipo | Duración | Easing |
-|---|---|---|
-| Micro-interacción (hover, press) | 100-150ms | ease-out |
-| Transición de estado (badge, dot) | 200-300ms | ease-in-out |
-| Panel slide (entrada/salida) | 300-400ms | ease-in-out |
-| Stagger entre items | 50-100ms delay | ease-out |
-| Glow/pulse loop | 2-3s | ease-in-out, infinite |
-
-### Estados de nodo en ejecución
-
-| Estado | Visual | Animación |
-|---|---|---|
-| idle | Border `var(--line-2)`, sin animación | — |
-| queued | Border dashed, opacity pulse | `animate-pulse` 2s |
-| running | Border gradient violeta→cyan, glow expandiéndose | `glow-pulse` 2s infinite |
-| completed | Border verde, badge checkmark | Flash verde 0.6s + badge pop 0.35s |
-| failed | Border rojo, badge X, shake | Shake 0.4s + glow rojo 0.6s |
-| retrying | Border amarillo, spinner | Rotate 0.8s infinite |
-| waiting-for-input | Border cyan, icono pausa | Pulse lento 3s infinite |
-
-### Edges durante ejecución
-
-- **Activo**: partículas (dots 4-6px con glow) viajando por el path SVG via `animateMotion`, 2s por traversal
-- **Completado**: stroke verde sólido, sin animación
-- **Fallido**: stroke rojo sólido
-- **Inactivo**: stroke gris, opacity 0.08
-
-### Contadores en vivo
-
-- Tokens y costo: `AnimateNumber` con spring physics (stiffness: 100, damping: 15)
-- Duración: timer ticking cada 100ms, colon parpadeante (1s interval)
-- Flash de actualización: background `rgba(34, 197, 94, 0.3)` que fade a transparent en 500ms
-
-### Feed de eventos
-
-- Cada evento entra con slide-in desde izquierda: `x: -20 → 0, opacity: 0 → 1`
-- Stagger: 100ms entre items consecutivos
-- Auto-scroll suave al bottom (pausa si usuario scrollea arriba)
-- Eventos recientes en color completo, viejos fade a `var(--fg-3)`
+Engine is the core. Local and Cloud consume it as a dependency.

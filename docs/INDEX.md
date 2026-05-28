@@ -1,54 +1,44 @@
-<!--
-BLUEPRINT SEED — INDEX.md
-Responsable: → blueprint/agents/00-WORKBOARD.md
+# Data Mirai Engine — Documentation Index
 
-Estructura esperada:
-1. Overview del producto (máximo 1 párrafo)
-2. Stack tecnológico (referencia breve a ARCHITECTURE.md)
-3. Mapa de documentación (tabla con ruta a cada archivo)
-4. Decisiones arquitectónicas clave (solo enlaces a ARCHITECTURE.md o memory/decisions.md)
-5. PRDs (índice con enlaces a prd/backlog y prd/vX.X.X)
+## 1. Overview
 
-Reglas:
-- Es un mapa de navegación, no repositorio de información
-- No duplicar contenido. Solo apuntar
-- Se actualiza cuando nace un PRD nuevo o cuando cambia el mapa de docs
--->
+Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 48+ built-in tools, 665 tests. Alternative to LangGraph, CrewAI, and Google ADK.
 
-# INDEX.md
+## 2. Stack
 
-## 1. Overview del Producto
+Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARCHITECTURE.md](ARCHITECTURE.md)
 
-> _[Por completar — `/init` lo llena]_
-> Qué es, qué problema resuelve, para quién. Máximo 1 párrafo.
+## 3. Documentation Map
 
-## 2. Stack Tecnológico
-
-> _[Por completar]_ Referencia breve. Detalles completos en → ARCHITECTURE.md.
-
-## 3. Mapa de Documentación
-
-| Archivo | Descripción | Ruta |
+| Document | Description | Path |
 |---|---|---|
-| DOMINIO.md | Roles, capabilities, glosario | producto/DOMINIO.md |
-| FLUJOS.md | Flujos de negocio, máquinas de estado, reglas | producto/FLUJOS.md |
-| SCHEMA.md | Esquema de base de datos, entidades, enums, RLS | database/SCHEMA.md |
-| STORAGE.md | Buckets de storage y políticas | database/STORAGE.md |
-| API.md | Endpoints REST, guards, contratos | backend/API.md |
-| PRIMITIVES.md | Catálogo de services/hooks/utils reutilizables | backend/PRIMITIVES.md |
-| PANTALLAS.md | Pantallas, rutas, estados UI | frontend/PANTALLAS.md |
-| COMPONENTS.md | Catálogo de componentes UI (compuestos + átomos) | frontend/COMPONENTS.md |
-| DESIGN-GUIDE.md | Tokens de diseño y variantes visuales | frontend/DESIGN-GUIDE.md |
-| INFRA.md | Infraestructura, ambientes, deploy | infra/INFRA.md |
-| ARCHITECTURE.md | Stack, patrones, convenciones | ARCHITECTURE.md |
-| TESTS.md | Escenarios GWT con test_id | TESTS.md |
+| ARCHITECTURE.md | Stack, modules, conventions, API reference | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| DOMINIO.md | Domain concepts: agents, souls, universes | [producto/DOMINIO.md](producto/DOMINIO.md) |
+| FLUJOS.md | Execution flows, state machines | [producto/FLUJOS.md](producto/FLUJOS.md) |
+| SCHEMA.md | SQLite schemas, migrations | [database/SCHEMA.md](database/SCHEMA.md) |
+| API.md | HTTP API endpoints and contracts | [backend/API.md](backend/API.md) |
+| PRIMITIVES.md | Reusable code patterns | [backend/PRIMITIVES.md](backend/PRIMITIVES.md) |
+| TESTS.md | Test scenarios | [TESTS.md](TESTS.md) |
+| GAPS.md | Feature gap tracking | [GAPS.md](GAPS.md) |
+| ROADMAP-PARITY.md | Competitive parity analysis | [ROADMAP-PARITY.md](ROADMAP-PARITY.md) |
 
-## 4. Decisiones Arquitectónicas Clave
+## 4. Key Decisions
 
-> _[Por completar — se pobla a medida que se toman decisiones]_
-> Formato: `[YYYY-MM-DD] Decisión — Razón.` Detalles en memory/decisions.md.
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-27 | Rust rewrite (from Python) | Single binary, portable, 10x performance |
+| 2026-05-27 | YAML-only agent specs | Readability over flexibility (like Azure DevOps pipelines) |
+| 2026-05-27 | Two-layer LLM (Adapter + Resource) | Separate provider HTTP details from domain interface |
+| 2026-05-27 | Hexagonal architecture (adapters/) | Clean ports/adapters separation |
+| 2026-05-27 | Zero silent failures | Every error propagated or logged at error level |
 
 ## 5. PRDs
 
-> _[Por completar — se pobla al crear PRDs]_
-> Lista con links a prd/backlog/ y prd/vX.X.X/.
+| PRD | Status | Description |
+|---|---|---|
+| PRD-001 | done (v0.3.0) | Base engine — 23 features, 636 tests |
+| PRD-004 | done (v0.3.0) | Agent Contract — Input/Output Schema |
+| PRD-006 | done (v0.4.x) | Apple-Grade Refinement — 20 sections |
+| PRD-002 | backlog | — |
+| PRD-003 | backlog | — |
+| PRD-005 | backlog | Complete real integrations |

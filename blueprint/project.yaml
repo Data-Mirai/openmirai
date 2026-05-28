@@ -1,5 +1,7 @@
-# Blueprint — config del proyecto
+# Blueprint — project config
 project:
   name: Engine
   language: es
-  description: "_[Por completar]_ descripción breve del proyecto."
+  description: "Open-source agentic graph execution engine. Rust binary, YAML agents, 7 LLM providers."
+  version: "0.4.2"
+  stack: rust

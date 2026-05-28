@@ -1,6 +1,6 @@
 [package]
 name = "datamirai-cli"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 description = "Interactive CLI for Data Mirai Engine"
 license = "MIT"

@@ -4,6 +4,18 @@ All notable changes to datamirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.4.4 (2026-05-28)
+
+### Added
+- **`ai/claude_code` tool**: Native Claude Code CLI integration. Spawns `claude -p` as child process, sends prompt via stdin, reads response from stdout. Zero API keys — uses user's existing Claude subscription (Max/Pro). Config: timeout_ms, max_tokens, system_prompt, model, cli_path.
+- Auto-detects `claude` binary in $PATH. Clear error if not installed.
+- 49 tools total (was 48).
+
+### Consumer action
+- None — new tool, no breaking changes. Use `tool_type: ai/claude_code` in agent YAML.
+
+---
+
 ## v0.4.3 (2026-05-28)
 
 ### Fixed

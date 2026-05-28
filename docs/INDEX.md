@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 48+ built-in tools, 665 tests. Alternative to LangGraph, CrewAI, and Google ADK.
+Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 48+ built-in tools, 7 LLM providers, 665 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.4.3.
 
 ## 2. Stack
 
@@ -13,8 +13,8 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | Document | Description | Path |
 |---|---|---|
 | ARCHITECTURE.md | Stack, modules, conventions, API reference | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| DOMINIO.md | Domain concepts: agents, souls, universes | [producto/DOMINIO.md](producto/DOMINIO.md) |
-| FLUJOS.md | Execution flows, state machines | [producto/FLUJOS.md](producto/FLUJOS.md) |
+| DOMINIO.md | Domain glossary, roles, capabilities | [producto/DOMINIO.md](producto/DOMINIO.md) |
+| FLUJOS.md | Execution flows, state machines, business rules | [producto/FLUJOS.md](producto/FLUJOS.md) |
 | SCHEMA.md | SQLite schemas, migrations | [database/SCHEMA.md](database/SCHEMA.md) |
 | API.md | HTTP API endpoints and contracts | [backend/API.md](backend/API.md) |
 | PRIMITIVES.md | Reusable code patterns | [backend/PRIMITIVES.md](backend/PRIMITIVES.md) |

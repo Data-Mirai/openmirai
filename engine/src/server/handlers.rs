@@ -22,7 +22,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
 
     Json(json!({
         "status": "ok",
-        "version": "0.4.3",
+        "version": "0.4.4",
         "engine": "datamirai-engine-rs",
         "uptime_seconds": uptime_secs,
         "agents_loaded": agents_count,
@@ -33,7 +33,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
 
 pub(crate) async fn version() -> Json<Value> {
     Json(json!({
-        "version": "0.4.3",
+        "version": "0.4.4",
         "engine": "datamirai-engine-rs"
     }))
 }

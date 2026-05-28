@@ -1,0 +1,37 @@
+# Test: ai/claude_code — native Claude Code CLI integration
+#
+# Run: mirai run test/test_claude_code.yaml --provider mock --input '{"question": "What is 2+2?"}'
+#
+# This uses the locally installed Claude Code CLI (claude -p).
+# No API key needed — uses user's existing Claude subscription.
+
+name: test-claude-code
+version: v1
+
+inputs:
+  question:
+    type: text
+    required: true
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: think
+      tool_type: ai/claude_code
+      config:
+        timeout_ms: 30000
+        system_prompt: "Answer concisely in one sentence."
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: trigger
+      target: think
+      data_map:
+        prompt: "trigger.user_input.question"
+
+    - source: think
+      target: respond

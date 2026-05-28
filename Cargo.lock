@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "datamirai-cli"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "crossterm",
  "datamirai-engine",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "datamirai-engine"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "async-trait",
  "axum",

@@ -50,9 +50,15 @@ git push origin main --tags
 
 ## Releases existentes
 
-| Versión | Fecha | Binary | Notas |
+| Version | Fecha | Binary | Notas |
 |---------|-------|--------|-------|
-| v0.1.0 | 2026-05-27 | `releases/v0.1.0/mirai-v0.1.0-darwin-arm64` | First public release. 23 features, 47 tools, 636 tests. |
+| v0.4.3 | 2026-05-28 | `releases/v0.4.3/` | Fix: MCP client hang (notifications/initialized blocking) |
+| v0.4.2 | 2026-05-27 | `releases/v0.4.2/` | YAML-only specs, full-word comparison operators |
+| v0.4.1 | 2026-05-27 | `releases/v0.4.1/` | Fix: to_graph() dropped edge conditions. 8 new tests. |
+| v0.4.0 | 2026-05-27 | `releases/v0.4.0/` | BREAKING: /api/v1/, auth, graceful shutdown, refactor masivo. 665 tests. |
+| v0.3.1 | 2026-05-27 | `releases/v0.3.1/` | PRD-004: Agent contracts. PRD-005: CLI eval + rag. |
+| v0.2.0 | 2026-05-27 | `releases/v0.2.0/` | Feature improvements |
+| v0.1.0 | 2026-05-27 | `releases/v0.1.0/` | First public release. 23 features, 47 tools, 636 tests. |
 
 ## Consumidores
 

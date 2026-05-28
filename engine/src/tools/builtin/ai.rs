@@ -751,11 +751,218 @@ impl Tool for TranscribeTool {
 // Registration helper
 // ---------------------------------------------------------------------------
 
+// ===========================================================================
+// ClaudeCodeTool — native Claude Code CLI integration
+// ===========================================================================
+
+ai_tool! {
+    struct ClaudeCodeTool, factory ClaudeCodeFactory;
+    tool_type = "ai/claude_code",
+    name = "Claude Code CLI",
+    description = "Execute a prompt via the locally installed Claude Code CLI (claude -p). Uses the user's existing Claude subscription (Max/Pro). No API key required.",
+    inputs = [
+        field("prompt", FieldType::String, true, "The prompt to send to Claude"),
+        field("context", FieldType::String, false, "Additional context prepended to the prompt"),
+    ],
+    outputs = [
+        field("response", FieldType::String, true, "Claude's response text"),
+        field("model", FieldType::String, false, "Model used"),
+        field("duration_ms", FieldType::Number, true, "Execution time in milliseconds"),
+        field("tokens_input", FieldType::Number, false, "Estimated input tokens (prompt length / 4)"),
+        field("tokens_output", FieldType::Number, false, "Estimated output tokens (response length / 4)"),
+    ],
+    config_fields = [
+        field("timeout_ms", FieldType::Number, false, "Timeout in ms (default: 60000)"),
+        field("max_tokens", FieldType::Number, false, "Max tokens flag passed to claude CLI"),
+        field("system_prompt", FieldType::String, false, "System prompt prepended to the user prompt"),
+        field("model", FieldType::String, false, "Model override (e.g. claude-sonnet-4-20250514)"),
+        field("cli_path", FieldType::String, false, "Override path to claude binary (default: auto-detect from $PATH)"),
+    ]
+}
+
+#[async_trait]
+impl Tool for ClaudeCodeTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
+        _context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        use std::time::Instant;
+        use tokio::process::Command;
+
+        let prompt = inputs.get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if prompt.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/claude_code".into(),
+                message: "prompt is required and cannot be empty".into(),
+            });
+        }
+
+        let context = inputs.get("context")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let system_prompt = config.get("system_prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let timeout_ms = config.get("timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60_000);
+
+        let max_tokens = config.get("max_tokens")
+            .and_then(|v| v.as_u64());
+
+        let model = config.get("model")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let cli_path = config.get("cli_path")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Detect Claude CLI binary.
+        let claude_bin = if let Some(path) = cli_path {
+            path
+        } else {
+            detect_claude_cli().map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "ai/claude_code".into(),
+                message: e,
+            })?
+        };
+
+        // Build args.
+        let mut args = vec!["-p".to_string()];
+        if let Some(ref m) = model {
+            args.extend(["--model".to_string(), m.clone()]);
+        }
+        if let Some(max) = max_tokens {
+            args.extend(["--max-tokens".to_string(), max.to_string()]);
+        }
+
+        // Build full prompt: system_prompt + context + prompt.
+        let mut full_prompt = String::new();
+        if !system_prompt.is_empty() {
+            full_prompt.push_str(&system_prompt);
+            full_prompt.push_str("\n\n");
+        }
+        if !context.is_empty() {
+            full_prompt.push_str(&context);
+            full_prompt.push_str("\n\n");
+        }
+        full_prompt.push_str(&prompt);
+
+        // Spawn process.
+        let start = Instant::now();
+
+        let mut child = Command::new(&claude_bin)
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "ai/claude_code".into(),
+                message: format!("failed to spawn '{}': {}", claude_bin, e),
+            })?;
+
+        // Write prompt to stdin, then close it.
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(full_prompt.as_bytes()).await;
+            let _ = stdin.flush().await;
+            drop(stdin);
+        }
+
+        // Wait for output with timeout.
+        let timeout_dur = std::time::Duration::from_millis(timeout_ms);
+        let output = match tokio::time::timeout(timeout_dur, child.wait_with_output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/claude_code".into(),
+                    message: format!("process error: {}", e),
+                });
+            }
+            Err(_) => {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/claude_code".into(),
+                    message: format!("claude CLI timed out after {}ms", timeout_ms),
+                });
+            }
+        };
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/claude_code".into(),
+                message: format!("claude CLI exited with {}: {}", output.status, stderr.trim()),
+            });
+        }
+
+        let response = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Estimate tokens (rough: 1 token ≈ 4 chars).
+        let tokens_in = (full_prompt.len() / 4) as u64;
+        let tokens_out = (response.len() / 4) as u64;
+
+        let mut out = HashMap::new();
+        out.insert("response".to_string(), json!(response));
+        out.insert("model".to_string(), json!(model.unwrap_or_else(|| "claude-cli-default".into())));
+        out.insert("duration_ms".to_string(), json!(elapsed_ms));
+        out.insert("tokens_input".to_string(), json!(tokens_in));
+        out.insert("tokens_output".to_string(), json!(tokens_out));
+
+        info!(
+            tool = "ai/claude_code",
+            duration_ms = elapsed_ms,
+            tokens_in = tokens_in,
+            tokens_out = tokens_out,
+            "claude code CLI execution complete"
+        );
+
+        Ok(out)
+    }
+}
+
+/// Detect the Claude Code CLI binary in $PATH.
+fn detect_claude_cli() -> Result<String, String> {
+    // Check common locations.
+    for candidate in &["claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"] {
+        if let Ok(output) = std::process::Command::new(candidate)
+            .arg("--version")
+            .output()
+        {
+            if output.status.success() {
+                return Ok(candidate.to_string());
+            }
+        }
+    }
+    Err(
+        "Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code"
+            .into(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Registration
+// ---------------------------------------------------------------------------
+
 /// Register all AI tools into the given registry.
 pub fn register_ai_tools(registry: &mut ToolRegistry) {
     registry.register("ai/llm_call", Box::new(LlmCallFactory::new()));
     registry.register("ai/embeddings", Box::new(EmbeddingsFactory::new()));
     registry.register("ai/transcribe", Box::new(TranscribeFactory::new()));
+    registry.register("ai/claude_code", Box::new(ClaudeCodeFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -987,12 +1194,13 @@ mod tests {
     // -- Registration ---------------------------------------------------------
 
     #[test]
-    fn register_ai_tools_adds_three() {
+    fn register_ai_tools_adds_four() {
         let mut reg = ToolRegistry::new();
         register_ai_tools(&mut reg);
         assert!(reg.get("ai/llm_call").is_some());
         assert!(reg.get("ai/embeddings").is_some());
         assert!(reg.get("ai/transcribe").is_some());
-        assert_eq!(reg.list_tools().len(), 3);
+        assert!(reg.get("ai/claude_code").is_some());
+        assert_eq!(reg.list_tools().len(), 4);
     }
 }

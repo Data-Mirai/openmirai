@@ -69,7 +69,7 @@ What happens:
 
 Every node has:
 - **id** — unique name you reference in edges
-- **tool_type** — which tool to execute (see tool table below)
+- **tool_type** — which tool to execute (see tool catalog below)
 - **config** — settings specific to that tool
 
 ---
@@ -94,7 +94,7 @@ edges:
       prompt_text: "node_a.response"    # node_b receives node_a's response as "prompt_text"
 ```
 
-`data_map` maps **target input name** → **source.field**.
+`data_map` maps **target input name** → **source.field**. Supports nested dot notation: `"node_a.payload.nested.field"`.
 
 ### Conditional routing
 
@@ -137,57 +137,103 @@ Short forms also work: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`.
 ## 4. Tool catalog (what nodes can do)
 
 ### Triggers (entry points)
+
 | Tool | What it does |
 |------|-------------|
 | `trigger/manual` | Receives input from CLI or API call |
 | `trigger/webhook` | Receives input from HTTP webhook |
-| `trigger/schedule` | Fires on a time interval |
+| `trigger/schedule` | Fires on a time interval (cron) |
+| `trigger/event` | Fires on internal event |
+| `trigger/heartbeat` | Fires periodically (health check) |
 
 ### AI
+
 | Tool | What it does |
 |------|-------------|
-| `ai/llm_call` | Call any LLM (config: prompt, model, temperature, max_tokens) |
+| `ai/llm_call` | Call any LLM (config: prompt, model, temperature, max_tokens, system_prompt, output_schema) |
 | `ai/embeddings` | Generate text embeddings |
 | `ai/transcribe` | Speech-to-text |
 
 ### Logic
+
 | Tool | What it does |
 |------|-------------|
 | `logic/condition` | Evaluate a boolean condition (config: field, op, value) |
-| `logic/switch` | Multi-way routing |
-| `logic/loop` | Repeat until condition |
-| `logic/merge` | Combine inputs (pass-through) |
+| `logic/switch` | Multi-way routing (switch/case) |
+| `logic/loop` | Repeat until condition met |
+| `logic/merge` | Combine inputs from multiple branches (fan-in) |
 | `logic/wait` | Pause for N seconds |
 | `logic/human_input` | Pause and wait for human decision |
+| `logic/deadline` | Timeout guard — fail if exceeded |
 
 ### Data
+
 | Tool | What it does |
 |------|-------------|
 | `data/db_read` | Read from SQLite |
 | `data/db_write` | Write to SQLite |
-| `data/storage_read` | Read a file from storage |
-| `data/storage_write` | Write a file to storage |
+| `data/db_query` | Run arbitrary SQL query |
+| `data/storage_read` | Read a file from object storage |
+| `data/storage_write` | Write a file to object storage |
+| `data/storage_delete` | Delete a file from object storage |
+| `data/vault_read` | Read a secret from the vault |
+| `data/vault_write` | Write a secret to the vault |
+| `data/entity_store` | Store/retrieve structured entities |
 | `data/web_scrape` | Fetch and parse a web page |
 | `data/rag_search` | Semantic search with embeddings |
 
 ### Filesystem
+
 | Tool | What it does |
 |------|-------------|
 | `filesystem/read_file` | Read a local file |
 | `filesystem/write_file` | Write a local file |
+| `filesystem/edit_file` | Edit a local file (patch) |
 | `filesystem/glob` | Find files by pattern |
 | `filesystem/grep` | Search file contents |
+| `filesystem/list_dir` | List directory contents |
+| `filesystem/tree` | Tree view of directory |
+| `filesystem/copy` | Copy file or directory |
+| `filesystem/move` | Move/rename file or directory |
+| `filesystem/delete` | Delete file or directory |
+| `filesystem/mkdir` | Create directory |
+| `filesystem/file_info` | Get file metadata (size, modified, etc.) |
 
 ### System
+
 | Tool | What it does |
 |------|-------------|
 | `system/bash` | Execute a shell command |
+| `system/process_list` | List running processes |
 | `system/sandbox_exec` | Run code in isolated sandbox |
 
+### Git
+
+| Tool | What it does |
+|------|-------------|
+| `git/status` | Show working tree status |
+| `git/diff` | Show changes |
+| `git/log` | Show commit history |
+| `git/commit` | Create a commit |
+
 ### Output
+
 | Tool | What it does |
 |------|-------------|
 | `output/response` | Format and return the final result |
+
+### Agent
+
+| Tool | What it does |
+|------|-------------|
+| `agent/run_agent` | Execute another agent as a sub-agent (max nesting depth: 3) |
+
+### MCP (Model Context Protocol)
+
+| Tool | What it does |
+|------|-------------|
+| `mcp/mcp_call` | Call a tool on an MCP server |
+| `mcp/mcp_discover` | Discover available tools on an MCP server |
 
 ---
 
@@ -224,38 +270,34 @@ nodes:
     tool_type: ai/llm_call
     config:
       prompt: "Classify as: support, billing, or technical. Reply with ONE word."
-  - id: check
-    tool_type: logic/condition
-    config:
-      field: response
-      op: contains
-      value: "support"
   - id: support_handler
     tool_type: ai/llm_call
     config:
       prompt: "You are a support agent. Help the user."
-  - id: general_handler
+  - id: default_handler
     tool_type: ai/llm_call
     config:
       prompt: "You are a general assistant."
+  - id: out
+    tool_type: output/response
 edges:
   - source: trigger
     target: classify
   - source: classify
-    target: check
-  - source: check
     target: support_handler
     condition:
-      field: result
-      op: equals
-      value: true
-  - source: check
-    target: general_handler
-    condition:
-      field: result
-      op: equals
-      value: false
+      field: response
+      op: contains
+      value: "support"
+  - source: classify
+    target: default_handler
+  - source: support_handler
+    target: out
+  - source: default_handler
+    target: out
 ```
+
+Note: the unconditional edge to `default_handler` acts as fallback when the condition doesn't match.
 
 ### Pattern: Read file → Analyze with LLM
 
@@ -281,6 +323,35 @@ edges:
     data_map:
       context: "read.content"
   - source: analyze
+    target: out
+```
+
+### Pattern: Sub-agent composition
+
+```yaml
+nodes:
+  - id: trigger
+    tool_type: trigger/manual
+  - id: research
+    tool_type: agent/run_agent
+    config:
+      agent_file: "agents/researcher.yaml"
+  - id: summarize
+    tool_type: ai/llm_call
+    config:
+      prompt: "Summarize the research findings."
+  - id: out
+    tool_type: output/response
+edges:
+  - source: trigger
+    target: research
+    data_map:
+      query: "trigger.payload.topic"
+  - source: research
+    target: summarize
+    data_map:
+      context: "research.response"
+  - source: summarize
     target: out
 ```
 
@@ -318,6 +389,10 @@ mirai version
 | OpenAI | `--provider openai --api-key $OPENAI_API_KEY` | Yes |
 | Gemini | `--provider gemini --api-key $GOOGLE_API_KEY` | Yes |
 | Groq | `--provider groq --api-key $GROQ_API_KEY` | Yes |
+| NVIDIA NIM | `--provider nvidia --api-key $NVIDIA_API_KEY` | Yes |
+| OpenRouter | `--provider openrouter --api-key $OPENROUTER_API_KEY` | Yes |
+
+Provider resolution order: `--provider` flag → environment variable → auto-detect running Ollama → default Ollama.
 
 ---
 
@@ -347,6 +422,8 @@ graph:
   edges: [...]
 ```
 
+Supported types: `text`, `number`, `integer`, `boolean`, `array`, `object`.
+
 If someone runs this agent without `question`, they get a clear error:
 ```
 input validation failed: missing required input: question (The question to answer)
@@ -354,7 +431,97 @@ input validation failed: missing required input: question (The question to answe
 
 ---
 
-## 8. Deploying as a server
+## 8. Structured output (LLM returns validated JSON)
+
+Force the LLM to respond with a specific JSON structure:
+
+```yaml
+- id: extract
+  tool_type: ai/llm_call
+  config:
+    prompt: "Extract the person's name and age from this text."
+    output_schema:
+      type: object
+      properties:
+        name:
+          type: string
+        age:
+          type: integer
+      required: ["name", "age"]
+```
+
+The engine injects schema instructions into the prompt and auto-retries if the LLM returns invalid JSON.
+
+---
+
+## 9. Retry and error handling
+
+Configure retry behavior per agent:
+
+```yaml
+name: resilient-agent
+version: v1
+
+config:
+  max_iterations: 10
+  retry:
+    max_retries: 3
+    backoff: exponential    # or: linear, none
+    initial_delay_secs: 1.0
+    on_failure: stop        # or: skip, route_to_error
+
+graph:
+  nodes: [...]
+  edges: [...]
+```
+
+| `on_failure` | Behavior |
+|--------------|----------|
+| `stop` | Abort execution (default) |
+| `skip` | Continue as if the node succeeded (empty output) |
+| `route_to_error` | Follow an edge with `condition: { error: true }` |
+
+---
+
+## 10. MCP servers (external tools)
+
+Connect to Model Context Protocol servers for additional tools:
+
+```yaml
+name: agent-with-mcp
+version: v1
+
+mcp_servers:
+  - name: my-tools
+    transport: stdio
+    command: npx
+    args: ["-y", "@my-org/mcp-server"]
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+    - id: call_tool
+      tool_type: mcp/mcp_call
+      config:
+        server_name: my-tools
+        tool_name: search_documents
+    - id: out
+      tool_type: output/response
+  edges:
+    - source: trigger
+      target: call_tool
+      data_map:
+        arguments: "trigger.payload"
+    - source: call_tool
+      target: out
+```
+
+Supported transports: `stdio` (local process) and `http` (remote server).
+
+---
+
+## 11. Deploying as a server
 
 ```bash
 # Start with auth
@@ -371,6 +538,33 @@ curl -X POST http://localhost:3000/api/v1/agents/{id}/execute \
   -H "Content-Type: application/json" \
   -H "X-API-Key: my-secret" \
   -d '{"trigger_data": {"question": "hello"}}'
+
+# Stream (Server-Sent Events)
+curl -N http://localhost:3000/api/v1/agents/{id}/stream \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: my-secret" \
+  -d '{"trigger_data": {"question": "hello"}}'
+```
+
+### SSE events
+
+When streaming, you receive real-time events:
+
+```
+event: graph.started
+data: {"graph_name": "my-agent", "node_count": 3}
+
+event: node.started
+data: {"node_id": "think", "tool_type": "ai/llm_call"}
+
+event: node.token
+data: {"node_id": "think", "token": "Hello"}
+
+event: node.completed
+data: {"node_id": "think", "duration_ms": 1500}
+
+event: graph.completed
+data: {"status": "Completed", "total_duration_ms": 2100}
 ```
 
 ---
@@ -378,13 +572,17 @@ curl -X POST http://localhost:3000/api/v1/agents/{id}/execute \
 ## Quick reference
 
 ```
-agent.yaml = graph definition (nodes + edges)
-mirai run   = execute locally
-mirai serve = HTTP API
+agent.yaml    = graph definition (nodes + edges)
+mirai run     = execute locally
+mirai serve   = HTTP API
 mirai validate = check syntax
 
-node = one action (tool_type)
-edge = connection between nodes
-data_map = pass data between nodes
-condition = route based on output values
+node       = one action (tool_type)
+edge       = connection between nodes
+data_map   = pass data between nodes (source.field → target input)
+condition  = route based on output values
+inputs     = typed input contract (validation at boundary)
+outputs    = typed output contract (documentation + validation)
+config     = agent-level settings (retry, max_iterations, timeout)
+mcp_servers = external tool servers (Model Context Protocol)
 ```

@@ -4,7 +4,7 @@ Open-source agent execution engine. One binary. Any LLM. Your rules.
 
 A Rust-native engine that runs agentic workflows defined as simple YAML graphs. Alternative to LangGraph, CrewAI, and Google ADK — compiled to a single portable binary with zero runtime dependencies.
 
-**48+ built-in tools** | **7 LLM providers** | **650+ tests** | **MIT license**
+**48+ built-in tools** | **7 LLM providers** | **665 tests** | **MIT license**
 
 ## Quick Start
 
@@ -54,7 +54,7 @@ mirai run hello.yaml --input '{"query": "What is Rust?"}'
 
 ```
 Agent  = YAML config  (portable, versionable, language-agnostic)
-Engine = Rust binary   (FFI, WASM, CLI — 650+ tests)
+Engine = Rust binary   (FFI, WASM, CLI — 665 tests)
 Host   = Your app      (Python, Swift, Go, JavaScript — anything)
 ```
 
@@ -115,6 +115,8 @@ docs/          Technical documentation
 ## Key Features
 
 - **Graph execution** with conditional branching, fan-out/fan-in, and retry with backoff
+- **Input/output contracts** — typed validation with defaults, required fields, and clear error messages
+- **Structured output** — JSON schema enforcement on LLM responses with auto-retry
 - **Soul system** — give agents personality via SOUL.md files
 - **Universe** — multi-agent routing with keyword, round-robin, or LLM-based strategies
 - **Energy tracking** — metered cost accounting per operation
@@ -123,6 +125,7 @@ docs/          Technical documentation
 - **SSE streaming** — real-time execution events via Server-Sent Events
 - **Security scanner** — prompt injection detection with configurable sensitivity
 - **MCP support** — Model Context Protocol for external tool servers
+- **Sub-agents** — compose agents that call other agents (max depth 3)
 
 ## HTTP Server
 
@@ -134,7 +137,7 @@ MIRAI_API_KEY=your-secret mirai serve --port 3000
 mirai serve --port 3000
 ```
 
-API endpoints: `/api/agents`, `/api/graphs`, `/api/sessions`, `/api/tools`, `/health`
+API endpoints: `/api/v1/agents`, `/api/v1/graphs`, `/api/v1/sessions`, `/api/v1/tools`, `/health`
 
 ## License
 

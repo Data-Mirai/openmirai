@@ -1,31 +1,34 @@
-# Gaps — PRD-001 pendientes
+# Gaps — Feature tracking
 
-Estado al v0.1.0. Actualizado después de quick wins.
+Estado al v0.4.3.
 
 ## Completados
 
-| GAP | Feature | Estado |
-|-----|---------|--------|
-| GAP-A | Sandbox como tool (`system/sandbox_exec`) | done |
-| GAP-B | Scanner integrado en `ai/llm_call` | done |
-| GAP-C | Soul inyectado en ejecución (CLI + server) | done |
-| GAP-D | `mirai templates` + `mirai new --template` | done |
-| GAP-E | `POST /api/agents/{id}/stream` SSE + `/api/templates` | done |
+| GAP | Feature | Resuelto en |
+|-----|---------|-------------|
+| GAP-A | Sandbox como tool (`system/sandbox_exec`) | v0.3.0 |
+| GAP-B | Scanner integrado en `ai/llm_call` | v0.3.0 |
+| GAP-C | Soul inyectado en ejecucion (CLI + server) | v0.3.0 |
+| GAP-D | `mirai templates` + `mirai new --template` | v0.3.0 |
+| GAP-E | `POST /api/v1/agents/{id}/stream` SSE + `/api/v1/templates` | v0.4.0 |
+| GAP-001 | LLM providers reales en CLI (7 providers) | v0.4.0 |
+| GAP-002 | Structured output con `output_schema` + auto-retry | v0.4.0 |
+| GAP-I | Server endpoints especializados (metrics, rag/search, eval, universe) | v0.4.0 |
 
 ## Pendientes — Medium Effort (3-6 horas cada uno)
 
 ### GAP-F: Universe ejecuta agentes completos
-- **Módulo**: `engine/src/universe.rs`
-- **Estado**: Routing funciona (keyword, explicit, round-robin)
+- **Modulo**: `engine/src/universe.rs`
+- **Estado**: Routing funciona (keyword, explicit, round-robin, LLM-based)
 - **Falta**:
   1. `Universe.handle_message()` → routea + carga workflow del Soul + ejecuta con GraphRunner + retorna respuesta
   2. A2A message delivery queue (cola interna por agente)
   3. GroupChat execution loop (N rondas con LLM)
   4. CLI: `mirai universe start <config.yaml>`
 
-### GAP-G: Eval integrado en ejecución
-- **Módulo**: `engine/src/eval.rs`
-- **Estado**: Evaluadores programáticos funcionan, judge prompts generados
+### GAP-G: Eval integrado en ejecucion
+- **Modulo**: `engine/src/eval.rs`
+- **Estado**: Evaluadores programaticos funcionan, judge prompts generados
 - **Falta**:
   1. Registrar `eval/run` como tool
   2. CLI: `mirai eval <session_id> --types relevance,format_compliance`
@@ -33,39 +36,39 @@ Estado al v0.1.0. Actualizado después de quick wins.
   4. LLM-as-judge: llamar al LLM real para relevance/faithfulness/completeness
 
 ### GAP-H: RAG con embeddings reales
-- **Módulo**: `engine/src/rag.rs`
-- **Estado**: Chunking funciona (4 estrategias)
+- **Modulo**: `engine/src/rag.rs`
+- **Estado**: Chunking funciona (4 estrategias). `data/rag_search` tool existe. `SimpleVectorResource` con FTS5 funciona.
 - **Falta**:
-  1. Conectar con `context.llm().embed()` para generar embeddings de cada chunk
-  2. Almacenar embeddings en VectorResource existente (`SimpleVectorResource`)
-  3. `data/rag_search` tool: busca chunks por similitud coseno
-  4. CLI: `mirai rag create --source ./docs/` + `mirai rag ingest`
-
-### GAP-I: Server endpoints especializados
-- **Módulo**: `engine/src/server/app.rs`
-- **Falta**:
-  1. `GET /api/metrics` — métricas agregadas (del módulo observability)
-  2. `GET /api/sessions/{id}/trace` — trace tree de una sesión
-  3. `POST /api/rag/ingest` — ingestar documentos
-  4. `POST /api/rag/search` — buscar en RAG
+  1. Conectar con `context.llm().embed()` para generar embeddings reales por chunk
+  2. Busqueda por similitud coseno con embeddings reales (no solo FTS5 keyword)
+  3. CLI: `mirai rag ingest --source ./docs/`
 
 ## Pendientes — High Effort (1-2 semanas cada uno)
 
-### GAP-J: Channel adapters reales
-- **Módulo**: `engine/src/channels.rs`
-- **Estado**: Types + trait + WebhookAdapter
+### GAP-J: Channel adapters
+- **Estado**: `channels.rs` y `voice.rs` eliminados en v0.4.0 (dead code). Empezar desde cero.
 - **Falta**: TelegramAdapter (Bot API), SlackAdapter (Events API), WhatsAppAdapter (Business API)
-- **Cada adapter**: ~500 líneas, necesita SDK o HTTP directo a la API del proveedor
+- **Approach**: Cada adapter como feature flag independiente. ~500 lineas cada uno.
 
-### GAP-K: Voice STT/TTS real
-- **Módulo**: `engine/src/voice.rs`
-- **Estado**: Solo tipos y config
+### GAP-K: Voice STT/TTS
+- **Estado**: `voice.rs` eliminado en v0.4.0. Empezar desde cero.
 - **Falta**: Whisper integration (STT), ElevenLabs/OpenAI TTS integration, audio streaming
-- **Cada provider**: ~400 líneas, necesita manejo de audio (bytes, codecs)
+- **Approach**: Modulo nuevo `engine/src/voice/`. Feature flag `voice`.
+
+## Pendientes — Roadmap (ver ROADMAP-PARITY.md)
+
+| GAP | Feature | Esfuerzo |
+|-----|---------|----------|
+| GAP-003 | Observabilidad (tracing visual, OpenTelemetry) | Alto |
+| GAP-004 | Fan-out dinamico (`logic/fan_out` con N runtime) | Medio |
+| GAP-005 | Cross-thread memory (store + semantic search) | Medio |
+| GAP-006 | Subgrafos composables (mejor data_map bidireccional) | Medio |
+| GAP-007 | Middleware lifecycle (hooks mas granulares) | Medio |
 
 ## Orden recomendado
 
 ```
-v0.2.0: GAP-F → GAP-H → GAP-G → GAP-I
-v0.3.0: GAP-J → GAP-K
+Siguiente:  GAP-F → GAP-H → GAP-G
+Despues:    GAP-004 → GAP-005 → GAP-003
+Futuro:     GAP-J → GAP-K → GAP-006 → GAP-007
 ```

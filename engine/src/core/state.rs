@@ -91,12 +91,12 @@ impl ExecutionState {
             return None;
         }
 
-        let mut current = node_output.get(parts[0])?.clone();
+        let mut current = node_output.get(parts[0])?;
         for part in &parts[1..] {
-            current = current.get(part)?.clone();
+            current = current.get(part)?;
         }
 
-        Some(current)
+        Some(current.clone())
     }
 
     /// Deep-clone the entire state into a plain HashMap.

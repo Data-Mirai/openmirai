@@ -76,7 +76,7 @@ impl DefaultExecutionContext {
                 universe_id: None,
                 environment_id: None,
             },
-            session_id: uuid::Uuid::new_v4().to_string()[..8].to_string(),
+            session_id: crate::utils::short_id(),
             node_id: None,
             system_prompt: None,
             scratch_dir: None,

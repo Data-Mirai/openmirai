@@ -12,6 +12,7 @@ use crate::core::agent_spec::{AgentSpec, MemoryPersistMode};
 use crate::core::runner::{ExecutionResult, ExecutionStatus};
 use crate::core::state::SharedState;
 use crate::adapters::{InMemoryDBResource, InMemoryStorageResource, DefaultExecutionContext};
+use crate::search::cosine_similarity;
 
 use super::state::{AppState, ErrorResponse};
 
@@ -401,17 +402,4 @@ pub(crate) async fn rag_search(
     })))
 }
 
-/// Cosine similarity between two vectors.
-pub(crate) fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let mag_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let mag_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if mag_a == 0.0 || mag_b == 0.0 {
-        return 0.0;
-    }
-    dot / (mag_a * mag_b)
-}
 

@@ -81,10 +81,6 @@ impl Tool for MemoryTool {
     ) -> Result<HashMap<String, Value>, ToolError> {
         // Read injected memory spec from config
         let mem_spec = config.get("__memory_spec");
-        let _agent_id = config
-            .get("__agent_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
 
         // Determine persist mode
         let persist_mode = mem_spec

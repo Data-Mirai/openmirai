@@ -23,6 +23,7 @@ pub mod templates;
 pub mod tools;
 pub mod triggers;
 pub mod universe;
+pub mod utils;
 pub mod vault;
 
 // Re-export core types explicitly (no glob).

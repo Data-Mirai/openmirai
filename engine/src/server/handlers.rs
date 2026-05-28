@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use crate::core::agent_spec::AgentSpec;
 use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
 use crate::core::runner::{ExecutionStatus, TraceEntry};
+use crate::utils::short_id;
 
 use super::state::{AppState, ErrorResponse, ExecuteRequest, GraphCreateRequest, AgentCreateRequest, SessionListQuery};
 use super::helpers::{persist_memory_after_execution, run_agent_spec, run_agent_spec_streaming};
@@ -22,7 +23,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
 
     Json(json!({
         "status": "ok",
-        "version": "0.4.5",
+        "version": env!("CARGO_PKG_VERSION"),
         "engine": "datamirai-engine-rs",
         "uptime_seconds": uptime_secs,
         "agents_loaded": agents_count,
@@ -33,7 +34,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
 
 pub(crate) async fn version() -> Json<Value> {
     Json(json!({
-        "version": "0.4.5",
+        "version": env!("CARGO_PKG_VERSION"),
         "engine": "datamirai-engine-rs"
     }))
 }
@@ -46,7 +47,7 @@ pub(crate) async fn create_graph(
     State(state): State<AppState>,
     Json(req): Json<GraphCreateRequest>,
 ) -> impl IntoResponse {
-    let graph_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let graph_id = short_id();
 
     let mut nodes = Vec::with_capacity(req.nodes.len());
     for (i, v) in req.nodes.into_iter().enumerate() {
@@ -158,7 +159,7 @@ pub(crate) async fn create_agent(
     }
     drop(graphs);
 
-    let agent_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let agent_id = short_id();
 
     let spec = AgentSpec {
         name: req.name.clone(),
@@ -270,11 +271,6 @@ pub(crate) async fn execute_agent(
         match crate::core::agent_spec::validate_agent_inputs(&req.trigger_data, inputs_schema) {
             Ok(enriched) => enriched,
             Err(errors) => {
-                let _details: Vec<Value> = errors.iter().map(|e| json!({
-                    "field": e.field,
-                    "error": e.error_type,
-                    "message": e.message,
-                })).collect();
                 return Err((
                     StatusCode::UNPROCESSABLE_ENTITY,
                     Json(ErrorResponse {
@@ -314,7 +310,7 @@ pub(crate) async fn execute_agent(
     // PRD-008: persist memory after successful execution
     persist_memory_after_execution(&spec, &id, &result, &state).await;
 
-    let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let session_id = short_id();
     let body = json!({
         "session_id": &session_id,
         "agent_id": id,
@@ -331,7 +327,6 @@ pub(crate) async fn execute_agent(
     Ok(Json(body))
 }
 
-/// Execute an agent with SSE streaming response.
 /// Execute an agent with REAL-TIME SSE streaming.
 ///
 /// Events are emitted DURING execution via an mpsc channel.
@@ -404,7 +399,7 @@ pub(crate) async fn create_agent_from_spec(
     State(state): State<AppState>,
     Json(spec): Json<AgentSpec>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
-    let agent_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let agent_id = short_id();
     let name = spec.name.clone();
 
     state.agents.write().await.insert(agent_id.clone(), spec);

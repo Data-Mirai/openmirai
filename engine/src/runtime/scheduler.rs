@@ -6,11 +6,12 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
+
+use crate::utils::now_epoch;
 
 use super::agent_runtime::{CycleRecord, CycleStatus};
 
@@ -127,7 +128,7 @@ impl Scheduler {
                 }
 
                 cycle_num += 1;
-                let cycle_id = format!("cyc-{}", uuid::Uuid::new_v4().to_string().get(..8).unwrap_or("00000000"));
+                let cycle_id = format!("cyc-{}", crate::utils::short_id());
                 let started_at = now_epoch();
 
                 info!(agent_id = %aid, cycle = cycle_num, "Cycle started");
@@ -190,12 +191,6 @@ impl Scheduler {
                     break;
                 }
 
-                // Sleep before next cycle (first cycle starts immediately)
-                if is_first {
-                    is_first = false;
-                } else {
-                    // Sleep already happened at the top of the loop
-                }
             }
         });
 
@@ -262,13 +257,6 @@ impl Default for Scheduler {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn now_epoch() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------

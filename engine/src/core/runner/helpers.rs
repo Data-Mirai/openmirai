@@ -1,11 +1,13 @@
 //! Free helper functions used across the runner module.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::Value;
 use tracing::warn;
 
 use super::types::HookResult;
+
+pub(crate) use crate::utils::now_epoch as now_ts;
 
 /// Try to extract f64 from two JSON values and apply a comparator.
 pub(crate) fn compare_numbers(a: &Value, b: &Value, cmp: fn(f64, f64) -> bool) -> bool {
@@ -20,14 +22,6 @@ pub(crate) fn as_f64(v: &Value) -> Option<f64> {
         Value::Number(n) => n.as_f64(),
         _ => None,
     }
-}
-
-/// Get current unix timestamp as f64.
-pub(crate) fn now_ts() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 /// Run a hook future with a 30-second timeout. On timeout, return Continue.

@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,10 +13,13 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::info;
 
+use crate::utils::now_epoch;
+
 use crate::core::agent_spec::AgentSpec;
 use crate::core::events::EventEmitter;
 use crate::core::runner::{ExecutionResult, ExecutionStatus};
 use crate::core::state::SharedState;
+use crate::utils::short_id;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -134,7 +136,7 @@ impl AgentRuntime {
 
     /// Register an agent spec, returning the assigned ID.
     pub async fn register_agent(&self, spec: AgentSpec) -> Result<String, RuntimeError> {
-        let id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+        let id = short_id();
 
         let record = RuntimeAgentRecord {
             id: id.clone(),
@@ -233,7 +235,7 @@ impl AgentRuntime {
             interrupt_info: None,
         };
 
-        let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+        let session_id = short_id();
         let session = RuntimeSessionRecord {
             id: session_id.clone(),
             agent_id: id.to_string(),
@@ -302,17 +304,6 @@ impl AgentRuntime {
     pub fn event_emitter(&self) -> &EventEmitter {
         &self.event_emitter
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn now_epoch() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------

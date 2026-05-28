@@ -41,7 +41,6 @@ enum NodeFailureOutcome {
 /// time.  Supports conditional branching, retry with backoff, template-based
 /// input resolution, real-time event emission, hooks, checkpoints,
 /// human_input interrupts, pause/resume, and transcript generation.
-/// Sequential cursor that traverses a validated DAG.
 ///
 /// `GraphRunner` is `Clone` — cloning shares the executor, hook handler,
 /// and checkpoint callback via `Arc`, enabling reuse across sessions.

@@ -449,7 +449,7 @@ pub fn validate_agent_inputs(
         match payload.get(name) {
             Some(value) => {
                 if !spec.field_type.matches(value) {
-                    let actual = value_type_name(value);
+                    let actual = crate::core::value_type::value_type_label(value);
                     errors.push(InputValidationError {
                         field: name.clone(),
                         error_type: "type_mismatch".to_string(),
@@ -483,17 +483,6 @@ pub fn validate_agent_inputs(
         Ok(enriched)
     } else {
         Err(errors)
-    }
-}
-
-fn value_type_name(v: &serde_json::Value) -> &'static str {
-    match v {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "text",
-        serde_json::Value::Array(_) => "json",
-        serde_json::Value::Object(_) => "json",
     }
 }
 
@@ -695,7 +684,7 @@ impl AgentSpec {
     pub fn to_graph(&self, graph_id: Option<&str>) -> GraphDef {
         let gid = graph_id
             .map(|s| s.to_string())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()[..8].to_string());
+            .unwrap_or_else(|| crate::utils::short_id());
 
         let nodes = self
             .graph

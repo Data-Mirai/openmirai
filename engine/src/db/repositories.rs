@@ -6,12 +6,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
+
+use crate::utils::now_epoch;
 
 use crate::core::agent_spec::AgentSpec;
 use crate::core::graph::GraphDef;
@@ -308,17 +309,6 @@ impl Repository<SessionRecord> for InMemorySessionRepo {
         let mut store = self.store.write().await;
         Ok(store.remove(id).is_some())
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn now_epoch() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------

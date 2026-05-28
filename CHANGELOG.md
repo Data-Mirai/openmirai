@@ -4,6 +4,19 @@ All notable changes to datamirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.4.5 (2026-05-28)
+
+### Added
+- **`mirai tools` CLI command**: catalog of all 49 tools with inputs, outputs, and config.
+  - `mirai tools` → lists all tools grouped by category
+  - `mirai tools ai/claude_code` → shows full contract (inputs, outputs, config with types and descriptions)
+- Solves the "how do I know what fields to use in data_map?" problem. Each tool declares its contract.
+
+### Consumer action
+- None — new feature, no breaking changes. Update binary to use `mirai tools`.
+
+---
+
 ## v0.4.4 (2026-05-28)
 
 ### Added

@@ -117,6 +117,12 @@ pub trait LLMResource: Send + Sync {
         text: &str,
         model: &str,
     ) -> Result<Vec<f64>, ResourceError>;
+
+    /// Name of the underlying LLM provider (e.g. `"gemini"`, `"claude"`).
+    /// Used by tools to check media format support (PRD-009).
+    fn provider_name(&self) -> String {
+        "unknown".to_string()
+    }
 }
 
 #[async_trait]

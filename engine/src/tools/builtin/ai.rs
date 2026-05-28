@@ -106,6 +106,7 @@ ai_tool! {
         field("output_schema_strict", FieldType::Boolean, false, "Fail hard if schema validation fails after retries (default true)"),
         field("max_retries", FieldType::Number, false, "Retries for schema validation (default 2)"),
         field("max_context_length", FieldType::Number, false, "Max chars for session context (default 12000)"),
+        field("media_path", FieldType::String, false, "Path to media file (image/audio/video) to send alongside the prompt"),
     ]
 }
 
@@ -260,6 +261,29 @@ impl Tool for LlmCallTool {
         let mut context_messages = Vec::new();
         if !combined_context.is_empty() {
             context_messages.push(json!({"role": "system", "content": combined_context}));
+        }
+
+        // PRD-009: resolve media_path (inputs > config) and attach media.
+        let media_path = inputs
+            .get("media_path")
+            .and_then(|v| v.as_str())
+            .or_else(|| config.get("media_path").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        if !media_path.is_empty() {
+            let provider_name = context.llm().provider_name();
+            let media = crate::llm::media::read_media_file(media_path, &provider_name)
+                .map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/llm_call".into(),
+                    message: e,
+                })?;
+            info!(
+                media_path = %media_path,
+                mime_type = %media.mime_type,
+                provider = %provider_name,
+                "llm_call: attaching media file to prompt"
+            );
+            let media_json = serde_json::to_value(vec![&media]).unwrap_or(json!([]));
+            context_messages.push(json!({ "__user_media": media_json }));
         }
 
         // --- Execute with optional schema validation + retries ---
@@ -724,16 +748,30 @@ impl Tool for TranscribeTool {
             .and_then(|v| v.as_str())
             .unwrap_or("default");
 
-        // Placeholder: delegate to LLM with a transcription prompt.
-        // In a real implementation this would use a speech-to-text API.
-        let prompt = format!("Transcribe the audio file at: {}", file_path);
-        let context_messages = vec![Value::String(
-            format!("Audio file: {}", file_path),
-        )];
+        // PRD-009: Read the audio file and send as multimodal content.
+        let provider_name = context.llm().provider_name();
+        let media = crate::llm::media::read_media_file(file_path, &provider_name)
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: e,
+            })?;
+
+        info!(
+            file_path = %file_path,
+            mime_type = %media.mime_type,
+            provider = %provider_name,
+            "transcribe: read media file, sending as multimodal"
+        );
+
+        let prompt = "Transcribe this audio. Output only the raw transcription text, no timestamps, no speaker labels, no formatting.";
+
+        // Pass media via __user_media carrier (bridge attaches it to user prompt).
+        let media_json = serde_json::to_value(vec![&media]).unwrap_or(json!([]));
+        let context_messages = vec![json!({ "__user_media": media_json })];
 
         let result = context
             .llm()
-            .call(model, &prompt, &context_messages, 0.0, 4096)
+            .call(model, prompt, &context_messages, 0.0, 4096)
             .await
             .map_err(|e| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),

@@ -130,10 +130,30 @@ impl GeminiAdapter {
                     }));
                 }
                 _ => {
-                    // user — pass through.
+                    // user — pass through, with optional media parts.
+                    let mut parts: Vec<Value> = Vec::new();
+                    if let Some(ref content) = msg.content {
+                        if !content.is_empty() {
+                            parts.push(json!({ "text": content }));
+                        }
+                    }
+                    // Append media as inline_data parts (PRD-009).
+                    if let Some(ref media_list) = msg.media {
+                        for mc in media_list {
+                            parts.push(json!({
+                                "inline_data": {
+                                    "mime_type": mc.mime_type,
+                                    "data": mc.data,
+                                }
+                            }));
+                        }
+                    }
+                    if parts.is_empty() {
+                        parts.push(json!({ "text": "" }));
+                    }
                     contents.push(json!({
                         "role": "user",
-                        "parts": [{ "text": msg.content.as_deref().unwrap_or("") }],
+                        "parts": parts,
                     }));
                 }
             }
@@ -454,6 +474,7 @@ mod tests {
             content: Some("Hello world".into()),
             tool_calls: None,
             tool_call_id: None,
+            media: None,
         }];
 
         let (_, contents) = GeminiAdapter::convert_messages(&messages);
@@ -473,12 +494,14 @@ mod tests {
                 content: Some("You are a helpful assistant.".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "user".into(),
                 content: Some("Hi".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
 
@@ -503,12 +526,14 @@ mod tests {
                 content: Some("Hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "assistant".into(),
                 content: Some("Hi there!".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
 
@@ -578,6 +603,7 @@ mod tests {
                 },
             }]),
             tool_call_id: None,
+            media: None,
         }];
 
         let (_, contents) = GeminiAdapter::convert_messages(&messages);

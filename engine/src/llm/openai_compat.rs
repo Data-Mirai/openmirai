@@ -104,7 +104,30 @@ impl OpenAICompatAdapter {
             .map(|msg| {
                 let mut obj = json!({ "role": msg.role });
 
-                if let Some(ref content) = msg.content {
+                // If message has media, use content array format (PRD-009).
+                let has_media = msg.media.as_ref().is_some_and(|m| !m.is_empty());
+                if has_media {
+                    let mut content_parts: Vec<Value> = Vec::new();
+                    if let Some(ref media_list) = msg.media {
+                        for mc in media_list {
+                            content_parts.push(json!({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": format!("data:{};base64,{}", mc.mime_type, mc.data),
+                                }
+                            }));
+                        }
+                    }
+                    if let Some(ref content) = msg.content {
+                        if !content.is_empty() {
+                            content_parts.push(json!({
+                                "type": "text",
+                                "text": content,
+                            }));
+                        }
+                    }
+                    obj["content"] = Value::Array(content_parts);
+                } else if let Some(ref content) = msg.content {
                     obj["content"] = Value::String(content.clone());
                 }
 
@@ -403,12 +426,14 @@ mod tests {
                 content: Some("You are helpful.".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "user".into(),
                 content: Some("Hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
         let converted = OpenAICompatAdapter::convert_messages(&msgs);
@@ -432,6 +457,7 @@ mod tests {
                 },
             }]),
             tool_call_id: None,
+            media: None,
         }];
         let converted = OpenAICompatAdapter::convert_messages(&msgs);
         assert_eq!(converted.len(), 1);
@@ -451,6 +477,7 @@ mod tests {
             content: Some(r#"{"temp": 20}"#.into()),
             tool_calls: None,
             tool_call_id: Some("call_abc".into()),
+            media: None,
         }];
         let converted = OpenAICompatAdapter::convert_messages(&msgs);
         assert_eq!(converted.len(), 1);

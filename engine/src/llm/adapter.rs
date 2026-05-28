@@ -74,6 +74,9 @@ pub struct Message {
     pub content: Option<String>,
     pub tool_calls: Option<Vec<ToolCallRequest>>,
     pub tool_call_id: Option<String>,
+    /// Optional media attachments for multimodal messages (PRD-009).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<Vec<super::media::MediaContent>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +250,7 @@ mod tests {
             content: Some("test".into()),
             tool_calls: None,
             tool_call_id: None,
+            media: None,
         }];
 
         let result = adapter

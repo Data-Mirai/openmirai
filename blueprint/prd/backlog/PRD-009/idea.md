@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | PRD-009 |
 | **Fecha** | 2026-05-28 |
-| **Estado** | designed |
+| **Estado** | in_progress |
 | **Branch** | prd/PRD-009 |
 | **Target** | v0.5.0 |
 

@@ -156,11 +156,45 @@ impl ClaudeAdapter {
                     }));
                 }
                 _ => {
-                    // user — pass through.
-                    converted.push(json!({
-                        "role": msg.role,
-                        "content": msg.content.as_deref().unwrap_or(""),
-                    }));
+                    // user — pass through, with optional media (PRD-009).
+                    if let Some(ref media_list) = msg.media {
+                        if !media_list.is_empty() {
+                            let mut content_blocks: Vec<Value> = Vec::new();
+                            // Media blocks first (Claude expects image before text).
+                            for mc in media_list {
+                                content_blocks.push(json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mc.mime_type,
+                                        "data": mc.data,
+                                    }
+                                }));
+                            }
+                            if let Some(ref text) = msg.content {
+                                if !text.is_empty() {
+                                    content_blocks.push(json!({
+                                        "type": "text",
+                                        "text": text,
+                                    }));
+                                }
+                            }
+                            converted.push(json!({
+                                "role": msg.role,
+                                "content": content_blocks,
+                            }));
+                        } else {
+                            converted.push(json!({
+                                "role": msg.role,
+                                "content": msg.content.as_deref().unwrap_or(""),
+                            }));
+                        }
+                    } else {
+                        converted.push(json!({
+                            "role": msg.role,
+                            "content": msg.content.as_deref().unwrap_or(""),
+                        }));
+                    }
                 }
             }
         }
@@ -432,12 +466,14 @@ mod tests {
                 content: Some("You are a helpful assistant.".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "user".into(),
                 content: Some("Hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
 
@@ -531,6 +567,7 @@ mod tests {
                 },
             }]),
             tool_call_id: None,
+            media: None,
         }];
 
         let (_, converted) = ClaudeAdapter::convert_messages(&messages);
@@ -556,6 +593,7 @@ mod tests {
             content: Some(r#"{"temp": 20}"#.into()),
             tool_calls: None,
             tool_call_id: Some("toolu_01".into()),
+            media: None,
         }];
 
         let (_, converted) = ClaudeAdapter::convert_messages(&messages);

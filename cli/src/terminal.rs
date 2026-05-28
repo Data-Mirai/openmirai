@@ -745,6 +745,7 @@ fn value_to_message(v: &Value) -> Message {
         content,
         tool_calls,
         tool_call_id,
+        media: None,
     }
 }
 

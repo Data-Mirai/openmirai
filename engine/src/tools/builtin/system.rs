@@ -184,6 +184,20 @@ impl Tool for BashTool {
         if !cwd.is_empty() {
             cmd.current_dir(cwd);
         }
+
+        // PRD-009: inject data_map inputs (except "command") as env vars with MIRAI_ prefix.
+        for (key, value) in &inputs {
+            if key == "command" {
+                continue;
+            }
+            let env_value = match value {
+                Value::String(s) => s.clone(),
+                Value::Null => "null".to_string(),
+                other => other.to_string(),
+            };
+            cmd.env(format!("MIRAI_{key}"), &env_value);
+        }
+
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 

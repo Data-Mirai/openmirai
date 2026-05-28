@@ -165,6 +165,81 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
 }
 
 // ---------------------------------------------------------------------------
+// PRD-010: FileRef — file references as first-class graph data
+// ---------------------------------------------------------------------------
+
+/// The `_type` discriminator for FileRef JSON objects.
+pub const FILE_REF_TYPE: &str = "file_ref";
+
+/// Detect MIME type from file extension. Returns `application/octet-stream` for unknown.
+pub fn mime_from_extension(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+    match ext.as_deref() {
+        Some(e) => extension_to_mime().get(e).copied().unwrap_or("application/octet-stream"),
+        None => "application/octet-stream",
+    }
+}
+
+/// Create a FileRef JSON value from a file path.
+///
+/// Returns `None` if the file does not exist. The path is resolved to absolute
+/// using `base_dir` if provided and the path is relative.
+pub fn create_file_ref(file_path: &str, base_dir: Option<&str>) -> Option<serde_json::Value> {
+    let path = Path::new(file_path);
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(base) = base_dir {
+        Path::new(base).join(path)
+    } else {
+        // Try to canonicalize, fall back to as-is.
+        std::env::current_dir().map(|d| d.join(path)).unwrap_or_else(|_| path.to_path_buf())
+    };
+
+    if !abs_path.exists() {
+        return None;
+    }
+
+    let metadata = std::fs::metadata(&abs_path).ok()?;
+    let mime = mime_from_extension(&abs_path);
+    let abs_str = abs_path.to_string_lossy().to_string();
+
+    Some(serde_json::json!({
+        "_type": FILE_REF_TYPE,
+        "path": abs_str,
+        "mime_type": mime,
+        "size_bytes": metadata.len(),
+    }))
+}
+
+/// Check if a `serde_json::Value` is a valid FileRef object.
+pub fn is_file_ref(value: &serde_json::Value) -> bool {
+    value.get("_type").and_then(|v| v.as_str()) == Some(FILE_REF_TYPE)
+        && value.get("path").and_then(|v| v.as_str()).is_some()
+}
+
+/// Resolve a tool input that may be a string path or a FileRef object.
+///
+/// - `Value::String` → returns the string as-is (backward compat).
+/// - `Value::Object` with `_type: "file_ref"` → extracts and returns `path`.
+/// - Other → stringifies the value.
+pub fn resolve_file_input(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Object(_) if is_file_ref(value) => {
+            value.get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        }
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -271,5 +346,100 @@ mod tests {
         let encoded = STANDARD.encode(original);
         let decoded = STANDARD.decode(&encoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    // --- PRD-010: FileRef tests ---
+
+    #[test]
+    fn create_file_ref_happy_path() {
+        let mut tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        tmp.write_all(b"fake png data 1234").unwrap();
+        let path = tmp.path().to_str().unwrap();
+        let file_ref = create_file_ref(path, None).unwrap();
+        assert_eq!(file_ref["_type"], "file_ref");
+        assert_eq!(file_ref["mime_type"], "image/png");
+        assert_eq!(file_ref["size_bytes"], 18);
+        assert!(file_ref["path"].as_str().unwrap().contains(".png"));
+    }
+
+    #[test]
+    fn create_file_ref_nonexistent_returns_none() {
+        let result = create_file_ref("/nonexistent/file.png", None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn create_file_ref_relative_with_base_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.jpg");
+        std::fs::write(&file_path, b"jpeg data").unwrap();
+        let file_ref = create_file_ref("test.jpg", Some(dir.path().to_str().unwrap())).unwrap();
+        assert_eq!(file_ref["_type"], "file_ref");
+        assert_eq!(file_ref["mime_type"], "image/jpeg");
+        assert!(file_ref["path"].as_str().unwrap().ends_with("test.jpg"));
+    }
+
+    #[test]
+    fn create_file_ref_no_extension_uses_octet_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("data_file");
+        std::fs::write(&file_path, b"binary data").unwrap();
+        let file_ref = create_file_ref(file_path.to_str().unwrap(), None).unwrap();
+        assert_eq!(file_ref["mime_type"], "application/octet-stream");
+    }
+
+    #[test]
+    fn is_file_ref_valid() {
+        let valid = serde_json::json!({
+            "_type": "file_ref",
+            "path": "/tmp/test.png",
+            "mime_type": "image/png",
+            "size_bytes": 100
+        });
+        assert!(is_file_ref(&valid));
+    }
+
+    #[test]
+    fn is_file_ref_invalid_no_type() {
+        let invalid = serde_json::json!({"path": "/tmp/test.png"});
+        assert!(!is_file_ref(&invalid));
+    }
+
+    #[test]
+    fn is_file_ref_invalid_wrong_type() {
+        let invalid = serde_json::json!({"_type": "something_else", "path": "/tmp/test.png"});
+        assert!(!is_file_ref(&invalid));
+    }
+
+    #[test]
+    fn is_file_ref_string_is_not_file_ref() {
+        assert!(!is_file_ref(&serde_json::json!("/tmp/test.png")));
+    }
+
+    #[test]
+    fn resolve_file_input_string_path() {
+        let val = serde_json::json!("/tmp/test.png");
+        assert_eq!(resolve_file_input(&val), "/tmp/test.png");
+    }
+
+    #[test]
+    fn resolve_file_input_file_ref_extracts_path() {
+        let val = serde_json::json!({
+            "_type": "file_ref",
+            "path": "/tmp/resolved.png",
+            "mime_type": "image/png",
+            "size_bytes": 100
+        });
+        assert_eq!(resolve_file_input(&val), "/tmp/resolved.png");
+    }
+
+    #[test]
+    fn resolve_file_input_null_returns_empty() {
+        assert_eq!(resolve_file_input(&serde_json::json!(null)), "");
+    }
+
+    #[test]
+    fn resolve_file_input_number_stringifies() {
+        assert_eq!(resolve_file_input(&serde_json::json!(42)), "42");
     }
 }

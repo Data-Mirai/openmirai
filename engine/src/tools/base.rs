@@ -17,6 +17,8 @@ pub enum FieldType {
     Array,
     Object,
     Integer,
+    /// PRD-010: A file reference — `Value::Object` with `_type: "file_ref"` and `path`.
+    File,
 }
 
 impl fmt::Display for FieldType {
@@ -28,6 +30,7 @@ impl fmt::Display for FieldType {
             Self::Array => write!(f, "array"),
             Self::Object => write!(f, "object"),
             Self::Integer => write!(f, "integer"),
+            Self::File => write!(f, "file"),
         }
     }
 }
@@ -84,6 +87,7 @@ impl FieldType {
             FieldType::Array => value.is_array(),
             FieldType::Object => value.is_object(),
             FieldType::Integer => value.is_i64() || value.is_u64(),
+            FieldType::File => crate::llm::media::is_file_ref(value),
         }
     }
 }

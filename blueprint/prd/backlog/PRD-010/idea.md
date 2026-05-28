@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | PRD-010 |
 | **Fecha** | 2026-05-28 |
-| **Estado** | designed |
+| **Estado** | in_progress |
 | **Branch** | prd/PRD-010 |
 | **Target** | v0.5.0 |
 | **Depende de** | PRD-009 (multimodal file input) |

@@ -263,15 +263,17 @@ impl Tool for LlmCallTool {
             context_messages.push(json!({"role": "system", "content": combined_context}));
         }
 
-        // PRD-009: resolve media_path (inputs > config) and attach media.
-        let media_path = inputs
+        // PRD-009/010: resolve media_path (inputs > config). Accepts String or FileRef.
+        let media_path_raw = inputs
             .get("media_path")
-            .and_then(|v| v.as_str())
-            .or_else(|| config.get("media_path").and_then(|v| v.as_str()))
-            .unwrap_or("");
+            .or_else(|| config.get("media_path"));
+        let media_path = match media_path_raw {
+            Some(v) => crate::llm::media::resolve_file_input(v),
+            None => String::new(),
+        };
         if !media_path.is_empty() {
             let provider_name = context.llm().provider_name();
-            let media = crate::llm::media::read_media_file(media_path, &provider_name)
+            let media = crate::llm::media::read_media_file(&media_path, &provider_name)
                 .map_err(|e| ToolError::ExecutionFailed {
                     tool_type: "ai/llm_call".into(),
                     message: e,
@@ -735,13 +737,20 @@ impl Tool for TranscribeTool {
         config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let file_path = inputs
+        // PRD-010: resolve file_path — accepts both String paths and FileRef objects.
+        let file_path_value = inputs
             .get("file_path")
-            .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),
                 message: "input 'file_path' is required".into(),
             })?;
+        let file_path = crate::llm::media::resolve_file_input(file_path_value);
+        if file_path.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: "input 'file_path' is required".into(),
+            });
+        }
 
         let model = config
             .get("model")
@@ -750,7 +759,7 @@ impl Tool for TranscribeTool {
 
         // PRD-009: Read the audio file and send as multimodal content.
         let provider_name = context.llm().provider_name();
-        let media = crate::llm::media::read_media_file(file_path, &provider_name)
+        let media = crate::llm::media::read_media_file(&file_path, &provider_name)
             .map_err(|e| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),
                 message: e,

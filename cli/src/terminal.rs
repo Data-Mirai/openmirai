@@ -166,6 +166,7 @@ fn type_map(t: &datamirai_engine::FieldType) -> &'static str {
         datamirai_engine::FieldType::Object => "object",
         datamirai_engine::FieldType::Array => "array",
         datamirai_engine::FieldType::Integer => "integer",
+        datamirai_engine::FieldType::File => "file",
     }
 }
 

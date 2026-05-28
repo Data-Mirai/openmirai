@@ -1,0 +1,37 @@
+# Hello World — The simplest possible agent
+#
+# A single LLM call that answers a question. Three nodes, two edges.
+# This is the "Hello World" of agentic workflows.
+#
+# Run:
+#   mirai run examples/hello-world.yaml
+#   mirai run examples/hello-world.yaml --input '{"query": "What is Rust?"}'
+#   mirai run examples/hello-world.yaml --provider claude --api-key $ANTHROPIC_API_KEY
+
+name: hello-world
+version: v1
+description: "Answer a question using an LLM"
+
+graph:
+  nodes:
+    # Entry point — receives the user's input
+    - id: start
+      tool_type: trigger/manual
+
+    # Call the LLM with the user's question
+    - id: think
+      tool_type: ai/llm_call
+      config:
+        prompt: "Answer the following question concisely and accurately."
+        temperature: 0.7
+        max_tokens: 512
+
+    # Format and return the final response
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: think
+    - source: think
+      target: respond

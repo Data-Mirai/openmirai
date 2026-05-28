@@ -143,22 +143,6 @@ impl OllamaAdapter {
         converted
     }
 
-    /// Map a reqwest error to [`LLMError`].
-    fn map_reqwest_error(err: reqwest::Error) -> LLMError {
-        if err.is_timeout() {
-            LLMError::Timeout
-        } else if err.is_connect() {
-            LLMError::ConnectionError(err.to_string())
-        } else if let Some(status) = err.status() {
-            LLMError::RequestFailed {
-                status: status.as_u16(),
-                body: err.to_string(),
-            }
-        } else {
-            LLMError::ConnectionError(err.to_string())
-        }
-    }
-
     /// Query `/api/show` to get the context_length of a model.
     async fn get_model_context_length(&self, model_name: &str) -> Option<u32> {
         let url = format!("{}/api/show", self.base_url);
@@ -226,7 +210,7 @@ impl LLMAdapter for OllamaAdapter {
             .json(&payload)
             .send()
             .await
-            .map_err(Self::map_reqwest_error)?;
+            .map_err(super::error::map_reqwest_error)?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -304,7 +288,7 @@ impl LLMAdapter for OllamaAdapter {
             .json(&payload)
             .send()
             .await
-            .map_err(Self::map_reqwest_error)?;
+            .map_err(super::error::map_reqwest_error)?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -411,7 +395,7 @@ impl LLMAdapter for OllamaAdapter {
             .json(&payload)
             .send()
             .await
-            .map_err(Self::map_reqwest_error)?;
+            .map_err(super::error::map_reqwest_error)?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -555,7 +539,7 @@ impl LLMAdapter for OllamaAdapter {
             .get(&url)
             .send()
             .await
-            .map_err(Self::map_reqwest_error)?;
+            .map_err(super::error::map_reqwest_error)?;
 
         let status = resp.status();
         if !status.is_success() {

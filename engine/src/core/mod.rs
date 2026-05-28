@@ -6,6 +6,8 @@ pub mod graph;
 pub mod runner;
 pub mod schema;
 pub mod state;
+pub mod value_type;
+pub mod well_known;
 
 pub use agent_spec::{
     AgentConfig, AgentEdgeSpec, AgentGraphSpec, AgentHookSpec, AgentMcpServerSpec, AgentNodeSpec,
@@ -26,4 +28,4 @@ pub use runner::{
     ToolError, ToolExecutor, TraceEntry, TraceStatus, TranscriptEntry,
 };
 pub use schema::{ColumnDef, ColumnType, SchemaError, TableSchema};
-pub use state::{SharedState, StateError};
+pub use state::{ExecutionState, SharedState, StateError};

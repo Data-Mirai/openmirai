@@ -1,5 +1,4 @@
 pub mod benchmark;
-pub mod channels;
 pub mod core;
 pub mod db;
 pub mod energy;
@@ -11,11 +10,12 @@ pub mod memory;
 pub mod observability;
 pub mod rag;
 pub mod render;
-pub mod resources;
+pub mod adapters;
 pub mod security;
 pub mod runtime;
 pub mod sandbox;
 pub mod search;
+#[cfg(feature = "server")]
 pub mod server;
 pub mod soul;
 pub mod streaming;
@@ -24,7 +24,6 @@ pub mod tools;
 pub mod triggers;
 pub mod universe;
 pub mod vault;
-pub mod voice;
 
 // Re-export core types explicitly (no glob).
 pub use crate::core::agent_spec::{
@@ -44,7 +43,8 @@ pub use crate::core::runner::{
     ToolExecutor, TraceEntry, TraceStatus, TranscriptEntry,
 };
 pub use crate::core::schema::{ColumnDef, ColumnType, SchemaError, TableSchema};
-pub use crate::core::state::{SharedState, StateError};
+pub use crate::core::state::{ExecutionState, SharedState, StateError};
+pub use crate::core::value_type::ValueType;
 
 // Re-export tool-system types for convenience.
 pub use crate::tools::{
@@ -69,8 +69,9 @@ pub use crate::db::{
 // Re-export runtime types.
 pub use crate::runtime::{AgentRuntime, RuntimeAgentRecord, RuntimeAgentStatus, RuntimeError, Scheduler};
 
-// Re-export resource types.
-pub use crate::resources::{
-    AdapterBridgeLLMResource, InMemoryDBResource, InMemoryStorageResource, MockLLMResource,
-    OllamaLLMResource, SimpleExecutionContext,
+// Re-export adapter types (formerly "resources").
+pub use crate::adapters::{
+    AdapterBridgeLLMResource, DefaultExecutionContext, InMemoryDBResource,
+    InMemoryStorageResource, MockLLMResource, OllamaLLMResource,
 };
+

@@ -1,0 +1,54 @@
+# Data Pipeline — Multi-step workflow with data flow
+#
+# A realistic agent that: reads a file, passes its content to an LLM
+# for analysis, and writes the result to storage. Demonstrates data_map
+# (passing data between nodes) and multiple tool types.
+#
+# Run:
+#   mirai run examples/data-pipeline.yaml --input '{"file_path": "README.md"}'
+
+name: data-pipeline
+version: v1
+description: "Read a file, analyze with LLM, save the result"
+
+graph:
+  nodes:
+    # Entry point
+    - id: start
+      tool_type: trigger/manual
+
+    # Step 1: Read the input file
+    - id: read
+      tool_type: filesystem/read_file
+
+    # Step 2: Analyze the content with an LLM
+    - id: analyze
+      tool_type: ai/llm_call
+      config:
+        prompt: |
+          Analyze the following text and provide:
+          1. A one-line summary
+          2. Key topics covered
+          3. Suggested improvements
+        temperature: 0.5
+        max_tokens: 1024
+
+    # Step 3: Return the analysis
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: read
+      # Pass the file path from trigger input to the read node
+      data_map:
+        path: "start.file_path"
+
+    - source: read
+      target: analyze
+      # Pass the file content as context to the LLM
+      data_map:
+        context: "read.content"
+
+    - source: analyze
+      target: respond

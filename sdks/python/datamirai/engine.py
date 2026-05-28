@@ -69,7 +69,7 @@ class Engine:
 
         # First, load the agent via from-spec endpoint.
         resp = requests.post(
-            f"{self.server_url}/api/agents/from-spec",
+            f"{self.server_url}/api/v1/agents/from-spec",
             json=agent.spec,
             timeout=10,
         )
@@ -78,7 +78,7 @@ class Engine:
 
         # Then stream execution.
         resp = requests.post(
-            f"{self.server_url}/api/agents/{agent_id}/stream",
+            f"{self.server_url}/api/v1/agents/{agent_id}/stream",
             json={"trigger_data": input or {}},
             stream=True,
             headers={"Accept": "text/event-stream"},
@@ -118,7 +118,7 @@ class Engine:
 
         # Load agent.
         resp = requests.post(
-            f"{self.server_url}/api/agents/from-spec",
+            f"{self.server_url}/api/v1/agents/from-spec",
             json=agent.spec,
             timeout=10,
         )
@@ -127,7 +127,7 @@ class Engine:
 
         # Execute.
         resp = requests.post(
-            f"{self.server_url}/api/agents/{agent_id}/execute",
+            f"{self.server_url}/api/v1/agents/{agent_id}/execute",
             json={"trigger_data": input or {}},
             timeout=timeout,
         )

@@ -1,8 +1,10 @@
-//! Bridge between `LLMAdapter` (llm module) and `LLMResource` (resources module).
+//! Bridge between `LLMAdapter` (llm module) and `LLMResource` (execution context).
 //!
-//! This allows any provider adapter (Ollama, OpenAI, Claude, Groq, etc.) to be
-//! used as an `LLMResource` in the `ExecutionContext`, bridging the two trait
-//! systems seamlessly.
+//! This is the [Adapter pattern](https://en.wikipedia.org/wiki/Adapter_pattern):
+//! it allows any provider adapter (Ollama, OpenAI, Claude, Groq, etc.) to be
+//! used as an `LLMResource` in the `ExecutionContext`.
+//!
+//! See `LLMAdapter` doc comment for the rationale behind the two-layer architecture.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};

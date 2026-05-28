@@ -3,6 +3,8 @@
 //! Ported from Python's `setup_wizard.py`. Uses crossterm for raw-mode
 //! arrow-key selection.
 
+#![allow(dead_code)]
+
 use std::io::{self, Write};
 use std::process::Command;
 use std::time::Duration;

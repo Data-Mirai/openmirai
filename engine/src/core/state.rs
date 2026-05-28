@@ -9,6 +9,9 @@ use thiserror::Error;
 // Errors
 // ---------------------------------------------------------------------------
 
+/// Backward-compat alias.
+pub type SharedState = ExecutionState;
+
 #[derive(Debug, Error)]
 pub enum StateError {
     #[error("output already set for node `{0}` (use overwrite=true to replace)")]
@@ -19,7 +22,7 @@ pub enum StateError {
 }
 
 // ---------------------------------------------------------------------------
-// SharedState
+// ExecutionState
 // ---------------------------------------------------------------------------
 
 /// Thread-safe execution state container.
@@ -27,11 +30,11 @@ pub enum StateError {
 /// Each node writes its output exactly once (unless overwrite is enabled).
 /// Multiple readers can access state concurrently via `Arc<RwLock<...>>`.
 #[derive(Debug, Clone)]
-pub struct SharedState {
+pub struct ExecutionState {
     inner: Arc<RwLock<HashMap<String, HashMap<String, serde_json::Value>>>>,
 }
 
-impl SharedState {
+impl ExecutionState {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashMap::new())),
@@ -107,7 +110,7 @@ impl SharedState {
     }
 }
 
-impl Default for SharedState {
+impl Default for ExecutionState {
     fn default() -> Self {
         Self::new()
     }
@@ -115,7 +118,7 @@ impl Default for SharedState {
 
 // -- Serde: serialize as the plain HashMap snapshot, deserialize back. ------
 
-impl Serialize for SharedState {
+impl Serialize for ExecutionState {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let map = self
             .inner
@@ -129,7 +132,7 @@ impl Serialize for SharedState {
     }
 }
 
-impl<'de> Deserialize<'de> for SharedState {
+impl<'de> Deserialize<'de> for ExecutionState {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let map = HashMap::<String, HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
         Ok(Self {
@@ -138,12 +141,12 @@ impl<'de> Deserialize<'de> for SharedState {
     }
 }
 
-// Compile-time assertions that SharedState is Send + Sync.
+// Compile-time assertions that ExecutionState is Send + Sync.
 const _: fn() = || {
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
-    assert_send::<SharedState>();
-    assert_sync::<SharedState>();
+    assert_send::<ExecutionState>();
+    assert_sync::<ExecutionState>();
 };
 
 // ---------------------------------------------------------------------------
@@ -164,13 +167,13 @@ mod tests {
 
     #[test]
     fn new_state_is_empty() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         assert!(s.is_empty());
     }
 
     #[test]
     fn set_and_get() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         let data = output(&[("text", json!("hello"))]);
         s.set("n1", data.clone(), false).unwrap();
 
@@ -180,27 +183,27 @@ mod tests {
 
     #[test]
     fn get_field_returns_value() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("score", json!(42))]), false).unwrap();
         assert_eq!(s.get_field("n1", "score"), Some(json!(42)));
     }
 
     #[test]
     fn get_field_missing_node() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         assert_eq!(s.get_field("ghost", "x"), None);
     }
 
     #[test]
     fn get_field_missing_field() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("a", json!(1))]), false).unwrap();
         assert_eq!(s.get_field("n1", "b"), None);
     }
 
     #[test]
     fn write_once_semantics() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("v", json!(1))]), false).unwrap();
         let err = s.set("n1", output(&[("v", json!(2))]), false).unwrap_err();
         assert!(matches!(err, StateError::AlreadySet(_)));
@@ -210,7 +213,7 @@ mod tests {
 
     #[test]
     fn overwrite_allowed() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("v", json!(1))]), false).unwrap();
         s.set("n1", output(&[("v", json!(2))]), true).unwrap();
         assert_eq!(s.get_field("n1", "v"), Some(json!(2)));
@@ -218,7 +221,7 @@ mod tests {
 
     #[test]
     fn snapshot_is_independent() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("x", json!(1))]), false).unwrap();
         let snap = s.snapshot();
 
@@ -232,7 +235,7 @@ mod tests {
 
     #[test]
     fn clone_shares_arc() {
-        let s1 = SharedState::new();
+        let s1 = ExecutionState::new();
         let s2 = s1.clone();
 
         s1.set("n1", output(&[("a", json!(1))]), false).unwrap();
@@ -243,7 +246,7 @@ mod tests {
 
     #[test]
     fn get_field_nested_traversal() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set(
             "trigger",
             output(&[("payload", json!({"question": "hola", "context": "sobre IA"}))]),
@@ -269,7 +272,7 @@ mod tests {
 
     #[test]
     fn get_field_deep_nesting() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("a", json!({"b": {"c": {"d": "deep"}}}))]), false)
             .unwrap();
         assert_eq!(s.get_field("n1", "a.b.c.d"), Some(json!("deep")));
@@ -279,7 +282,7 @@ mod tests {
 
     #[test]
     fn get_field_nested_missing_returns_none() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("data", json!("just a string"))]), false)
             .unwrap();
         // Path goes through a non-object → None, no panic
@@ -288,7 +291,7 @@ mod tests {
 
     #[test]
     fn get_field_nested_nonexistent_intermediate() {
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("a", json!({"b": 42}))]), false).unwrap();
         // b is a number, can't traverse into it
         assert_eq!(s.get_field("n1", "a.b.c"), None);
@@ -300,7 +303,7 @@ mod tests {
     fn concurrent_reads() {
         use std::thread;
 
-        let s = SharedState::new();
+        let s = ExecutionState::new();
         s.set("n1", output(&[("v", json!(42))]), false).unwrap();
 
         let handles: Vec<_> = (0..8)

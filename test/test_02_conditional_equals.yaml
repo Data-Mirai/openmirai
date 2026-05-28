@@ -1,0 +1,55 @@
+# Test 02: Conditional routing with equals
+#
+# Gradient: exclusive routing — only ONE branch should execute
+# Validates: edge conditions, equals operator, no fan-out when conditions match
+#
+# Expected: trigger → check → route_b (because priority = "low", not "high")
+# Trace = 3 nodes. route_a must NOT appear.
+
+name: test-02-conditional-equals
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          priority: low
+
+    - id: check
+      tool_type: logic/condition
+      config:
+        field: priority
+        op: equals
+        value: high
+
+    - id: route_a
+      tool_type: output/response
+      config:
+        message: "HIGH priority path"
+
+    - id: route_b
+      tool_type: output/response
+      config:
+        message: "LOW priority path (fallback)"
+
+  edges:
+    - source: trigger
+      target: check
+      data_map:
+        priority: "trigger.payload"
+
+    - source: check
+      target: route_a
+      condition:
+        field: result
+        op: equals
+        value: true
+
+    - source: check
+      target: route_b
+      condition:
+        field: result
+        op: equals
+        value: false

@@ -1,0 +1,63 @@
+# Test 07: Deep chain — 8 nodes in sequence
+#
+# Gradient: stress test for long sequential pipelines
+# Validates: cursor traversal over many hops, state accumulation
+#
+# trigger → step1 → step2 → step3 → step4 → step5 → step6 → respond
+# Trace must show exactly 8 nodes, all with status ok.
+
+name: test-07-deep-chain
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          depth: 0
+
+    - id: step1
+      tool_type: logic/merge
+      config: {}
+
+    - id: step2
+      tool_type: logic/merge
+      config: {}
+
+    - id: step3
+      tool_type: logic/merge
+      config: {}
+
+    - id: step4
+      tool_type: logic/merge
+      config: {}
+
+    - id: step5
+      tool_type: logic/merge
+      config: {}
+
+    - id: step6
+      tool_type: logic/merge
+      config: {}
+
+    - id: respond
+      tool_type: output/response
+      config:
+        message: "reached depth 7"
+
+  edges:
+    - source: trigger
+      target: step1
+    - source: step1
+      target: step2
+    - source: step2
+      target: step3
+    - source: step3
+      target: step4
+    - source: step4
+      target: step5
+    - source: step5
+      target: step6
+    - source: step6
+      target: respond

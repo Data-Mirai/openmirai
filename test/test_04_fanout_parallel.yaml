@@ -1,0 +1,51 @@
+# Test 04: Fan-out parallel execution
+#
+# Gradient: multiple unconditional edges → parallel execution
+# Validates: fan-out detection, join node, all branches execute
+#
+# trigger → [branch_a, branch_b, branch_c] → join
+# All 3 branches must execute. Trace = 5 nodes.
+
+name: test-04-fanout-parallel
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          task: "parallel test"
+
+    - id: branch_a
+      tool_type: logic/merge
+      config: {}
+
+    - id: branch_b
+      tool_type: logic/merge
+      config: {}
+
+    - id: branch_c
+      tool_type: logic/merge
+      config: {}
+
+    - id: join
+      tool_type: output/response
+      config:
+        message: "all branches completed"
+
+  edges:
+    # Fan-out: 3 unconditional edges from trigger
+    - source: trigger
+      target: branch_a
+    - source: trigger
+      target: branch_b
+    - source: trigger
+      target: branch_c
+    # Fan-in: all branches converge to join
+    - source: branch_a
+      target: join
+    - source: branch_b
+      target: join
+    - source: branch_c
+      target: join

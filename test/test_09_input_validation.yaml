@@ -1,0 +1,50 @@
+# Test 09: Input validation with typed schema
+#
+# Gradient: agent input contract enforcement (PRD-004)
+# Validates: spec.inputs schema, required fields, type checking, defaults
+#
+# This agent declares typed inputs. Running it WITHOUT required "question"
+# should fail with a validation error. Running WITH it should succeed.
+#
+# Run (should succeed):
+#   mirai run test/test_09_input_validation.yaml --provider mock --input '{"question": "hello"}'
+#
+# Run (should fail with validation error):
+#   mirai run test/test_09_input_validation.yaml --provider mock --input '{}'
+
+name: test-09-input-validation
+version: v1
+
+inputs:
+  question:
+    type: text
+    required: true
+    description: "The user's question"
+  language:
+    type: text
+    required: false
+    description: "Response language"
+    default: "english"
+  verbose:
+    type: boolean
+    required: false
+    default: false
+
+outputs:
+  answer:
+    type: text
+    description: "The generated answer"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: respond
+      tool_type: output/response
+      config:
+        message: "input validation passed"
+
+  edges:
+    - source: trigger
+      target: respond

@@ -1,0 +1,81 @@
+# Test 10: Complex graph — multiple features combined
+#
+# Gradient: real-world complexity — conditions + data_map + deep chain + config
+# Validates: the engine handles a realistic multi-step workflow
+#
+# Flow:
+#   trigger (payload: {type: "report", priority: 3})
+#     → classify (condition check)
+#       → [priority > 2]: urgent_path → enrich → respond
+#       → [else]: normal_path → respond
+#
+# With priority=3, expected trace: trigger → classify → urgent_path → enrich → respond
+
+name: test-10-complex-graph
+version: v1
+description: "Multi-feature integration test"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          type: "report"
+          priority: 3
+          source: "automated"
+
+    - id: classify
+      tool_type: logic/condition
+      config:
+        field: priority
+        op: greater_than
+        value: 2
+
+    - id: urgent_path
+      tool_type: logic/merge
+      config: {}
+
+    - id: normal_path
+      tool_type: logic/merge
+      config: {}
+
+    - id: enrich
+      tool_type: logic/merge
+      config: {}
+
+    - id: respond
+      tool_type: output/response
+      config:
+        message: "processing complete"
+
+  edges:
+    - source: trigger
+      target: classify
+      data_map:
+        priority: "trigger.payload"
+
+    # Urgent: priority > 2
+    - source: classify
+      target: urgent_path
+      condition:
+        field: result
+        op: equals
+        value: true
+
+    # Normal: priority <= 2
+    - source: classify
+      target: normal_path
+      condition:
+        field: result
+        op: equals
+        value: false
+
+    - source: urgent_path
+      target: enrich
+
+    - source: enrich
+      target: respond
+
+    - source: normal_path
+      target: respond

@@ -1,0 +1,60 @@
+# Test 08: Mixed conditional + unconditional edges
+#
+# Gradient: fallback behavior — what happens when NO condition matches?
+# Validates: unconditional edge acts as fallback after conditions fail
+#
+# trigger produces status = "unknown"
+# Conditional edges check for "active" and "inactive" — neither matches
+# Unconditional edge to "fallback" should catch it
+# Trace = 3 nodes: trigger → check → fallback
+
+name: test-08-mixed-conditions
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          status: "unknown"
+
+    - id: check
+      tool_type: logic/condition
+      config:
+        field: status
+        op: equals
+        value: "active"
+
+    - id: active_handler
+      tool_type: output/response
+      config:
+        message: "status is active"
+
+    - id: inactive_handler
+      tool_type: output/response
+      config:
+        message: "status is inactive"
+
+    - id: fallback
+      tool_type: output/response
+      config:
+        message: "status is neither active nor inactive — fallback"
+
+  edges:
+    - source: trigger
+      target: check
+      data_map:
+        status: "trigger.payload"
+
+    # Conditional: only if result = true (status was "active")
+    - source: check
+      target: active_handler
+      condition:
+        field: result
+        op: equals
+        value: true
+
+    # Unconditional fallback — catches everything else
+    - source: check
+      target: fallback

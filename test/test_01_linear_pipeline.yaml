@@ -1,0 +1,32 @@
+# Test 01: Linear Pipeline — the simplest possible execution
+#
+# Gradient: basic sequential traversal (3 nodes, 2 edges, zero conditions)
+# Validates: entry node detection, edge following, output response
+#
+# Expected: trigger → merge → respond. Trace = 3 nodes, status = Completed.
+
+name: test-01-linear-pipeline
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          message: "hello from test 01"
+
+    - id: merge
+      tool_type: logic/merge
+      config: {}
+
+    - id: respond
+      tool_type: output/response
+      config:
+        message: "pipeline complete"
+
+  edges:
+    - source: trigger
+      target: merge
+    - source: merge
+      target: respond

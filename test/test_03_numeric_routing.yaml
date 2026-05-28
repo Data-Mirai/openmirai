@@ -1,0 +1,56 @@
+# Test 03: Numeric conditions — greater_than / less_or_equal
+#
+# Gradient: numeric comparison operators (not just string equality)
+# Validates: greater_than and less_or_equal evaluate correctly on numbers
+#
+# score = 42. 42 is NOT > 80, so "above" should NOT execute.
+# 42 IS <= 80, so "below" SHOULD execute.
+# Trace = 3 nodes: trigger → check → below.
+
+name: test-03-numeric-routing
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          score: 42
+
+    - id: check
+      tool_type: logic/condition
+      config:
+        field: score
+        op: greater_than
+        value: 80
+
+    - id: above
+      tool_type: output/response
+      config:
+        message: "score above 80"
+
+    - id: below
+      tool_type: output/response
+      config:
+        message: "score 80 or below"
+
+  edges:
+    - source: trigger
+      target: check
+      data_map:
+        score: "trigger.payload"
+
+    - source: check
+      target: above
+      condition:
+        field: result
+        op: equals
+        value: true
+
+    - source: check
+      target: below
+      condition:
+        field: result
+        op: equals
+        value: false

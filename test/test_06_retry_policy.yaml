@@ -1,0 +1,39 @@
+# Test 06: Retry policy configuration
+#
+# Gradient: retry mechanism with explicit policy on a node
+# Validates: retry_policy parsing from YAML, backoff strategy
+#
+# This agent has a trigger with an explicit retry policy.
+# Even though trigger/manual won't fail, the config must parse correctly.
+
+name: test-06-retry-policy
+version: v1
+
+config:
+  max_iterations: 10
+  retry:
+    max_retries: 5
+    backoff: exponential
+    on_failure: stop
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          data: "retry test"
+        retry_policy:
+          max_retries: 2
+          backoff: linear
+          initial_delay_secs: 0.1
+          on_failure: skip
+
+    - id: respond
+      tool_type: output/response
+      config:
+        message: "survived retries"
+
+  edges:
+    - source: trigger
+      target: respond

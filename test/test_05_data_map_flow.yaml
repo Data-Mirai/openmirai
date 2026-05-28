@@ -1,0 +1,37 @@
+# Test 05: Data map — passing data between nodes
+#
+# Gradient: data_map expressions (${node.field} templates + direct refs)
+# Validates: resolve_inputs, resolve_expression, template substitution
+#
+# trigger produces payload.name = "Gabriel"
+# merge receives it via data_map
+# respond receives merged output
+# Final output should contain the original name.
+
+name: test-05-data-map-flow
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          name: "Gabriel"
+          company: "Data Mirai"
+
+    - id: merge
+      tool_type: logic/merge
+      config: {}
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: trigger
+      target: merge
+      data_map:
+        user_name: "trigger.payload"
+
+    - source: merge
+      target: respond

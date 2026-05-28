@@ -772,7 +772,7 @@ impl Tool for TranscribeTool {
             "transcribe: read media file, sending as multimodal"
         );
 
-        let prompt = "Transcribe this audio. Output only the raw transcription text, no timestamps, no speaker labels, no formatting.";
+        let prompt = "Transcribe this audio literally and faithfully. Include every word exactly as spoken, including filler words (um, uh, like, etc.), false starts, and repetitions. Do not clean up, correct, or interpret anything. Output only the raw transcription text, no timestamps, no speaker labels, no formatting.";
 
         // Pass media via __user_media carrier (bridge attaches it to user prompt).
         let media_json = serde_json::to_value(vec![&media]).unwrap_or(json!([]));

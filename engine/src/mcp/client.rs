@@ -103,6 +103,13 @@ pub trait Transport: Send + Sync {
     /// Send a JSON-RPC request and return the response.
     async fn send(&self, request: JsonRpcRequest) -> Result<JsonRpcResponse, MCPError>;
 
+    /// Send a JSON-RPC notification (fire-and-forget, no response expected).
+    ///
+    /// Per JSON-RPC 2.0 spec, notifications are requests without a response.
+    /// The server MUST NOT reply.  This method writes to the transport
+    /// without waiting to read anything back.
+    async fn send_notification(&self, request: JsonRpcRequest) -> Result<(), MCPError>;
+
     /// Tear down the connection and release resources.
     async fn close(&mut self) -> Result<(), MCPError>;
 }
@@ -267,6 +274,32 @@ impl Transport for StdioTransport {
         Ok(response)
     }
 
+    async fn send_notification(&self, request: JsonRpcRequest) -> Result<(), MCPError> {
+        self.spawn().await?;
+
+        let mut guard = self.child.lock().await;
+        let child = guard
+            .as_mut()
+            .ok_or_else(|| MCPError::TransportError("subprocess not running".into()))?;
+
+        let payload = serde_json::to_string(&request)
+            .map_err(|e| MCPError::TransportError(format!("serialize error: {e}")))?;
+        debug!(payload = %payload, "stdio >>> (notification)");
+
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| MCPError::TransportError("stdin not available".into()))?;
+        stdin.write_all(payload.as_bytes()).await
+            .map_err(|e| MCPError::TransportError(format!("stdin write: {e}")))?;
+        stdin.write_all(b"\n").await
+            .map_err(|e| MCPError::TransportError(format!("stdin newline: {e}")))?;
+        stdin.flush().await
+            .map_err(|e| MCPError::TransportError(format!("stdin flush: {e}")))?;
+
+        Ok(())
+    }
+
     async fn close(&mut self) -> Result<(), MCPError> {
         let mut guard = self.child.lock().await;
         if let Some(mut child) = guard.take() {
@@ -358,6 +391,17 @@ impl Transport for HttpTransport {
         Ok(response)
     }
 
+    async fn send_notification(&self, request: JsonRpcRequest) -> Result<(), MCPError> {
+        // For HTTP, fire-and-forget: send the request, ignore the response body.
+        let mut builder = self.client.post(&self.url).json(&request);
+        for (k, v) in &self.headers {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+        debug!(url = %self.url, method = %request.method, "http >>> (notification)");
+        let _ = builder.send().await;
+        Ok(())
+    }
+
     async fn close(&mut self) -> Result<(), MCPError> {
         // HTTP is stateless -- nothing to close.
         Ok(())
@@ -441,13 +485,11 @@ impl MCPClient {
             "MCP initialized"
         );
 
-        // Per spec, client MUST send `notifications/initialized` after init.
-        // Fire-and-forget -- use id 0 semantically (server ignores id on notifications,
-        // but our Transport::send requires a JsonRpcRequest).
+        // Per JSON-RPC spec, client MUST send `notifications/initialized` after init.
+        // Notifications have no response — use send_notification() to avoid blocking.
         let notif_id = self.next_id();
         let notif = JsonRpcRequest::new(notif_id, "notifications/initialized", None);
-        // Best-effort -- ignore errors on the notification.
-        let _ = self.transport.send(notif).await;
+        self.transport.send_notification(notif).await?;
 
         Ok(())
     }
@@ -537,6 +579,12 @@ mod tests {
                 return Err(MCPError::TransportError("no more canned responses".into()));
             }
             Ok(responses.remove(0))
+        }
+
+        async fn send_notification(&self, request: JsonRpcRequest) -> Result<(), MCPError> {
+            // Record the notification but don't consume a response.
+            self.state.sent.lock().unwrap().push(request);
+            Ok(())
         }
 
         async fn close(&mut self) -> Result<(), MCPError> {

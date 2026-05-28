@@ -83,7 +83,7 @@ fn default_position() -> HashMap<String, f64> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentEdgeSpec {
-    /// Edge ID — optional in JSON/YAML. Auto-generated during validate() (FEAT-034).
+    /// Edge ID — optional in YAML. Auto-generated during validate() (FEAT-034).
     #[serde(default)]
     pub id: String,
     pub source: String,
@@ -537,8 +537,20 @@ impl AgentSpec {
         Ok(spec)
     }
 
-    /// Load from file — YAML-only (serde_yaml parses both YAML and JSON syntax).
+    /// Load an agent spec from a YAML file.
+    ///
+    /// Only `.yaml` and `.yml` extensions are accepted.  Agent specs are
+    /// YAML-only for readability — JSON is not supported for this format.
     pub fn from_file(path: &str) -> Result<Self, AgentSpecError> {
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if !matches!(ext, "yaml" | "yml") {
+            return Err(AgentSpecError::UnsupportedExtension(format!(
+                ".{ext} — agent specs must be YAML (.yaml or .yml)"
+            )));
+        }
         let content = std::fs::read_to_string(path)?;
         Self::from_yaml(&content)
     }
@@ -766,12 +778,10 @@ mod tests {
     }
 
     #[test]
-    fn yaml_parses_json_syntax() {
-        // serde_yaml is a superset of JSON — JSON syntax parses fine
-        let json_str = r#"{"name":"json-agent","graph":{"nodes":[{"id":"n1","tool_type":"ai/llm_call"}],"edges":[]}}"#;
-        let spec = AgentSpec::from_yaml(json_str).unwrap();
-        assert_eq!(spec.name, "json-agent");
-        assert_eq!(spec.graph.nodes.len(), 1);
+    fn from_file_rejects_json_extension() {
+        // Agent specs are YAML-only.
+        let result = AgentSpec::from_file("agent.json");
+        assert!(matches!(result, Err(AgentSpecError::UnsupportedExtension(_))));
     }
 
     #[test]

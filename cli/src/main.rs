@@ -188,7 +188,7 @@ fn build_context(
 
 /// Execute an agent from a JSON/YAML file.
 ///
-/// Usage: mirai run <agent.json|agent.yaml> [--input '{"key":"value"}'] [--provider ollama] [--model gemma3]
+/// Usage: mirai run <agent.yaml> [--input '{"key":"value"}'] [--provider ollama] [--model gemma3]
 ///
 /// Output: JSON with status, state, trace, transcript.
 async fn run_agent(args: &[String]) {
@@ -196,7 +196,7 @@ async fn run_agent(args: &[String]) {
         Some(p) if !p.starts_with("--") => p.as_str(),
         _ => {
             eprintln!(
-                "{}Usage: mirai run <agent.json|agent.yaml> [--input '{{...}}'] [--provider <p>] [--model <m>]{}",
+                "{}Usage: mirai run <agent.yaml> [--input '{{...}}'] [--provider <p>] [--model <m>]{}",
                 colors::YELLOW,
                 colors::RESET
             );
@@ -420,7 +420,7 @@ fn validate_agent(args: &[String]) {
         Some(p) => p.as_str(),
         None => {
             eprintln!(
-                "{}Usage: mirai validate <agent.json|agent.yaml>{}",
+                "{}Usage: mirai validate <agent.yaml>{}",
                 colors::YELLOW,
                 colors::RESET
             );
@@ -860,7 +860,7 @@ fn print_help() {
     mirai run agent.yaml --provider ollama --model gemma3
     mirai run agent.yaml --provider openai --model gpt-4o
     mirai run agent.yaml --input '{{\"query\": \"hello\"}}'
-    mirai validate my-agent.json
+    mirai validate my-agent.yaml
 ",
         bold = colors::BOLD,
         reset = colors::RESET,

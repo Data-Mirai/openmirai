@@ -1,0 +1,37 @@
+# DEMO EN VIVO — Agente que responde preguntas
+#
+# Corre con: mirai run test/demo_live.yaml --input '{"question": "Qué es Rust?"}'
+
+name: demo-qa
+version: v1
+description: "Agente de Q&A para demo en vivo"
+
+inputs:
+  question:
+    type: text
+    required: true
+    description: "La pregunta del usuario"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: think
+      tool_type: ai/llm_call
+      config:
+        prompt: "Responde la siguiente pregunta de forma concisa y clara en español:"
+        temperature: 0.7
+        max_tokens: 512
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: trigger
+      target: think
+      data_map:
+        context: "trigger.user_input"
+
+    - source: think
+      target: respond

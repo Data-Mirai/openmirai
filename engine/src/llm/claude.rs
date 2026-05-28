@@ -610,4 +610,34 @@ mod tests {
         let adapter = ClaudeAdapter::new("test-key");
         assert_eq!(adapter.provider_name(), "claude");
     }
+
+    #[test]
+    fn user_message_with_image_media_produces_content_blocks() {
+        use crate::llm::media::MediaContent;
+        let messages = vec![Message {
+            role: "user".into(),
+            content: Some("Describe this image".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: Some(vec![MediaContent {
+                mime_type: "image/png".into(),
+                data: "dGVzdA==".into(),
+                source_path: None,
+            }]),
+        }];
+
+        let (_, converted) = ClaudeAdapter::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["role"], "user");
+
+        let content = converted[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        // Claude: image block first, then text.
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["type"], "base64");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
+        assert_eq!(content[0]["source"]["data"], "dGVzdA==");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "Describe this image");
+    }
 }

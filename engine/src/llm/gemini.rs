@@ -622,4 +622,47 @@ mod tests {
         let adapter = GeminiAdapter::new("test-key");
         assert_eq!(adapter.provider_name(), "gemini");
     }
+
+    #[test]
+    fn user_message_with_media_produces_inline_data_parts() {
+        use crate::llm::media::MediaContent;
+        let messages = vec![Message {
+            role: "user".into(),
+            content: Some("Transcribe this audio".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: Some(vec![MediaContent {
+                mime_type: "audio/mp4".into(),
+                data: "dGVzdA==".into(), // "test" in base64
+                source_path: Some("/tmp/test.m4a".into()),
+            }]),
+        }];
+
+        let (_, contents) = GeminiAdapter::convert_messages(&messages);
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["text"], "Transcribe this audio");
+        assert_eq!(parts[1]["inline_data"]["mime_type"], "audio/mp4");
+        assert_eq!(parts[1]["inline_data"]["data"], "dGVzdA==");
+    }
+
+    #[test]
+    fn user_message_without_media_is_unchanged() {
+        let messages = vec![Message {
+            role: "user".into(),
+            content: Some("Hello".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: None,
+        }];
+
+        let (_, contents) = GeminiAdapter::convert_messages(&messages);
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], "Hello");
+        assert!(parts[0].get("inline_data").is_none());
+    }
 }

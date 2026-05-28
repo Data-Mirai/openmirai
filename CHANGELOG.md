@@ -4,6 +4,39 @@ All notable changes to datamirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.5.0 (2026-05-28)
+
+### Added
+- **Multimodal file input (PRD-009)**: `ai/transcribe` and `ai/llm_call` now accept real audio, video, and image files. The engine reads the file, base64-encodes it, and sends it as native multimodal content to the LLM provider.
+  - `ai/transcribe`: sends audio/video/image as inline data (replaces text-only placeholder)
+  - `ai/llm_call`: new `media_path` config field for attaching files alongside text prompts
+  - Supported formats: audio (.m4a, .mp3, .wav, .ogg, .flac), video (.mov, .mp4, .webm), image (.png, .jpg, .webp, .gif)
+  - Provider support: Gemini (all types), Claude (images), OpenAI/Groq (images), Ollama (images)
+  - Validation: file existence, size limit (20MB), MIME type + provider compatibility
+- **File-first data layer (PRD-010)**: Files are first-class citizens in the graph.
+  - `FileRef`: standardized JSON object (`{_type, path, mime_type, size_bytes}`) that flows through `data_map` like any other value
+  - `FieldType::File`: new field type for tool specs that validates FileRef objects
+  - `resolve_file_input()`: tools auto-resolve both string paths and FileRef objects (backward compatible)
+  - `system/bash` `output_files` config: declare files the command generates — engine produces FileRef outputs
+  - `MIRAI_SCRATCH_DIR`: per-execution temp directory injected as env var to bash tools
+  - `create_file_ref()`: utility to construct FileRef from any file path
+- **`system/bash` environment variables (PRD-009)**: `data_map` values now available as `MIRAI_*` env vars in bash commands.
+- **`LLMResource::provider_name()`**: tools can query which LLM provider is active.
+- New examples: `audio-transcription.yaml`, `image-analysis.yaml`
+- All examples updated with `inputs:` contract declarations (PRD-004 best practice)
+
+### Changed
+- `Message` struct: new optional `media` field for multimodal content
+- All 7 LLM adapters (Gemini, Claude, OpenAI, Groq, OpenRouter, NVIDIA, Ollama) handle media in their native format
+- `ai/transcribe` default prompt: now produces literal, faithful transcription (including filler words)
+
+### Consumer action
+- **No breaking changes** — all v0.4.x agents work unchanged. `media`, `output_files`, and `FileRef` are all opt-in.
+- Update binary. New capabilities available via new config fields.
+- Recommended: add `inputs:` section to your agent YAMLs for clear host contracts.
+
+---
+
 ## v0.4.5 (2026-05-28)
 
 ### Added

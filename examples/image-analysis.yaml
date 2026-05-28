@@ -1,0 +1,56 @@
+# Image Analysis — Multimodal vision (v0.5.0)
+#
+# Receives an image file and describes its contents using a
+# multimodal LLM. Demonstrates:
+#   - File inputs (type: file)
+#   - ai/llm_call with media_path for vision
+#   - Works with any image: screenshots, photos, documents
+#
+# Run:
+#   mirai run examples/image-analysis.yaml --provider gemini \
+#     --api-key $GOOGLE_API_KEY \
+#     --input '{"image_path": "/path/to/screenshot.png"}'
+#
+#   # Also works with Claude for images:
+#   mirai run examples/image-analysis.yaml --provider claude \
+#     --api-key $ANTHROPIC_API_KEY \
+#     --input '{"image_path": "/path/to/photo.jpg"}'
+
+name: image-analysis
+version: v1
+description: "Describe image contents using multimodal LLM"
+
+inputs:
+  image_path:
+    type: file
+    required: true
+    description: "Image file to analyze (.png, .jpg, .webp)"
+  question:
+    type: text
+    required: false
+    default: "Describe what you see in this image in detail."
+    description: "What to ask about the image"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: analyze
+      tool_type: ai/llm_call
+      config:
+        temperature: 0.5
+        max_tokens: 1024
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: analyze
+      data_map:
+        media_path: "start.payload.image_path"
+        prompt: "start.payload.question"
+
+    - source: analyze
+      target: respond

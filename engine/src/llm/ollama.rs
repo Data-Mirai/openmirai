@@ -137,6 +137,18 @@ impl OllamaAdapter {
             if let Some(ref content) = msg.content {
                 obj["content"] = Value::String(content.clone());
             }
+            // Ollama multimodal: images field for user messages (PRD-009).
+            if msg.role == "user" {
+                if let Some(ref media_list) = msg.media {
+                    let images: Vec<Value> = media_list
+                        .iter()
+                        .map(|mc| Value::String(mc.data.clone()))
+                        .collect();
+                    if !images.is_empty() {
+                        obj["images"] = Value::Array(images);
+                    }
+                }
+            }
             converted.push(obj);
         }
 
@@ -631,12 +643,14 @@ mod tests {
                 content: Some("You are helpful.".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "user".into(),
                 content: Some("Hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
         let converted = OllamaAdapter::convert_messages_for_ollama(&messages);
@@ -652,6 +666,7 @@ mod tests {
             content: Some("{\"result\": 42}".into()),
             tool_calls: None,
             tool_call_id: Some("call_0".into()),
+            media: None,
         }];
         let converted = OllamaAdapter::convert_messages_for_ollama(&messages);
         assert_eq!(converted.len(), 1);
@@ -691,6 +706,7 @@ mod tests {
                 },
             }]),
             tool_call_id: None,
+            media: None,
         }];
         let converted = OllamaAdapter::convert_messages_for_ollama(&messages);
         assert_eq!(converted.len(), 1);

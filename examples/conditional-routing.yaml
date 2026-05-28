@@ -12,13 +12,17 @@ name: conditional-router
 version: v1
 description: "Classify input and route to the right handler"
 
+inputs:
+  query:
+    type: text
+    required: true
+    description: "The user's message to classify and handle"
+
 graph:
   nodes:
-    # Entry point
     - id: start
       tool_type: trigger/manual
 
-    # Step 1: Classify the user's intent
     - id: classify
       tool_type: ai/llm_call
       config:
@@ -29,7 +33,6 @@ graph:
         temperature: 0.0
         max_tokens: 20
 
-    # Step 2: Evaluate the classification result
     - id: check
       tool_type: logic/condition
       config:
@@ -37,7 +40,6 @@ graph:
         op: equals
         value: support
 
-    # Branch A: Support handler
     - id: support_handler
       tool_type: ai/llm_call
       config:
@@ -45,7 +47,6 @@ graph:
         temperature: 0.7
         max_tokens: 512
 
-    # Branch B: Default handler (billing, technical, or unrecognized)
     - id: default_handler
       tool_type: ai/llm_call
       config:
@@ -53,18 +54,18 @@ graph:
         temperature: 0.7
         max_tokens: 512
 
-    # Final output
     - id: respond
       tool_type: output/response
 
   edges:
     - source: start
       target: classify
+      data_map:
+        context: "start.payload.query"
 
     - source: classify
       target: check
 
-    # If classification = "support" → go to support handler
     - source: check
       target: support_handler
       condition:
@@ -72,7 +73,6 @@ graph:
         op: equals
         value: true
 
-    # Otherwise → go to default handler
     - source: check
       target: default_handler
       condition:

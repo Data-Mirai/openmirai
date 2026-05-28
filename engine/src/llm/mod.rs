@@ -8,6 +8,7 @@ mod claude;
 mod error;
 mod gemini;
 pub mod groq;
+pub mod media;
 pub mod nvidia;
 mod ollama;
 mod openai_compat;

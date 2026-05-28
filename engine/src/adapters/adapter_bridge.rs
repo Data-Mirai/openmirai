@@ -42,6 +42,10 @@ impl AdapterBridgeLLMResource {
 
 #[async_trait]
 impl LLMResource for AdapterBridgeLLMResource {
+    fn provider_name(&self) -> &str {
+        self.adapter.provider_name()
+    }
+
     async fn call(
         &self,
         model: &str,
@@ -56,27 +60,41 @@ impl LLMResource for AdapterBridgeLLMResource {
             model
         };
 
-        // Convert context Values to Message structs
+        // Convert context Values to Message structs.
+        // Values without a "role" field are silently skipped (e.g. __user_media carrier).
         let mut messages: Vec<Message> = context
             .iter()
             .filter_map(|v| {
                 let role = v.get("role")?.as_str()?.to_string();
                 let content = v.get("content").and_then(|c| c.as_str()).map(String::from);
+                let media = v.get("media").and_then(|m| {
+                    serde_json::from_value::<Vec<crate::llm::media::MediaContent>>(m.clone()).ok()
+                });
                 Some(Message {
                     role,
                     content,
                     tool_calls: None,
                     tool_call_id: None,
+                    media,
                 })
             })
             .collect();
 
-        // Add the user prompt
+        // Extract media to attach to the user prompt message.
+        // Tools pass media via a carrier entry (no role → skipped above).
+        let user_media = context.iter().find_map(|v| {
+            v.get(crate::llm::media::USER_MEDIA_KEY).and_then(|m| {
+                serde_json::from_value::<Vec<crate::llm::media::MediaContent>>(m.clone()).ok()
+            })
+        });
+
+        // Add the user prompt (with optional media attachment).
         messages.push(Message {
             role: "user".to_string(),
             content: Some(prompt.to_string()),
             tool_calls: None,
             tool_call_id: None,
+            media: user_media,
         });
 
         let result = self

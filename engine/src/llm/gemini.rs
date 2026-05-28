@@ -130,10 +130,30 @@ impl GeminiAdapter {
                     }));
                 }
                 _ => {
-                    // user — pass through.
+                    // user — pass through, with optional media parts.
+                    let mut parts: Vec<Value> = Vec::new();
+                    if let Some(ref content) = msg.content {
+                        if !content.is_empty() {
+                            parts.push(json!({ "text": content }));
+                        }
+                    }
+                    // Append media as inline_data parts (PRD-009).
+                    if let Some(ref media_list) = msg.media {
+                        for mc in media_list {
+                            parts.push(json!({
+                                "inline_data": {
+                                    "mime_type": mc.mime_type,
+                                    "data": mc.data,
+                                }
+                            }));
+                        }
+                    }
+                    if parts.is_empty() {
+                        parts.push(json!({ "text": "" }));
+                    }
                     contents.push(json!({
                         "role": "user",
-                        "parts": [{ "text": msg.content.as_deref().unwrap_or("") }],
+                        "parts": parts,
                     }));
                 }
             }
@@ -454,6 +474,7 @@ mod tests {
             content: Some("Hello world".into()),
             tool_calls: None,
             tool_call_id: None,
+            media: None,
         }];
 
         let (_, contents) = GeminiAdapter::convert_messages(&messages);
@@ -473,12 +494,14 @@ mod tests {
                 content: Some("You are a helpful assistant.".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "user".into(),
                 content: Some("Hi".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
 
@@ -503,12 +526,14 @@ mod tests {
                 content: Some("Hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "assistant".into(),
                 content: Some("Hi there!".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
 
@@ -578,6 +603,7 @@ mod tests {
                 },
             }]),
             tool_call_id: None,
+            media: None,
         }];
 
         let (_, contents) = GeminiAdapter::convert_messages(&messages);
@@ -595,5 +621,48 @@ mod tests {
     fn provider_name_is_gemini() {
         let adapter = GeminiAdapter::new("test-key");
         assert_eq!(adapter.provider_name(), "gemini");
+    }
+
+    #[test]
+    fn user_message_with_media_produces_inline_data_parts() {
+        use crate::llm::media::MediaContent;
+        let messages = vec![Message {
+            role: "user".into(),
+            content: Some("Transcribe this audio".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: Some(vec![MediaContent {
+                mime_type: "audio/mp4".into(),
+                data: "dGVzdA==".into(), // "test" in base64
+                source_path: Some("/tmp/test.m4a".into()),
+            }]),
+        }];
+
+        let (_, contents) = GeminiAdapter::convert_messages(&messages);
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["text"], "Transcribe this audio");
+        assert_eq!(parts[1]["inline_data"]["mime_type"], "audio/mp4");
+        assert_eq!(parts[1]["inline_data"]["data"], "dGVzdA==");
+    }
+
+    #[test]
+    fn user_message_without_media_is_unchanged() {
+        let messages = vec![Message {
+            role: "user".into(),
+            content: Some("Hello".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: None,
+        }];
+
+        let (_, contents) = GeminiAdapter::convert_messages(&messages);
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], "Hello");
+        assert!(parts[0].get("inline_data").is_none());
     }
 }

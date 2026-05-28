@@ -39,6 +39,9 @@ pub enum AgentSpecError {
 
     #[error("unsupported file extension: {0}")]
     UnsupportedExtension(String),
+
+    #[error("invalid schedule: {0}")]
+    InvalidSchedule(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +58,89 @@ pub enum AgentType {
 impl Default for AgentType {
     fn default() -> Self {
         Self::Managed
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Memory Persistence Mode (PRD-008)
+// ---------------------------------------------------------------------------
+
+/// Controls how long agent memory persists between cycles/executions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryPersistMode {
+    /// Each cycle/execution starts with initial values. No carry-over.
+    None,
+    /// Live: carries between cycles within a play session. Resets on stop→play.
+    /// Managed: equivalent to None (each execute is independent).
+    Cycle,
+    /// Persists across everything: cycles, stop/play, separate executions.
+    /// Only resets with explicit clear_memory.
+    Execution,
+}
+
+impl Default for MemoryPersistMode {
+    fn default() -> Self {
+        Self::Cycle
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AgentMemorySpec (PRD-008)
+// ---------------------------------------------------------------------------
+
+/// Declares persistent memory for an agent graph.
+///
+/// Memory keys are injected into SharedState as a virtual node `memory`
+/// at the start of each execution. The `state/memory` tool persists
+/// values back according to the `persist` mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMemorySpec {
+    /// When to flush/reset memory.
+    #[serde(default)]
+    pub persist: MemoryPersistMode,
+    /// Key-value pairs with initial values.
+    pub keys: HashMap<String, serde_json::Value>,
+}
+
+// ---------------------------------------------------------------------------
+// AgentScheduleSpec (PRD-008)
+// ---------------------------------------------------------------------------
+
+/// Schedule configuration for live agents.
+///
+/// Defines when and how often the agent's graph cycles.
+/// Only meaningful when `agent_type = live`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentScheduleSpec {
+    /// Seconds between cycles. Mutually exclusive with `cron`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_seconds: Option<u64>,
+    /// Cron expression (5 fields). Mutually exclusive with `interval_seconds`.
+    /// Note: cron parsing not yet implemented in v1 — use interval_seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cron: Option<String>,
+    /// Maximum cycles before auto-stop. None = infinite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cycles: Option<u64>,
+    /// What to do when a cycle fails.
+    #[serde(default)]
+    pub on_cycle_error: CycleErrorMode,
+}
+
+/// Behavior when a live agent cycle fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CycleErrorMode {
+    /// Log the error and continue to the next cycle.
+    Continue,
+    /// Stop the agent (transition to Error state).
+    Stop,
+}
+
+impl Default for CycleErrorMode {
+    fn default() -> Self {
+        Self::Continue
     }
 }
 
@@ -100,6 +186,10 @@ pub struct AgentGraphSpec {
     pub nodes: Vec<AgentNodeSpec>,
     #[serde(default)]
     pub edges: Vec<AgentEdgeSpec>,
+    /// Persistent memory declaration (PRD-008).
+    /// Keys are injected as virtual node "memory" in SharedState.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<AgentMemorySpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -439,6 +529,9 @@ pub struct AgentSpec {
     pub outputs: Option<HashMap<String, OutputFieldSpec>>,
     #[serde(default)]
     pub graph: AgentGraphSpec,
+    /// Schedule for live agents (PRD-008). Only valid when agent_type = live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AgentScheduleSpec>,
     #[serde(default)]
     pub triggers: Vec<AgentTriggerSpec>,
     #[serde(default)]
@@ -514,6 +607,42 @@ impl AgentSpec {
                     node_id: edge.target.clone(),
                 });
             }
+        }
+
+        // PRD-008: schedule ↔ live validation
+        match (&self.agent_type, &self.schedule) {
+            (AgentType::Live, None) => {
+                return Err(AgentSpecError::InvalidSchedule(
+                    "live agents require a schedule section".to_string(),
+                ));
+            }
+            (AgentType::Managed, Some(_)) => {
+                return Err(AgentSpecError::InvalidSchedule(
+                    "schedule is only valid for live agents".to_string(),
+                ));
+            }
+            (AgentType::Live, Some(sched)) => {
+                // Exactly one of interval_seconds or cron must be set
+                match (&sched.interval_seconds, &sched.cron) {
+                    (None, None) | (Some(_), Some(_)) => {
+                        return Err(AgentSpecError::InvalidSchedule(
+                            "schedule must have exactly one of: interval_seconds, cron".to_string(),
+                        ));
+                    }
+                    (Some(0), None) => {
+                        return Err(AgentSpecError::InvalidSchedule(
+                            "interval_seconds must be >= 1".to_string(),
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(AgentSpecError::InvalidSchedule(
+                            "cron support coming soon, use interval_seconds".to_string(),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
         }
 
         // Delegate to GraphDef::validate() for self-loops, empty graph.
@@ -661,7 +790,9 @@ mod tests {
                     condition: None,
                     data_map: None,
                 }],
+                memory: None,
             },
+            schedule: None,
             triggers: vec![AgentTriggerSpec {
                 trigger_type: "webhook".to_string(),
                 path: Some("/api/hook".to_string()),
@@ -880,6 +1011,7 @@ mod tests {
             inputs: None,
             outputs: None,
             graph: AgentGraphSpec::default(),
+            schedule: None,
             triggers: vec![],
             config: AgentConfig::default(),
             resources: Vec::new(),
@@ -1320,5 +1452,213 @@ graph:
         let spec = AgentSpec::from_yaml(yaml).unwrap();
         let cond = spec.graph.edges[0].condition.as_ref().unwrap();
         assert_eq!(cond.op, ComparisonOp::Eq);
+    }
+
+    // --- PRD-008: Schedule + Memory tests ---
+
+    #[test]
+    fn live_agent_requires_schedule() {
+        let yaml = r#"
+name: test
+agent_type: live
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let err = AgentSpec::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("live agents require a schedule section"));
+    }
+
+    #[test]
+    fn managed_agent_rejects_schedule() {
+        let yaml = r#"
+name: test
+agent_type: managed
+schedule:
+  interval_seconds: 60
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let err = AgentSpec::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("schedule is only valid for live agents"));
+    }
+
+    #[test]
+    fn schedule_requires_exactly_one_timing() {
+        // Both set → error
+        let yaml = r#"
+name: test
+agent_type: live
+schedule:
+  interval_seconds: 60
+  cron: "* * * * *"
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let err = AgentSpec::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("exactly one of"));
+
+        // Neither set → error
+        let yaml2 = r#"
+name: test
+agent_type: live
+schedule: {}
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let err2 = AgentSpec::from_yaml(yaml2).unwrap_err();
+        assert!(err2.to_string().contains("exactly one of"));
+    }
+
+    #[test]
+    fn live_agent_with_valid_schedule_parses() {
+        let yaml = r#"
+name: monitor
+agent_type: live
+schedule:
+  interval_seconds: 300
+  max_cycles: 10
+  on_cycle_error: stop
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/schedule
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        assert_eq!(spec.agent_type, AgentType::Live);
+        let sched = spec.schedule.as_ref().unwrap();
+        assert_eq!(sched.interval_seconds, Some(300));
+        assert_eq!(sched.max_cycles, Some(10));
+        assert_eq!(sched.on_cycle_error, CycleErrorMode::Stop);
+    }
+
+    #[test]
+    fn graph_memory_parses() {
+        let yaml = r#"
+name: bot
+graph:
+  memory:
+    persist: execution
+    keys:
+      history: []
+      count: 0
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let mem = spec.graph.memory.as_ref().unwrap();
+        assert_eq!(mem.persist, MemoryPersistMode::Execution);
+        assert_eq!(mem.keys.len(), 2);
+        assert_eq!(mem.keys["count"], json!(0));
+        assert_eq!(mem.keys["history"], json!([]));
+    }
+
+    #[test]
+    fn graph_memory_default_persist_is_cycle() {
+        let yaml = r#"
+name: bot
+graph:
+  memory:
+    keys:
+      data: null
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let mem = spec.graph.memory.as_ref().unwrap();
+        assert_eq!(mem.persist, MemoryPersistMode::Cycle);
+    }
+
+    #[test]
+    fn live_agent_yaml_roundtrip() {
+        let yaml = r#"
+name: collector
+agent_type: live
+schedule:
+  interval_seconds: 60
+graph:
+  memory:
+    persist: execution
+    keys:
+      total: 0
+  nodes:
+    - id: a
+      tool_type: trigger/schedule
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let yaml_out = spec.to_yaml().unwrap();
+        let spec2 = AgentSpec::from_yaml(&yaml_out).unwrap();
+        assert_eq!(spec2.agent_type, AgentType::Live);
+        assert_eq!(spec2.schedule.as_ref().unwrap().interval_seconds, Some(60));
+        let mem2 = spec2.graph.memory.as_ref().unwrap();
+        assert_eq!(mem2.persist, MemoryPersistMode::Execution);
+        assert_eq!(mem2.keys["total"], json!(0));
+    }
+
+    #[test]
+    fn memory_persist_mode_serde() {
+        let m = MemoryPersistMode::Execution;
+        let json = serde_json::to_string(&m).unwrap();
+        assert_eq!(json, "\"execution\"");
+        let back: MemoryPersistMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, MemoryPersistMode::Execution);
+    }
+
+    #[test]
+    fn cycle_error_mode_serde() {
+        let m = CycleErrorMode::Stop;
+        let json = serde_json::to_string(&m).unwrap();
+        assert_eq!(json, "\"stop\"");
+        let back: CycleErrorMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, CycleErrorMode::Stop);
     }
 }

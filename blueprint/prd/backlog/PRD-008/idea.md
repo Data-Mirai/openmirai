@@ -4,7 +4,8 @@
 |-------|-------|
 | **ID** | PRD-008 |
 | **Fecha** | 2026-05-28 |
-| **Estado** | backlog |
+| **Estado** | in_progress |
+| **Branch** | prd/PRD-008 |
 | **Target** | v0.5.0 |
 
 ---

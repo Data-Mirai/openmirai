@@ -8,26 +8,8 @@ use tokio::process::Command;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{FieldType, ToolField, ToolSpec};
+use crate::tools::base::{field, FieldType, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
-
-// ---------------------------------------------------------------------------
-// Helper: field builder
-// ---------------------------------------------------------------------------
-
-fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
-    ToolField {
-        name: name.into(),
-        field_type,
-        required,
-        description: if desc.is_empty() {
-            None
-        } else {
-            Some(desc.into())
-        },
-        default: None,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Macro
@@ -140,7 +122,7 @@ impl Tool for BashTool {
         &self,
         inputs: HashMap<String, Value>,
         config: &HashMap<String, Value>,
-        _context: &dyn ExecutionContext,
+        context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let command = inputs
             .get("command")
@@ -184,6 +166,25 @@ impl Tool for BashTool {
         if !cwd.is_empty() {
             cmd.current_dir(cwd);
         }
+
+        // PRD-009: inject data_map inputs (except "command") as env vars with MIRAI_ prefix.
+        for (key, value) in &inputs {
+            if key == "command" {
+                continue;
+            }
+            let env_value = match value {
+                Value::String(s) => s.clone(),
+                Value::Null => "null".to_string(),
+                other => other.to_string(),
+            };
+            cmd.env(format!("MIRAI_{key}"), &env_value);
+        }
+
+        // PRD-010: inject scratch dir as env var.
+        if let Some(scratch) = context.scratch_dir() {
+            cmd.env("MIRAI_SCRATCH_DIR", scratch);
+        }
+
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
@@ -224,6 +225,54 @@ impl Tool for BashTool {
         out.insert("stderr".to_string(), json!(truncate_output(&stderr)));
         out.insert("exit_code".to_string(), json!(exit_code));
         out.insert("timed_out".to_string(), json!(timed_out));
+
+        // PRD-010: produce FileRef outputs for declared output_files.
+        if let Some(output_files) = config.get("output_files").and_then(|v| v.as_array()) {
+            let search_dirs: Vec<&str> = {
+                let mut dirs = Vec::new();
+                if !cwd.is_empty() {
+                    dirs.push(cwd);
+                }
+                if let Some(scratch) = context.scratch_dir() {
+                    dirs.push(scratch);
+                }
+                dirs
+            };
+
+            for file_val in output_files {
+                let file_name = match file_val.as_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+                // Sanitize name for output key: "result.png" → "file_result_png"
+                let key = format!(
+                    "file_{}",
+                    file_name.replace('.', "_").replace('/', "_").replace(' ', "_")
+                );
+
+                // Search for the file in cwd and scratch dir.
+                let mut found = false;
+                for dir in &search_dirs {
+                    let candidate = std::path::Path::new(dir).join(file_name);
+                    if let Some(file_ref) = crate::llm::media::create_file_ref(
+                        candidate.to_string_lossy().as_ref(),
+                        None,
+                    ) {
+                        out.insert(key.clone(), file_ref);
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    tracing::warn!(
+                        file_name = %file_name,
+                        "output file not found in scratch dir or cwd"
+                    );
+                    out.insert(key, Value::Null);
+                }
+            }
+        }
+
         Ok(out)
     }
 }

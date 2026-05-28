@@ -156,11 +156,32 @@ impl ClaudeAdapter {
                     }));
                 }
                 _ => {
-                    // user — pass through.
-                    converted.push(json!({
-                        "role": msg.role,
-                        "content": msg.content.as_deref().unwrap_or(""),
-                    }));
+                    // user — build content blocks if media present, plain string otherwise.
+                    let has_media = msg.media.as_ref().is_some_and(|m| !m.is_empty());
+                    if has_media {
+                        let mut blocks: Vec<Value> = Vec::new();
+                        for mc in msg.media.as_ref().unwrap() {
+                            blocks.push(json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mc.mime_type,
+                                    "data": mc.data,
+                                }
+                            }));
+                        }
+                        if let Some(ref text) = msg.content {
+                            if !text.is_empty() {
+                                blocks.push(json!({"type": "text", "text": text}));
+                            }
+                        }
+                        converted.push(json!({"role": msg.role, "content": blocks}));
+                    } else {
+                        converted.push(json!({
+                            "role": msg.role,
+                            "content": msg.content.as_deref().unwrap_or(""),
+                        }));
+                    }
                 }
             }
         }
@@ -432,12 +453,14 @@ mod tests {
                 content: Some("You are a helpful assistant.".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "user".into(),
                 content: Some("Hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
 
@@ -531,6 +554,7 @@ mod tests {
                 },
             }]),
             tool_call_id: None,
+            media: None,
         }];
 
         let (_, converted) = ClaudeAdapter::convert_messages(&messages);
@@ -556,6 +580,7 @@ mod tests {
             content: Some(r#"{"temp": 20}"#.into()),
             tool_calls: None,
             tool_call_id: Some("toolu_01".into()),
+            media: None,
         }];
 
         let (_, converted) = ClaudeAdapter::convert_messages(&messages);
@@ -571,5 +596,35 @@ mod tests {
     fn provider_name_is_claude() {
         let adapter = ClaudeAdapter::new("test-key");
         assert_eq!(adapter.provider_name(), "claude");
+    }
+
+    #[test]
+    fn user_message_with_image_media_produces_content_blocks() {
+        use crate::llm::media::MediaContent;
+        let messages = vec![Message {
+            role: "user".into(),
+            content: Some("Describe this image".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: Some(vec![MediaContent {
+                mime_type: "image/png".into(),
+                data: "dGVzdA==".into(),
+                source_path: None,
+            }]),
+        }];
+
+        let (_, converted) = ClaudeAdapter::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["role"], "user");
+
+        let content = converted[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        // Claude: image block first, then text.
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["type"], "base64");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
+        assert_eq!(content[0]["source"]["data"], "dGVzdA==");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "Describe this image");
     }
 }

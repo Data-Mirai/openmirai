@@ -8,26 +8,8 @@ use tracing::{info, warn};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{FieldType, ToolField, ToolSpec};
+use crate::tools::base::{field, FieldType, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
-
-// ---------------------------------------------------------------------------
-// Helper: field builder (same pattern as logic.rs)
-// ---------------------------------------------------------------------------
-
-fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
-    ToolField {
-        name: name.into(),
-        field_type,
-        required,
-        description: if desc.is_empty() {
-            None
-        } else {
-            Some(desc.into())
-        },
-        default: None,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Macro: simplify boilerplate for struct + factory + spec
@@ -106,6 +88,7 @@ ai_tool! {
         field("output_schema_strict", FieldType::Boolean, false, "Fail hard if schema validation fails after retries (default true)"),
         field("max_retries", FieldType::Number, false, "Retries for schema validation (default 2)"),
         field("max_context_length", FieldType::Number, false, "Max chars for session context (default 12000)"),
+        field("media_path", FieldType::String, false, "Path to media file (image/audio/video) to send alongside the prompt"),
     ]
 }
 
@@ -260,6 +243,30 @@ impl Tool for LlmCallTool {
         let mut context_messages = Vec::new();
         if !combined_context.is_empty() {
             context_messages.push(json!({"role": "system", "content": combined_context}));
+        }
+
+        // PRD-009/010: resolve media_path (inputs > config). Accepts String or FileRef.
+        let media_path_raw = inputs
+            .get("media_path")
+            .or_else(|| config.get("media_path"));
+        let media_path = match media_path_raw {
+            Some(v) => crate::llm::media::resolve_file_input(v),
+            None => String::new(),
+        };
+        if !media_path.is_empty() {
+            let provider_name = context.llm().provider_name();
+            let media = crate::llm::media::read_media_file(&media_path, &provider_name)
+                .map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/llm_call".into(),
+                    message: e,
+                })?;
+            info!(
+                media_path = %media_path,
+                mime_type = %media.mime_type,
+                provider = %provider_name,
+                "llm_call: attaching media file to prompt"
+            );
+            context_messages.push(crate::llm::media::user_media_entry(&media));
         }
 
         // --- Execute with optional schema validation + retries ---
@@ -651,17 +658,8 @@ fn check_json_type(value: &Value, expected: &str) -> bool {
     }
 }
 
-/// Get a human-readable type name for a JSON value.
-fn json_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
+// json_type_name: use canonical source
+use crate::core::value_type::value_type_label as json_type_name;
 
 /// Build a retry prompt with error feedback.
 fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[String]) -> String {
@@ -711,29 +709,50 @@ impl Tool for TranscribeTool {
         config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let file_path = inputs
+        // PRD-010: resolve file_path — accepts both String paths and FileRef objects.
+        let file_path_value = inputs
             .get("file_path")
-            .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),
                 message: "input 'file_path' is required".into(),
             })?;
+        let file_path = crate::llm::media::resolve_file_input(file_path_value);
+        if file_path.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: "input 'file_path' is required".into(),
+            });
+        }
 
         let model = config
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
 
-        // Placeholder: delegate to LLM with a transcription prompt.
-        // In a real implementation this would use a speech-to-text API.
-        let prompt = format!("Transcribe the audio file at: {}", file_path);
-        let context_messages = vec![Value::String(
-            format!("Audio file: {}", file_path),
-        )];
+        // PRD-009: Read the audio file and send as multimodal content.
+        let provider_name = context.llm().provider_name();
+        let media = crate::llm::media::read_media_file(&file_path, &provider_name)
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: e,
+            })?;
+
+        info!(
+            file_path = %file_path,
+            mime_type = %media.mime_type,
+            provider = %provider_name,
+            "transcribe: read media file, sending as multimodal"
+        );
+
+        let prompt = "Transcribe this audio literally and faithfully. Include every word exactly as spoken, including filler words (um, uh, like, etc.), false starts, and repetitions. Do not clean up, correct, or interpret anything. Output only the raw transcription text, no timestamps, no speaker labels, no formatting.";
+
+        // Pass media via __user_media carrier (bridge attaches it to user prompt).
+        let media_json = serde_json::to_value(vec![&media]).unwrap_or(json!([]));
+        let context_messages = vec![json!({ "__user_media": media_json })];
 
         let result = context
             .llm()
-            .call(model, &prompt, &context_messages, 0.0, 4096)
+            .call(model, prompt, &context_messages, 0.0, 4096)
             .await
             .map_err(|e| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),

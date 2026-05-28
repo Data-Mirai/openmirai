@@ -240,6 +240,16 @@ async fn run_agent(args: &[String]) {
         }
     };
 
+    // PRD-008: Reject live agents — they must be started with `mirai play`
+    if spec.agent_type == datamirai_engine::AgentType::Live {
+        eprintln!(
+            "{}Error: live agents must be started with `mirai play`, not `mirai run`{}",
+            colors::RED,
+            colors::RESET
+        );
+        process::exit(1);
+    }
+
     // Convert to graph
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();

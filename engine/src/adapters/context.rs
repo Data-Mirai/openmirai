@@ -21,6 +21,7 @@ pub struct DefaultExecutionContext {
     session_id: String,
     node_id: Option<String>,
     system_prompt: Option<String>,
+    scratch_dir: Option<String>,
 }
 
 impl ExecutionContext for DefaultExecutionContext {
@@ -55,6 +56,10 @@ impl ExecutionContext for DefaultExecutionContext {
     fn system_prompt(&self) -> Option<&str> {
         self.system_prompt.as_deref()
     }
+
+    fn scratch_dir(&self) -> Option<&str> {
+        self.scratch_dir.as_deref()
+    }
 }
 
 impl DefaultExecutionContext {
@@ -74,6 +79,7 @@ impl DefaultExecutionContext {
             session_id: uuid::Uuid::new_v4().to_string()[..8].to_string(),
             node_id: None,
             system_prompt: None,
+            scratch_dir: None,
         }
     }
 
@@ -109,6 +115,7 @@ pub struct DefaultExecutionContextBuilder {
     session_id: String,
     node_id: Option<String>,
     system_prompt: Option<String>,
+    scratch_dir: Option<String>,
 }
 
 impl DefaultExecutionContextBuilder {
@@ -147,6 +154,11 @@ impl DefaultExecutionContextBuilder {
         self
     }
 
+    pub fn with_scratch_dir(mut self, path: impl Into<String>) -> Self {
+        self.scratch_dir = Some(path.into());
+        self
+    }
+
     pub fn build(self) -> DefaultExecutionContext {
         DefaultExecutionContext {
             db: self.db,
@@ -157,6 +169,7 @@ impl DefaultExecutionContextBuilder {
             session_id: self.session_id,
             node_id: self.node_id,
             system_prompt: self.system_prompt,
+            scratch_dir: self.scratch_dir,
         }
     }
 }

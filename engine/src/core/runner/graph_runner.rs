@@ -138,6 +138,18 @@ impl GraphRunner {
         graph: &GraphDef,
         context: &dyn ExecutionContext,
     ) -> Result<ExecutionResult, RunnerError> {
+        self.run_with_state(graph, context, SharedState::new()).await
+    }
+
+    /// Run with a pre-initialized state (e.g., with memory injected).
+    ///
+    /// PRD-008: callers inject memory into state before calling this.
+    pub async fn run_with_state(
+        &self,
+        graph: &GraphDef,
+        context: &dyn ExecutionContext,
+        state: SharedState,
+    ) -> Result<ExecutionResult, RunnerError> {
         // 1. Validate graph structure.
         graph.validate()?;
 
@@ -152,7 +164,7 @@ impl GraphRunner {
             .id
             .clone();
 
-        self.run_from(graph, context, SharedState::new(), &entry_node_id, 0)
+        self.run_from(graph, context, state, &entry_node_id, 0)
             .await
     }
 

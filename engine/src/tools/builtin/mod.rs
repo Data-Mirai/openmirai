@@ -6,6 +6,7 @@ pub mod git;
 pub mod logic;
 pub mod mcp;
 pub mod output;
+pub mod state;
 pub mod system;
 pub mod trigger;
 
@@ -23,6 +24,7 @@ pub fn register_all_builtin_tools(registry: &mut ToolRegistry) {
     agent::register_agent_tools(registry);
     mcp::register_mcp_tools(registry);
     trigger::register_trigger_tools(registry);
+    state::register_state_tools(registry);
 }
 
 #[cfg(test)]
@@ -34,7 +36,7 @@ mod tests {
         let mut reg = ToolRegistry::new();
         register_all_builtin_tools(&mut reg);
         // 7 logic + 4 ai + 11 data + 12 filesystem + 3 system + 4 git
-        // + 1 output + 1 agent + 1 mcp + 5 trigger = 49
-        assert_eq!(reg.list_tools().len(), 49);
+        // + 1 output + 1 agent + 1 mcp + 5 trigger + 1 state = 50
+        assert_eq!(reg.list_tools().len(), 50);
     }
 }

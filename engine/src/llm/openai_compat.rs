@@ -104,7 +104,24 @@ impl OpenAICompatAdapter {
             .map(|msg| {
                 let mut obj = json!({ "role": msg.role });
 
-                if let Some(ref content) = msg.content {
+                let has_media = msg.media.as_ref().is_some_and(|m| !m.is_empty());
+                if has_media {
+                    let mut parts: Vec<Value> = Vec::new();
+                    for mc in msg.media.as_ref().unwrap() {
+                        parts.push(json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", mc.mime_type, mc.data),
+                            }
+                        }));
+                    }
+                    if let Some(ref content) = msg.content {
+                        if !content.is_empty() {
+                            parts.push(json!({"type": "text", "text": content}));
+                        }
+                    }
+                    obj["content"] = Value::Array(parts);
+                } else if let Some(ref content) = msg.content {
                     obj["content"] = Value::String(content.clone());
                 }
 
@@ -403,12 +420,14 @@ mod tests {
                 content: Some("You are helpful.".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
             Message {
                 role: "user".into(),
                 content: Some("Hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                media: None,
             },
         ];
         let converted = OpenAICompatAdapter::convert_messages(&msgs);
@@ -432,6 +451,7 @@ mod tests {
                 },
             }]),
             tool_call_id: None,
+            media: None,
         }];
         let converted = OpenAICompatAdapter::convert_messages(&msgs);
         assert_eq!(converted.len(), 1);
@@ -451,6 +471,7 @@ mod tests {
             content: Some(r#"{"temp": 20}"#.into()),
             tool_calls: None,
             tool_call_id: Some("call_abc".into()),
+            media: None,
         }];
         let converted = OpenAICompatAdapter::convert_messages(&msgs);
         assert_eq!(converted.len(), 1);
@@ -490,5 +511,47 @@ mod tests {
         assert_eq!(headers.get("X-Custom").unwrap(), "value123");
         assert!(headers.get("authorization").is_some());
         assert!(headers.get("content-type").is_some());
+    }
+
+    #[test]
+    fn user_message_with_image_media_produces_content_array() {
+        use crate::llm::media::MediaContent;
+        let msgs = vec![Message {
+            role: "user".into(),
+            content: Some("Describe this".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: Some(vec![MediaContent {
+                mime_type: "image/jpeg".into(),
+                data: "dGVzdA==".into(),
+                source_path: None,
+            }]),
+        }];
+        let converted = OpenAICompatAdapter::convert_messages(&msgs);
+        assert_eq!(converted.len(), 1);
+
+        let content = converted[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "image_url");
+        assert!(content[0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,"));
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "Describe this");
+    }
+
+    #[test]
+    fn user_message_without_media_keeps_string_content() {
+        let msgs = vec![Message {
+            role: "user".into(),
+            content: Some("Hello".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            media: None,
+        }];
+        let converted = OpenAICompatAdapter::convert_messages(&msgs);
+        // Without media, content is a string, not an array.
+        assert_eq!(converted[0]["content"], "Hello");
     }
 }

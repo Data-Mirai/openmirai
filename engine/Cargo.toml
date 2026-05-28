@@ -1,6 +1,6 @@
 [package]
 name = "datamirai-engine"
-version = "0.4.5"
+version = "0.5.0"
 edition = "2021"
 description = "Open-source agentic graph execution engine"
 license = "MIT"
@@ -38,6 +38,7 @@ rand = "0.8"
 sha2 = "0.10"
 hex = "0.4"
 tempfile = "3"
+base64 = "0.22"
 
 # --- Optional: server ---
 axum = { version = "0.8", optional = true }

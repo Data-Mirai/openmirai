@@ -19,6 +19,14 @@ Create `my-agent.yaml`:
 ```yaml
 name: my-first-agent
 version: v1
+description: "Answer a question using an LLM"
+
+# Declare what the host must provide
+inputs:
+  question:
+    type: text
+    required: true
+    description: "The question to answer"
 
 graph:
   nodes:
@@ -37,7 +45,7 @@ graph:
     - source: start
       target: think
       data_map:
-        context: "start.user_input"
+        context: "start.payload.question"
 
     - source: think
       target: done
@@ -422,7 +430,7 @@ graph:
   edges: [...]
 ```
 
-Supported types: `text`, `number`, `integer`, `boolean`, `array`, `object`.
+Supported types: `text`, `number`, `integer`, `boolean`, `array`, `object`, `file`.
 
 If someone runs this agent without `question`, they get a clear error:
 ```
@@ -569,6 +577,54 @@ data: {"status": "Completed", "total_duration_ms": 2100}
 
 ---
 
+## 12. Multimodal — audio, images, video (v0.5.0)
+
+Send files directly to LLMs that support multimodal input.
+
+**Transcribe audio:**
+```yaml
+inputs:
+  audio_path:
+    type: file
+    required: true
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+    - id: stt
+      tool_type: ai/transcribe
+      config:
+        model: "gemini-2.5-flash"
+    - id: done
+      tool_type: output/response
+  edges:
+    - source: start
+      target: stt
+      data_map:
+        file_path: "start.payload.audio_path"
+    - source: stt
+      target: done
+```
+
+**Analyze an image:**
+```yaml
+- id: vision
+  tool_type: ai/llm_call
+  config:
+    prompt: "Describe this image."
+    model: "gemini-2.5-flash"
+# edge data_map: media_path: "start.payload.image_path"
+```
+
+Supported: `.m4a .mp3 .wav .ogg .flac .mov .mp4 .webm .png .jpg .webp .gif`
+
+Providers: Gemini (audio+video+image), Claude (image), OpenAI/Groq (image), Ollama (image).
+
+The engine reads the file, base64-encodes it, validates the MIME type against the provider, and sends it as native multimodal content. The agent YAML never touches base64 — just pass a file path.
+
+---
+
 ## Quick reference
 
 ```
@@ -576,6 +632,7 @@ agent.yaml    = graph definition (nodes + edges)
 mirai run     = execute locally
 mirai serve   = HTTP API
 mirai validate = check syntax
+mirai tools   = list all tools with inputs/outputs/config
 
 node       = one action (tool_type)
 edge       = connection between nodes
@@ -585,4 +642,6 @@ inputs     = typed input contract (validation at boundary)
 outputs    = typed output contract (documentation + validation)
 config     = agent-level settings (retry, max_iterations, timeout)
 mcp_servers = external tool servers (Model Context Protocol)
+media_path = attach a file to an LLM call (v0.5.0)
+output_files = declare files a bash command generates (v0.5.0)
 ```

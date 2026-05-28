@@ -117,6 +117,11 @@ pub trait LLMResource: Send + Sync {
         text: &str,
         model: &str,
     ) -> Result<Vec<f64>, ResourceError>;
+
+    /// Name of the underlying LLM provider (e.g. `"gemini"`, `"claude"`).
+    fn provider_name(&self) -> &str {
+        "unknown"
+    }
 }
 
 #[async_trait]
@@ -192,6 +197,12 @@ pub trait ExecutionContext: Send + Sync {
 
     /// Optional system prompt that should be prepended to LLM calls.
     fn system_prompt(&self) -> Option<&str>;
+
+    /// Path to the scratch directory for this execution (PRD-010).
+    /// Tools can write temporary files here. Cleaned up after execution.
+    fn scratch_dir(&self) -> Option<&str> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

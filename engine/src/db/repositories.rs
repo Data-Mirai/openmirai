@@ -362,6 +362,7 @@ mod tests {
                 inputs: None,
                 outputs: None,
                 graph: Default::default(),
+                schedule: None,
                 triggers: vec![],
                 config: Default::default(),
                 resources: vec![],

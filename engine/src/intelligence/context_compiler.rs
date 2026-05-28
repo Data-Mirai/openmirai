@@ -232,6 +232,7 @@ mod tests {
             inputs: None,
             outputs: None,
             graph: Default::default(),
+            schedule: None,
             triggers: Vec::new(),
             config: Default::default(),
             resources: Vec::new(),

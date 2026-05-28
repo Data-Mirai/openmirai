@@ -1,0 +1,62 @@
+# Audio Transcription — Multimodal file input (v0.5.0)
+#
+# Receives an audio file, transcribes it via multimodal LLM, and
+# normalizes the text. Demonstrates:
+#   - File inputs (type: file)
+#   - ai/transcribe with real audio (not text path)
+#   - Multi-step pipeline (transcribe → normalize)
+#
+# Run:
+#   mirai run examples/audio-transcription.yaml --provider gemini \
+#     --api-key $GOOGLE_API_KEY \
+#     --input '{"audio_path": "/path/to/recording.m4a"}'
+
+name: audio-transcription
+version: v1
+description: "Transcribe audio to clean text via multimodal LLM"
+
+inputs:
+  audio_path:
+    type: file
+    required: true
+    description: "Audio file to transcribe (.m4a, .mp3, .wav, .ogg, .flac)"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: transcribe
+      tool_type: ai/transcribe
+      config:
+        model: "gemini-2.5-flash"
+
+    - id: normalize
+      tool_type: ai/llm_call
+      config:
+        prompt: |
+          Clean up this raw transcription:
+          - Remove filler words (um, uh, like, you know, etc.)
+          - Fix grammar and punctuation
+          - Keep the original language and meaning
+          - Output ONLY the cleaned text
+        temperature: 0.3
+        max_tokens: 4096
+        model: "gemini-2.5-flash"
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: transcribe
+      data_map:
+        file_path: "start.payload.audio_path"
+
+    - source: transcribe
+      target: normalize
+      data_map:
+        context: "transcribe.text"
+
+    - source: normalize
+      target: respond

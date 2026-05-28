@@ -51,6 +51,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/agents/{id}/stream", post(stream_agent))
         .route("/api/v1/agents/{id}/spec", get(get_agent_spec))
         .route("/api/v1/agents/{id}/schema", get(get_agent_schema))
+        // Live agent lifecycle (PRD-008)
+        .route("/api/v1/agents/{id}/play", post(play_agent))
+        .route("/api/v1/agents/{id}/stop", post(stop_agent))
+        .route("/api/v1/agents/{id}/cycles", get(get_agent_cycles))
+        .route("/api/v1/agents/{id}/memory", get(get_agent_memory).delete(clear_agent_memory))
         // Tools
         .route("/api/v1/tools", get(list_tools))
         // Templates

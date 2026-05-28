@@ -42,8 +42,8 @@ impl AdapterBridgeLLMResource {
 
 #[async_trait]
 impl LLMResource for AdapterBridgeLLMResource {
-    fn provider_name(&self) -> String {
-        self.adapter.provider_name().to_string()
+    fn provider_name(&self) -> &str {
+        self.adapter.provider_name()
     }
 
     async fn call(
@@ -80,10 +80,10 @@ impl LLMResource for AdapterBridgeLLMResource {
             })
             .collect();
 
-        // PRD-009: extract media to attach to the user prompt message.
-        // Tools pass media via a special `__user_media` context entry (no role → skipped above).
+        // Extract media to attach to the user prompt message.
+        // Tools pass media via a carrier entry (no role → skipped above).
         let user_media = context.iter().find_map(|v| {
-            v.get("__user_media").and_then(|m| {
+            v.get(crate::llm::media::USER_MEDIA_KEY).and_then(|m| {
                 serde_json::from_value::<Vec<crate::llm::media::MediaContent>>(m.clone()).ok()
             })
         });

@@ -156,39 +156,26 @@ impl ClaudeAdapter {
                     }));
                 }
                 _ => {
-                    // user — pass through, with optional media (PRD-009).
-                    if let Some(ref media_list) = msg.media {
-                        if !media_list.is_empty() {
-                            let mut content_blocks: Vec<Value> = Vec::new();
-                            // Media blocks first (Claude expects image before text).
-                            for mc in media_list {
-                                content_blocks.push(json!({
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": mc.mime_type,
-                                        "data": mc.data,
-                                    }
-                                }));
-                            }
-                            if let Some(ref text) = msg.content {
-                                if !text.is_empty() {
-                                    content_blocks.push(json!({
-                                        "type": "text",
-                                        "text": text,
-                                    }));
+                    // user — build content blocks if media present, plain string otherwise.
+                    let has_media = msg.media.as_ref().is_some_and(|m| !m.is_empty());
+                    if has_media {
+                        let mut blocks: Vec<Value> = Vec::new();
+                        for mc in msg.media.as_ref().unwrap() {
+                            blocks.push(json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mc.mime_type,
+                                    "data": mc.data,
                                 }
-                            }
-                            converted.push(json!({
-                                "role": msg.role,
-                                "content": content_blocks,
-                            }));
-                        } else {
-                            converted.push(json!({
-                                "role": msg.role,
-                                "content": msg.content.as_deref().unwrap_or(""),
                             }));
                         }
+                        if let Some(ref text) = msg.content {
+                            if !text.is_empty() {
+                                blocks.push(json!({"type": "text", "text": text}));
+                            }
+                        }
+                        converted.push(json!({"role": msg.role, "content": blocks}));
                     } else {
                         converted.push(json!({
                             "role": msg.role,

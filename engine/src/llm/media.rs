@@ -57,30 +57,18 @@ fn extension_to_mime() -> &'static HashMap<&'static str, &'static str> {
 // Provider support
 // ---------------------------------------------------------------------------
 
-/// Returns the set of MIME types supported by a given provider.
-pub fn supported_mimes_for_provider(provider: &str) -> Vec<&'static str> {
+const IMAGES_ONLY: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
+const GEMINI_ALL: &[&str] = &[
+    "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", "audio/flac",
+    "video/quicktime", "video/mp4", "video/webm",
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+];
+
+/// Returns the MIME types supported by a given provider (zero allocation).
+pub fn supported_mimes_for_provider(provider: &str) -> &'static [&'static str] {
     match provider {
-        "gemini" => vec![
-            // Audio
-            "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", "audio/flac",
-            // Video
-            "video/quicktime", "video/mp4", "video/webm",
-            // Image
-            "image/png", "image/jpeg", "image/webp", "image/gif",
-        ],
-        "claude" => vec![
-            "image/png", "image/jpeg", "image/webp", "image/gif",
-        ],
-        "openai" | "groq" | "openrouter" | "nvidia_nim" => vec![
-            "image/png", "image/jpeg", "image/webp", "image/gif",
-        ],
-        "ollama" => vec![
-            "image/png", "image/jpeg", "image/webp", "image/gif",
-        ],
-        _ => vec![
-            // Unknown provider: allow images only (safest default).
-            "image/png", "image/jpeg", "image/webp", "image/gif",
-        ],
+        "gemini" => GEMINI_ALL,
+        _ => IMAGES_ONLY,
     }
 }
 
@@ -151,11 +139,12 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
         ));
     }
 
-    // 5. Read and encode
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("failed to read media file '{file_path}': {e}"))?;
-
-    let b64 = STANDARD.encode(&bytes);
+    // 5. Read and encode (scope bytes so they drop before MediaContent is built)
+    let b64 = {
+        let bytes = std::fs::read(path)
+            .map_err(|e| format!("failed to read media file '{file_path}': {e}"))?;
+        STANDARD.encode(&bytes)
+    };
 
     Ok(MediaContent {
         mime_type: mime_type.to_string(),
@@ -170,6 +159,16 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
 
 /// The `_type` discriminator for FileRef JSON objects.
 pub const FILE_REF_TYPE: &str = "file_ref";
+
+/// Key used to pass media through the LLMResource context array.
+/// The adapter bridge extracts this and attaches it to the user prompt message.
+pub const USER_MEDIA_KEY: &str = "__user_media";
+
+/// Build a context entry that carries media to the adapter bridge.
+pub fn user_media_entry(media: &MediaContent) -> serde_json::Value {
+    let media_json = serde_json::to_value(&[media]).unwrap_or(serde_json::json!([]));
+    serde_json::json!({ USER_MEDIA_KEY: media_json })
+}
 
 /// Detect MIME type from file extension. Returns `application/octet-stream` for unknown.
 pub fn mime_from_extension(path: &Path) -> &'static str {

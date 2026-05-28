@@ -284,8 +284,7 @@ impl Tool for LlmCallTool {
                 provider = %provider_name,
                 "llm_call: attaching media file to prompt"
             );
-            let media_json = serde_json::to_value(vec![&media]).unwrap_or(json!([]));
-            context_messages.push(json!({ "__user_media": media_json }));
+            context_messages.push(crate::llm::media::user_media_entry(&media));
         }
 
         // --- Execute with optional schema validation + retries ---

@@ -104,29 +104,23 @@ impl OpenAICompatAdapter {
             .map(|msg| {
                 let mut obj = json!({ "role": msg.role });
 
-                // If message has media, use content array format (PRD-009).
                 let has_media = msg.media.as_ref().is_some_and(|m| !m.is_empty());
                 if has_media {
-                    let mut content_parts: Vec<Value> = Vec::new();
-                    if let Some(ref media_list) = msg.media {
-                        for mc in media_list {
-                            content_parts.push(json!({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": format!("data:{};base64,{}", mc.mime_type, mc.data),
-                                }
-                            }));
-                        }
+                    let mut parts: Vec<Value> = Vec::new();
+                    for mc in msg.media.as_ref().unwrap() {
+                        parts.push(json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", mc.mime_type, mc.data),
+                            }
+                        }));
                     }
                     if let Some(ref content) = msg.content {
                         if !content.is_empty() {
-                            content_parts.push(json!({
-                                "type": "text",
-                                "text": content,
-                            }));
+                            parts.push(json!({"type": "text", "text": content}));
                         }
                     }
-                    obj["content"] = Value::Array(content_parts);
+                    obj["content"] = Value::Array(parts);
                 } else if let Some(ref content) = msg.content {
                     obj["content"] = Value::String(content.clone());
                 }

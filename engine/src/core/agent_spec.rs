@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use super::graph::{EdgeDef, GraphDef, NodeDef};
+use super::graph::{EdgeCondition, EdgeDef, GraphDef, NodeDef};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -89,7 +89,7 @@ pub struct AgentEdgeSpec {
     pub source: String,
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub condition: Option<HashMap<String, serde_json::Value>>,
+    pub condition: Option<EdgeCondition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_map: Option<HashMap<String, String>>,
 }
@@ -584,7 +584,7 @@ impl AgentSpec {
                 id: e.id.clone(),
                 source: e.source.clone(),
                 target: e.target.clone(),
-                condition: None,
+                condition: e.condition.clone(),
                 data_map: e.data_map.clone(),
             })
             .collect();
@@ -612,6 +612,8 @@ impl AgentSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::graph::{ComparisonOp, EdgeCondition};
+    use serde_json::json;
 
     fn sample_spec() -> AgentSpec {
         AgentSpec {
@@ -750,10 +752,10 @@ mod tests {
             id: String::new(),
             source: "n1".to_string(),
             target: "n2".to_string(),
-            condition: Some({
-                let mut m = HashMap::new();
-                m.insert("field".to_string(), serde_json::json!("x"));
-                m
+            condition: Some(EdgeCondition {
+                field: "x".to_string(),
+                op: ComparisonOp::Eq,
+                value: serde_json::json!(true),
             }),
             data_map: None,
         });
@@ -1074,5 +1076,239 @@ graph:
         assert!(!InputType::Json.matches(&json!("string")));
         assert!(InputType::File.matches(&json!("/path/to/file.txt")));
         assert!(!InputType::File.matches(&json!(123)));
+    }
+
+    // --- Edge condition preservation through to_graph() ---
+
+    #[test]
+    fn to_graph_preserves_edge_conditions() {
+        let yaml = r#"
+name: cond-test
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+    - id: c
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+      condition:
+        field: priority
+        op: Eq
+        value: high
+    - source: a
+      target: c
+      condition:
+        field: priority
+        op: Eq
+        value: low
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+
+        // Verify spec parsed conditions
+        assert!(spec.graph.edges[0].condition.is_some());
+        assert!(spec.graph.edges[1].condition.is_some());
+
+        // Verify to_graph() preserves them
+        let graph = spec.to_graph(Some("test"));
+        let cond0 = graph.edges[0].condition.as_ref().expect("edge 0 must have condition");
+        assert_eq!(cond0.field, "priority");
+        assert_eq!(cond0.op, ComparisonOp::Eq);
+        assert_eq!(cond0.value, json!("high"));
+
+        let cond1 = graph.edges[1].condition.as_ref().expect("edge 1 must have condition");
+        assert_eq!(cond1.value, json!("low"));
+    }
+
+    #[test]
+    fn to_graph_preserves_neq_condition() {
+        let yaml = r#"
+name: neq-test
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+      condition:
+        field: status
+        op: Neq
+        value: "done"
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let graph = spec.to_graph(None);
+        let cond = graph.edges[0].condition.as_ref().unwrap();
+        assert_eq!(cond.op, ComparisonOp::Neq);
+    }
+
+    #[test]
+    fn to_graph_preserves_numeric_conditions() {
+        let yaml = r#"
+name: numeric-test
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: above
+      tool_type: output/response
+    - id: below
+      tool_type: output/response
+  edges:
+    - source: a
+      target: above
+      condition:
+        field: score
+        op: Gt
+        value: 80
+    - source: a
+      target: below
+      condition:
+        field: score
+        op: Lte
+        value: 80
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let graph = spec.to_graph(None);
+        let cond0 = graph.edges[0].condition.as_ref().unwrap();
+        assert_eq!(cond0.op, ComparisonOp::Gt);
+        assert_eq!(cond0.value, json!(80));
+        let cond1 = graph.edges[1].condition.as_ref().unwrap();
+        assert_eq!(cond1.op, ComparisonOp::Lte);
+    }
+
+    #[test]
+    fn to_graph_preserves_contains_condition() {
+        let yaml = r#"
+name: contains-test
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+      condition:
+        field: text
+        op: Contains
+        value: "error"
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let graph = spec.to_graph(None);
+        let cond = graph.edges[0].condition.as_ref().unwrap();
+        assert_eq!(cond.op, ComparisonOp::Contains);
+        assert_eq!(cond.value, json!("error"));
+    }
+
+    #[test]
+    fn to_graph_preserves_in_condition() {
+        let yaml = r#"
+name: in-test
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+      condition:
+        field: status
+        op: In
+        value: ["active", "pending"]
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let graph = spec.to_graph(None);
+        let cond = graph.edges[0].condition.as_ref().unwrap();
+        assert_eq!(cond.op, ComparisonOp::In);
+        assert_eq!(cond.value, json!(["active", "pending"]));
+    }
+
+    #[test]
+    fn to_graph_unconditional_edges_remain_none() {
+        let yaml = r#"
+name: fanout-test
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+    - id: c
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+    - source: a
+      target: c
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let graph = spec.to_graph(None);
+        assert!(graph.edges[0].condition.is_none());
+        assert!(graph.edges[1].condition.is_none());
+    }
+
+    #[test]
+    fn to_graph_mixed_conditional_and_unconditional() {
+        let yaml = r#"
+name: mix-test
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+    - id: always_run
+      tool_type: output/response
+    - id: maybe_run
+      tool_type: output/response
+  edges:
+    - source: trigger
+      target: always_run
+    - source: trigger
+      target: maybe_run
+      condition:
+        field: x
+        op: Eq
+        value: 1
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let graph = spec.to_graph(None);
+        assert!(graph.edges[0].condition.is_none(), "unconditional edge must stay None");
+        assert!(graph.edges[1].condition.is_some(), "conditional edge must be preserved");
+        let cond = graph.edges[1].condition.as_ref().unwrap();
+        assert_eq!(cond.field, "x");
+        assert_eq!(cond.op, ComparisonOp::Eq);
+        assert_eq!(cond.value, json!(1));
+    }
+
+    #[test]
+    fn comparison_op_lowercase_yaml() {
+        // YAML users should be able to write "eq" instead of "Eq"
+        let yaml = r#"
+name: lowercase-op
+graph:
+  nodes:
+    - id: a
+      tool_type: trigger/manual
+    - id: b
+      tool_type: output/response
+  edges:
+    - source: a
+      target: b
+      condition:
+        field: x
+        op: eq
+        value: 1
+"#;
+        let spec = AgentSpec::from_yaml(yaml).unwrap();
+        let cond = spec.graph.edges[0].condition.as_ref().unwrap();
+        assert_eq!(cond.op, ComparisonOp::Eq);
     }
 }

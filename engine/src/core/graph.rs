@@ -31,7 +31,7 @@ pub enum GraphError {
 // EdgeCondition
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ComparisonOp {
     Eq,
     Neq,
@@ -41,6 +41,30 @@ pub enum ComparisonOp {
     Lte,
     In,
     Contains,
+}
+
+/// Accept both PascalCase ("Eq") and lowercase ("eq") in YAML/JSON.
+impl<'de> serde::Deserialize<'de> for ComparisonOp {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "Eq" | "eq" => Ok(ComparisonOp::Eq),
+            "Neq" | "neq" => Ok(ComparisonOp::Neq),
+            "Gt" | "gt" => Ok(ComparisonOp::Gt),
+            "Lt" | "lt" => Ok(ComparisonOp::Lt),
+            "Gte" | "gte" => Ok(ComparisonOp::Gte),
+            "Lte" | "lte" => Ok(ComparisonOp::Lte),
+            "In" | "in" => Ok(ComparisonOp::In),
+            "Contains" | "contains" => Ok(ComparisonOp::Contains),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["Eq", "Neq", "Gt", "Lt", "Gte", "Lte", "In", "Contains"],
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

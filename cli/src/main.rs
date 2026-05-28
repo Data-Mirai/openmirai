@@ -47,6 +47,7 @@ async fn main() {
             let rest = &args[1..];
             run_serve(rest).await;
         }
+        Some("tools") => cmd_tools(&args[1..]),
         Some("templates") => cmd_templates(&args[1..]),
         Some("new") => cmd_new(&args[1..]),
         Some("describe") => cmd_describe(&args[1..]),
@@ -501,6 +502,87 @@ async fn run_serve(args: &[String]) {
             colors::RESET
         );
         process::exit(1);
+    }
+}
+
+/// List all tools or show details for a specific tool.
+///
+/// `mirai tools`                → list all tools grouped by category
+/// `mirai tools ai/claude_code` → show inputs, outputs, config for that tool
+fn cmd_tools(args: &[String]) {
+    let mut registry = datamirai_engine::ToolRegistry::new();
+    datamirai_engine::tools::builtin::register_all_builtin_tools(&mut registry);
+
+    let specs = registry.list_tools();
+
+    match args.first().map(|s| s.as_str()) {
+        // Detail view: mirai tools <tool_type>
+        Some(tool_type) => {
+            let spec = match specs.iter().find(|s| s.tool_type == tool_type) {
+                Some(s) => s,
+                None => {
+                    eprintln!("{}Tool not found: {tool_type}{}", colors::RED, colors::RESET);
+                    eprintln!("Run `mirai tools` to see all available tools.");
+                    process::exit(1);
+                }
+            };
+
+            println!("\n{}{}  —  {}{}", colors::BOLD, spec.tool_type, spec.name, colors::RESET);
+            println!("{}", spec.description);
+
+            if !spec.inputs.is_empty() {
+                println!("\n{}INPUTS (what this node receives via data_map):{}", colors::GREEN, colors::RESET);
+                for f in &spec.inputs {
+                    let req = if f.required { "required" } else { "optional" };
+                    let desc = f.description.as_deref().unwrap_or("");
+                    println!("  {:<20} {:<10} {:<10} {}", f.name, f.field_type, req, desc);
+                }
+            }
+
+            if !spec.outputs.is_empty() {
+                println!("\n{}OUTPUTS (what this node produces — use in data_map of next edge):{}", colors::CYAN, colors::RESET);
+                for f in &spec.outputs {
+                    let desc = f.description.as_deref().unwrap_or("");
+                    println!("  {:<20} {:<10} {}", f.name, f.field_type, desc);
+                }
+            }
+
+            if !spec.config_fields.is_empty() {
+                println!("\n{}CONFIG (set in the node's config section):{}", colors::DIM, colors::RESET);
+                for f in &spec.config_fields {
+                    let req = if f.required { "required" } else { "optional" };
+                    let desc = f.description.as_deref().unwrap_or("");
+                    let default = f.default.as_ref()
+                        .map(|d| format!(" (default: {})", d))
+                        .unwrap_or_default();
+                    println!("  {:<20} {:<10} {:<10} {}{}", f.name, f.field_type, req, desc, default);
+                }
+            }
+
+            println!();
+        }
+        // List view: mirai tools
+        None => {
+            // Group by category.
+            let mut by_category: std::collections::BTreeMap<String, Vec<&datamirai_engine::ToolSpec>> =
+                std::collections::BTreeMap::new();
+            for spec in &specs {
+                by_category.entry(spec.category.clone()).or_default().push(spec);
+            }
+
+            println!("\n{}Available tools ({}):{}\n", colors::BOLD, specs.len(), colors::RESET);
+
+            for (category, tools) in &by_category {
+                println!("{}{}:{}", colors::GREEN, category, colors::RESET);
+                for tool in tools {
+                    println!("  {:<30} {}", tool.tool_type, tool.description.chars().take(60).collect::<String>());
+                }
+                println!();
+            }
+
+            println!("{}Tip:{} run `mirai tools <tool_type>` to see inputs, outputs, and config.", colors::DIM, colors::RESET);
+            println!("     Example: mirai tools ai/claude_code\n");
+        }
     }
 }
 

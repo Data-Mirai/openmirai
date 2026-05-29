@@ -1,6 +1,6 @@
 # datamirai
 
-Python SDK for [Data Mirai Engine](https://github.com/gabo-the-creator/data-mirai-engine) — agentic graph execution.
+Python SDK for [Data Mirai Engine](https://github.com/Gabo-TheCreator/data-mirai-engine) — agentic graph execution.
 
 ## Install
 

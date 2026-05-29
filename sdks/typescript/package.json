@@ -13,12 +13,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gabo-the-creator/data-mirai-engine"
+    "url": "https://github.com/Gabo-TheCreator/data-mirai-engine"
   },
   "bugs": {
-    "url": "https://github.com/gabo-the-creator/data-mirai-engine/issues"
+    "url": "https://github.com/Gabo-TheCreator/data-mirai-engine/issues"
   },
-  "homepage": "https://github.com/gabo-the-creator/data-mirai-engine#readme",
+  "homepage": "https://github.com/Gabo-TheCreator/data-mirai-engine#readme",
   "files": ["dist/", "README.md"],
   "engines": {
     "node": ">=18.0.0"

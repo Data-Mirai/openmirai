@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: mirai-darwin-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset: mirai-darwin-x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: mirai-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: mirai-windows-x86_64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} --bin mirai
+
+      - name: Prepare artifact (unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/mirai artifacts/${{ matrix.asset }}
+          chmod +x artifacts/${{ matrix.asset }}
+
+      - name: Prepare artifact (windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/mirai.exe artifacts/${{ matrix.asset }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: artifacts/${{ matrix.asset }}
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            Pre-built `mirai` binaries for macOS (arm64, x86_64), Linux (x86_64), and Windows (x86_64).
+
+            Verify integrity with `SHA256SUMS`.
+
+            See [CHANGELOG.md](https://github.com/gabo-the-creator/data-mirai-engine/blob/main/CHANGELOG.md) for release notes.

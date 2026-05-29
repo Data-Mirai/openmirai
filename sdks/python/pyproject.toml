@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datamirai"
-version = "0.4.5"
-description = "Python SDK for Mirai Engine — agentic graph execution"
+version = "0.5.2"
+description = "Python SDK for Data Mirai Engine — agentic graph execution"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -18,5 +18,7 @@ yaml = ["pyyaml>=6.0"]
 all = ["pyyaml>=6.0"]
 
 [project.urls]
-Homepage = "https://github.com/datamirai/engine"
-Repository = "https://github.com/datamirai/engine"
+Homepage = "https://github.com/gabo-the-creator/data-mirai-engine"
+Repository = "https://github.com/gabo-the-creator/data-mirai-engine"
+Issues = "https://github.com/gabo-the-creator/data-mirai-engine/issues"
+Changelog = "https://github.com/gabo-the-creator/data-mirai-engine/blob/main/CHANGELOG.md"

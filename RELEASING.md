@@ -2,69 +2,84 @@
 
 ## Semver
 
-Formato: `MAJOR.MINOR.PATCH`
+Format: `MAJOR.MINOR.PATCH`
 
-- **PATCH** (0.1.1): bug fixes, mejoras menores que no rompen API
-- **MINOR** (0.2.0): features nuevas backward-compatible
-- **MAJOR** (1.0.0): breaking changes en API/formato de agent specs
+- **PATCH** (0.1.1): bug fixes, minor improvements that don't break the API.
+- **MINOR** (0.2.0): backward-compatible new features.
+- **MAJOR** (1.0.0): breaking changes to the API or agent spec format.
 
-## Archivos que llevan versión
+## Files that carry a version
 
-Todos deben coincidir antes de tagear:
+Bump all of these before tagging:
 
-| Archivo | Campo |
-|---------|-------|
-| `VERSION` | contenido del archivo |
+| File | Field |
+|------|-------|
+| `VERSION` | file contents |
 | `engine/Cargo.toml` | `version` |
 | `cli/Cargo.toml` | `version` |
-| `engine/src/server/app.rs` | health + version endpoints |
 | `sdks/python/pyproject.toml` | `version` |
 | `sdks/python/datamirai/__init__.py` | `__version__` |
 | `sdks/typescript/package.json` | `version` |
+| `CHANGELOG.md` | new entry at the top |
 
-## Proceso de release
+The HTTP server reads its version from `CARGO_PKG_VERSION` at compile time — no manual sync needed.
+
+## Process
 
 ```bash
-# 1. Bump versión en todos los archivos
-#    (usar find/replace o script futuro)
-
-# 2. Commit del bump
+# 1. Bump versions in every file listed above
+# 2. Commit the bump
 git add -A
 git commit -m "chore: bump version to vX.Y.Z"
 
-# 3. Build + test
-cargo build --release
-cargo test --lib
-python3 demos/15-showcase/mirai_showcase.py  # E2E
+# 3. Local validation
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features
+cargo test --workspace
 
-# 4. Tag
-git tag -a vX.Y.Z -m "Release vX.Y.Z — [descripción]"
+# 4. Tag (annotated)
+git tag -a vX.Y.Z -m "Release vX.Y.Z — short description"
 
-# 5. Copiar binario a releases/
-mkdir -p releases/vX.Y.Z
-cp target/release/mirai releases/vX.Y.Z/mirai-vX.Y.Z-$(uname -s | tr A-Z a-z)-$(uname -m)
-
-# 6. Push (PM lo hace)
-git push origin main --tags
+# 5. Push (maintainer does this manually)
+git push origin main
+git push origin vX.Y.Z
 ```
 
-## Releases existentes
+## What GitHub Actions does on tag push
 
-| Version | Fecha | Binary | Notas |
-|---------|-------|--------|-------|
-| v0.4.3 | 2026-05-28 | `releases/v0.4.3/` | Fix: MCP client hang (notifications/initialized blocking) |
-| v0.4.2 | 2026-05-27 | `releases/v0.4.2/` | YAML-only specs, full-word comparison operators |
-| v0.4.1 | 2026-05-27 | `releases/v0.4.1/` | Fix: to_graph() dropped edge conditions. 8 new tests. |
-| v0.4.0 | 2026-05-27 | `releases/v0.4.0/` | BREAKING: /api/v1/, auth, graceful shutdown, refactor masivo. 665 tests. |
-| v0.3.1 | 2026-05-27 | `releases/v0.3.1/` | PRD-004: Agent contracts. PRD-005: CLI eval + rag. |
-| v0.2.0 | 2026-05-27 | `releases/v0.2.0/` | Feature improvements |
-| v0.1.0 | 2026-05-27 | `releases/v0.1.0/` | First public release. 23 features, 47 tools, 636 tests. |
+When a tag matching `v*` is pushed, `.github/workflows/release.yml` automatically:
 
-## Consumidores
+1. Builds release binaries for four targets:
+   - `mirai-darwin-arm64` (macOS Apple Silicon)
+   - `mirai-darwin-x86_64` (macOS Intel)
+   - `mirai-linux-x86_64` (Linux glibc)
+   - `mirai-windows-x86_64.exe` (Windows)
+2. Computes `SHA256SUMS` for all artifacts.
+3. Creates a GitHub Release with auto-generated notes and uploads every artifact.
 
-Los proyectos que dependen del motor apuntan a una versión específica:
-- **Mirai Local**: consume el binary de `releases/vX.Y.Z/`
-- **Mirai Cloud**: consume el binary o la lib vía Cargo dependency
-- **SDKs**: publican su propia versión alineada al motor
+End users download the binary for their platform from the [Releases page](https://github.com/gabo-the-creator/data-mirai-engine/releases).
 
-Cuando el motor sube de versión, cada consumidor decide cuándo actualizar.
+## Publishing the SDKs
+
+The Python and TypeScript SDKs are independent of the binary release. Publish manually when their version changes:
+
+```bash
+# Python (PyPI)
+cd sdks/python
+python -m build
+python -m twine upload dist/*
+
+# TypeScript (npm)
+cd sdks/typescript
+npm publish
+```
+
+## Consumers
+
+Projects that depend on the engine pin to a specific version:
+
+- **Mirai Local**: ships a bundled `mirai` binary from a GitHub Release.
+- **Mirai Cloud**: consumes the lib via Cargo or runs the binary in containers.
+- **SDKs**: track the engine version they target.
+
+Each consumer decides when to upgrade.

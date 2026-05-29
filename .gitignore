@@ -1,15 +1,83 @@
-# Build
+# Rust build artifacts
 target/
+**/target/
+Cargo.lock.bak
 
-# OS
-.DS_Store
+# Binaries (distributed via GitHub Releases, not git)
+mirai
+mirai.exe
+releases/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.python-version
+.pytest_cache/
+.tox/
+.venv/
+venv/
+ENV/
+*.whl
+
+# Node / TypeScript
+node_modules/
+*.tsbuildinfo
+.npm/
+.yarn/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+*-journal
+
+# Logs
+*.log
+logs/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
-# Legacy (local only, not tracked)
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Caches
+.cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test artifacts
+test-results/
+coverage/
+*.profraw
+
+# Blueprint workflow (internal methodology, not part of the public engine)
+blueprint/
+CLAUDE.md
+.claude/
+
+# Legacy
 legacy/
 rust/
+
+# Temp
+tmp/
+*.tmp

@@ -1,5 +1,10 @@
 # Data Mirai Engine
 
+[![CI](https://github.com/gabo-the-creator/data-mirai-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/gabo-the-creator/data-mirai-engine/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/gabo-the-creator/data-mirai-engine?include_prereleases&sort=semver)](https://github.com/gabo-the-creator/data-mirai-engine/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+
 Open-source agent execution engine. One binary. Any LLM. Your rules.
 
 A Rust-native engine that runs agentic workflows defined as simple YAML graphs. Alternative to LangGraph, CrewAI, and Google ADK — compiled to a single portable binary with zero runtime dependencies.

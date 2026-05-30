@@ -221,52 +221,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datamirai-cli"
-version = "0.5.2"
-dependencies = [
- "crossterm",
- "datamirai-engine",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
-]
-
-[[package]]
-name = "datamirai-engine"
-version = "0.5.2"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "chrono",
- "fnv",
- "futures-util",
- "glob",
- "hex",
- "http-body-util",
- "rand 0.8.6",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "tower",
- "tower-http",
- "tracing",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -880,6 +834,52 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "openmirai-cli"
+version = "0.5.2"
+dependencies = [
+ "crossterm",
+ "openmirai-engine",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+]
+
+[[package]]
+name = "openmirai-engine"
+version = "0.5.2"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "chrono",
+ "fnv",
+ "futures-util",
+ "glob",
+ "hex",
+ "http-body-util",
+ "rand 0.8.6",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tower",
+ "tower-http",
+ "tracing",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "parking_lot"

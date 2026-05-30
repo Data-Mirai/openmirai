@@ -16,9 +16,9 @@ use super::types::{HookResult, ToolError, RunnerError, Checkpoint};
 /// so implementors only need to override the hooks they care about.
 ///
 /// ```ignore
-/// use datamirai_engine::{HookHandler, HookResult, ToolError};
-/// use datamirai_engine::core::graph::NodeDef;
-/// use datamirai_engine::core::context::ExecutionContext;
+/// use openmirai_engine::{HookHandler, HookResult, ToolError};
+/// use openmirai_engine::core::graph::NodeDef;
+/// use openmirai_engine::core::context::ExecutionContext;
 ///
 /// struct MyHook;
 ///

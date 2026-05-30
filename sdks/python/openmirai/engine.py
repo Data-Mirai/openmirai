@@ -4,12 +4,12 @@ import json
 import subprocess
 from typing import Any, Iterator, Optional
 
-from datamirai.agent import Agent
-from datamirai.types import ExecutionResult, ExecutionStatus, StreamEvent, TraceEntry
+from openmirai.agent import Agent
+from openmirai.types import ExecutionResult, ExecutionStatus, StreamEvent, TraceEntry
 
 
 class Engine:
-    """Mirai Engine client.
+    """Open Mirai client.
 
     Runs agents via the HTTP API (if server is running) or via the CLI binary.
 

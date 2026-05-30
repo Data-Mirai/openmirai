@@ -18,7 +18,7 @@ const DEFAULT_MODEL: &str = "meta-llama/llama-3.3-70b-instruct";
 pub fn new(api_key: &str) -> OpenAICompatAdapter {
     let mut extra_headers = HashMap::new();
     extra_headers.insert("HTTP-Referer".to_string(), "https://datamirai.com".to_string());
-    extra_headers.insert("X-Title".to_string(), "Data Mirai Engine".to_string());
+    extra_headers.insert("X-Title".to_string(), "Open Mirai".to_string());
 
     OpenAICompatAdapter::new(
         api_key,

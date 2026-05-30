@@ -2,14 +2,14 @@
 Python Quick Start — Run an agent from Python in 10 lines.
 
 Prerequisites:
-    pip install datamirai
+    pip install openmirai
     mirai serve --port 3000  (in another terminal)
 
 Run:
     python examples/python-quickstart.py
 """
 
-from datamirai import Engine, Agent
+from openmirai import Engine, Agent
 
 # 1. Create engine (defaults to Ollama on localhost)
 engine = Engine(provider="ollama")

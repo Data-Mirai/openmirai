@@ -1,4 +1,4 @@
-# Data Mirai Engine — Architecture
+# Open Mirai — Architecture
 
 ## 1. Stack
 
@@ -10,7 +10,7 @@
 | Vector Search | SQLite FTS5 | built-in |
 | LLM | 7 providers via trait adapters | — |
 | Agent Specs | YAML-only (serde_yaml) | — |
-| SDK | Python (datamirai) | 3.10+ |
+| SDK | Python (openmirai) | 3.10+ |
 
 ## 2. Distribution
 
@@ -20,8 +20,8 @@ Single compiled binary: `mirai`
 |---|---|---|
 | **CLI** | `mirai run agent.yaml` | Execute agents from terminal |
 | **Server** | `mirai serve --port 3000` | HTTP API with SSE streaming |
-| **Library** | `cargo add datamirai-engine` | Embeddable Rust crate |
-| **Python SDK** | `pip install datamirai` | Thin wrapper over HTTP API or CLI |
+| **Library** | `cargo add openmirai-engine` | Embeddable Rust crate |
+| **Python SDK** | `pip install openmirai` | Thin wrapper over HTTP API or CLI |
 
 No Docker, no Node.js, no Python runtime required for the engine itself. One binary, any platform.
 
@@ -200,7 +200,7 @@ Authentication: `X-API-Key` header (optional, configured via `MIRAI_API_KEY`).
 ## 9. Relation to Ecosystem
 
 ```
-datamirai-engine (open source, MIT)     Mirai Local (free desktop app)
+openmirai-engine (open source, MIT)     Mirai Local (free desktop app)
 ┌──────────────────────────────┐       ┌─────────────────────────────┐
 │ Graph execution engine        │       │ Implements Engine            │
 │ 48+ built-in tools            │◄──────│ Desktop UI for agents        │

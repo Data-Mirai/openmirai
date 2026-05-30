@@ -1,23 +1,23 @@
-# datamirai
+# openmirai
 
-Python SDK for [Data Mirai Engine](https://github.com/Gabo-TheCreator/data-mirai-engine) — agentic graph execution.
+Python SDK for [Open Mirai](https://github.com/Gabo-TheCreator/openmirai) — agentic graph execution.
 
 ## Install
 
 ```bash
-pip install datamirai
+pip install openmirai
 ```
 
 Optional YAML loading:
 
 ```bash
-pip install "datamirai[yaml]"
+pip install "openmirai[yaml]"
 ```
 
 ## Quickstart
 
 ```python
-from datamirai import Engine, Agent
+from openmirai import Engine, Agent
 
 engine = Engine(provider="ollama")  # or "claude", "openai", "gemini", "groq", "nvidia", "openrouter"
 agent = Agent.from_file("my-agent.yaml")

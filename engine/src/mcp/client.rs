@@ -470,7 +470,7 @@ impl MCPClient {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {
-                "name": "datamirai-engine",
+                "name": "openmirai-engine",
                 "version": "0.1.0"
             }
         });

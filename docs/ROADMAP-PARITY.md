@@ -1,4 +1,4 @@
-# ROADMAP: Paridad competitiva Mirai Engine vs LangGraph
+# ROADMAP: Paridad competitiva Open Mirai vs LangGraph
 
 > Cada item aqui es un gap donde LangGraph tiene ventaja HOY.
 > Mirai tiene la arquitectura para resolverlos todos — y mejor.

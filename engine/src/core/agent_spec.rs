@@ -1198,7 +1198,7 @@ graph:
         use serde_json::json;
         assert!(InputType::Text.matches(&json!("hello")));
         assert!(!InputType::Text.matches(&json!(42)));
-        assert!(InputType::Number.matches(&json!(3.14)));
+        assert!(InputType::Number.matches(&json!(1.5)));
         assert!(!InputType::Number.matches(&json!("three")));
         assert!(InputType::Boolean.matches(&json!(true)));
         assert!(!InputType::Boolean.matches(&json!(1)));

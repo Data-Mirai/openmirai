@@ -1,15 +1,28 @@
-# Data Mirai Engine
+# Open Mirai
 
-[![CI](https://github.com/Gabo-TheCreator/data-mirai-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Gabo-TheCreator/data-mirai-engine/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Gabo-TheCreator/data-mirai-engine?include_prereleases&sort=semver)](https://github.com/Gabo-TheCreator/data-mirai-engine/releases)
+[![CI](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml/badge.svg)](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Gabo-TheCreator/openmirai?include_prereleases&sort=semver)](https://github.com/Gabo-TheCreator/openmirai/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
-Open-source agent execution engine. One binary. Any LLM. Your rules.
+> **Decentralize your AI agents.** One binary. Any LLM. Your machine. Your rules.
 
-A Rust-native engine that runs agentic workflows defined as simple YAML graphs. Alternative to LangGraph, CrewAI, and Google ADK — compiled to a single portable binary with zero runtime dependencies.
+Open Mirai is a Rust-native engine that runs agentic workflows defined as simple YAML graphs. No cloud lock-in, no heavy runtime, no vendor handcuffs — the engine runs wherever you do: your laptop, your server, your edge. A single portable binary with zero runtime dependencies.
 
-**48+ built-in tools** | **7 LLM providers** | **665 tests** | **MIT license**
+A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
+
+**48+ built-in tools** · **7 LLM providers** · **712 tests** · **MIT license**
+
+## Why decentralized?
+
+Most agent platforms run *their* runtime, on *their* cloud, against *their* preferred model. Open Mirai inverts that:
+
+- **Runs anywhere** — one self-contained binary, zero runtime dependencies. Your machine, your server, your edge.
+- **Any LLM** — 7 providers today, local Ollama included. No vendor lock-in.
+- **Your data stays yours** — agents execute where you put them; nothing phones home.
+- **Embeddable** — drop the engine into any app via CLI, HTTP, or as a Rust crate.
+
+> Decentralizing AI agents means taking power back from closed platforms and handing it to whoever builds.
 
 ## Quick Start
 
@@ -59,11 +72,24 @@ mirai run hello.yaml --input '{"query": "What is Rust?"}'
 
 ```
 Agent  = YAML config  (portable, versionable, language-agnostic)
-Engine = Rust binary   (FFI, WASM, CLI — 665 tests)
+Engine = Rust binary   (FFI, WASM, CLI — 712 tests)
 Host   = Your app      (Python, Swift, Go, JavaScript — anything)
 ```
 
 The agent defines **what** to do. The engine decides **how** to run it.
+
+## What's different
+
+| | Open Mirai | LangGraph / CrewAI | Google ADK |
+|---|---|---|---|
+| Runtime | Single binary, zero deps | Python runtime + deps | Python runtime + deps |
+| Run on your own machine/edge | ✅ first-class | ⚠️ needs Python env | ⚠️ GCP-oriented |
+| LLM choice | 7 providers, local-first | Provider-agnostic | Gemini-first |
+| Agent format | Portable YAML | Python code | Python code |
+| Embed in any app | CLI · HTTP · Rust crate | Python library | Python library |
+| License | MIT | MIT | Apache-2.0 |
+
+The point isn't "more features" — it's **where and how it runs**: yours, portable, and not chained to a cloud.
 
 ## Built-in Tools
 
@@ -95,11 +121,11 @@ The agent defines **what** to do. The engine decides **how** to run it.
 ## Python SDK
 
 ```bash
-pip install datamirai
+pip install openmirai
 ```
 
 ```python
-from datamirai import Engine, Agent
+from openmirai import Engine, Agent
 
 engine = Engine(provider="ollama")
 agent = Agent.from_file("my-agent.yaml")
@@ -110,9 +136,9 @@ print(result.output)
 ## Project Structure
 
 ```
-engine/        Core library (datamirai-engine crate)
+engine/        Core library (openmirai-engine crate)
 cli/           CLI binary (mirai)
-sdks/python/   Python SDK (datamirai)
+sdks/python/   Python SDK (openmirai)
 examples/      Ready-to-run agent examples
 docs/          Technical documentation
 ```
@@ -143,6 +169,15 @@ mirai serve --port 3000
 ```
 
 API endpoints: `/api/v1/agents`, `/api/v1/graphs`, `/api/v1/sessions`, `/api/v1/tools`, `/health`
+
+## Contributing
+
+Open Mirai is open source and built in the open. Contributions are welcome — new tools, LLM providers, docs, examples, bug fixes.
+
+- Start with **[CONTRIBUTING.md](CONTRIBUTING.md)**
+- Pick up a [`good first issue`](https://github.com/Gabo-TheCreator/openmirai/labels/good%20first%20issue)
+- Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system map
+- Be kind — see our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## License
 

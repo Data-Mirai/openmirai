@@ -159,11 +159,11 @@ mod tests {
     fn matches_all_variants() {
         assert!(ValueType::Text.matches(&json!("hello")));
         assert!(!ValueType::Text.matches(&json!(42)));
-        assert!(ValueType::Number.matches(&json!(3.14)));
+        assert!(ValueType::Number.matches(&json!(1.5)));
         assert!(ValueType::Number.matches(&json!(42)));
         assert!(!ValueType::Number.matches(&json!("three")));
         assert!(ValueType::Integer.matches(&json!(42)));
-        assert!(!ValueType::Integer.matches(&json!(3.14)));
+        assert!(!ValueType::Integer.matches(&json!(1.5)));
         assert!(ValueType::Boolean.matches(&json!(true)));
         assert!(!ValueType::Boolean.matches(&json!(1)));
         assert!(ValueType::Array.matches(&json!([1, 2, 3])));

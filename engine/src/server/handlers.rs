@@ -24,7 +24,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
-        "engine": "datamirai-engine-rs",
+        "engine": "openmirai-engine-rs",
         "uptime_seconds": uptime_secs,
         "agents_loaded": agents_count,
         "sessions_total": sessions_count,
@@ -35,7 +35,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
 pub(crate) async fn version() -> Json<Value> {
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "engine": "datamirai-engine-rs"
+        "engine": "openmirai-engine-rs"
     }))
 }
 

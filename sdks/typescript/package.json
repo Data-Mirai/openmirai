@@ -1,7 +1,7 @@
 {
-  "name": "datamirai",
+  "name": "openmirai",
   "version": "0.5.2",
-  "description": "TypeScript SDK for Data Mirai Engine — agentic graph execution",
+  "description": "TypeScript SDK for Open Mirai — agentic graph execution",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -13,12 +13,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Gabo-TheCreator/data-mirai-engine"
+    "url": "https://github.com/Gabo-TheCreator/openmirai"
   },
   "bugs": {
-    "url": "https://github.com/Gabo-TheCreator/data-mirai-engine/issues"
+    "url": "https://github.com/Gabo-TheCreator/openmirai/issues"
   },
-  "homepage": "https://github.com/Gabo-TheCreator/data-mirai-engine#readme",
+  "homepage": "https://github.com/Gabo-TheCreator/openmirai#readme",
   "files": ["dist/", "README.md"],
   "engines": {
     "node": ">=18.0.0"

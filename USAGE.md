@@ -1,4 +1,4 @@
-# How to Use Data Mirai Engine
+# How to Use Open Mirai
 
 ## The concept in 30 seconds
 

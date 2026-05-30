@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use datamirai_engine::llm::{LLMAdapter, OllamaAdapter, OpenAICompatAdapter};
+use openmirai_engine::llm::{LLMAdapter, OllamaAdapter, OpenAICompatAdapter};
 
 /// Create the right adapter for the given provider string.
 ///
@@ -32,7 +32,7 @@ pub fn create_adapter(
             } else {
                 base_url
             };
-            Box::new(datamirai_engine::llm::ClaudeAdapter::with_options(
+            Box::new(openmirai_engine::llm::ClaudeAdapter::with_options(
                 &key,
                 url,
                 Duration::from_secs(120),
@@ -48,7 +48,7 @@ pub fn create_adapter(
             } else {
                 base_url
             };
-            Box::new(datamirai_engine::llm::GeminiAdapter::with_options(
+            Box::new(openmirai_engine::llm::GeminiAdapter::with_options(
                 &key,
                 url,
                 Duration::from_secs(120),
@@ -56,15 +56,15 @@ pub fn create_adapter(
         }
         "groq" => {
             let key = resolve_key(api_key, "GROQ_API_KEY");
-            Box::new(datamirai_engine::llm::groq::new(&key))
+            Box::new(openmirai_engine::llm::groq::new(&key))
         }
         "nvidia" => {
             let key = resolve_key(api_key, "NVIDIA_API_KEY");
-            Box::new(datamirai_engine::llm::nvidia::new(&key))
+            Box::new(openmirai_engine::llm::nvidia::new(&key))
         }
         "openrouter" => {
             let key = resolve_key(api_key, "OPENROUTER_API_KEY");
-            Box::new(datamirai_engine::llm::openrouter::new(&key))
+            Box::new(openmirai_engine::llm::openrouter::new(&key))
         }
         "openai" => {
             let key = resolve_key(api_key, "OPENAI_API_KEY");

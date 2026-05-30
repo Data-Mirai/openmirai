@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::time::Instant;
 
-use datamirai_engine::llm::{
+use openmirai_engine::llm::{
     FunctionCall, LLMAdapter, Message, NormalizedResponse, ToolCallRequest,
 };
-use datamirai_engine::tools::builtin::register_all_builtin_tools;
-use datamirai_engine::tools::registry::ToolRegistry;
-use datamirai_engine::tools::base::ToolSpec;
+use openmirai_engine::tools::builtin::register_all_builtin_tools;
+use openmirai_engine::tools::registry::ToolRegistry;
+use openmirai_engine::tools::base::ToolSpec;
 
 use serde_json::{json, Value};
 
@@ -158,15 +158,15 @@ const CORE_TOOLS: &[&str] = &[
     "git/commit",
 ];
 
-fn type_map(t: &datamirai_engine::FieldType) -> &'static str {
+fn type_map(t: &openmirai_engine::FieldType) -> &'static str {
     match t {
-        datamirai_engine::FieldType::String => "string",
-        datamirai_engine::FieldType::Number => "number",
-        datamirai_engine::FieldType::Boolean => "boolean",
-        datamirai_engine::FieldType::Object => "object",
-        datamirai_engine::FieldType::Array => "array",
-        datamirai_engine::FieldType::Integer => "integer",
-        datamirai_engine::FieldType::File => "file",
+        openmirai_engine::FieldType::String => "string",
+        openmirai_engine::FieldType::Number => "number",
+        openmirai_engine::FieldType::Boolean => "boolean",
+        openmirai_engine::FieldType::Object => "object",
+        openmirai_engine::FieldType::Array => "array",
+        openmirai_engine::FieldType::Integer => "integer",
+        openmirai_engine::FieldType::File => "file",
     }
 }
 
@@ -293,7 +293,7 @@ async fn execute_tool(
     }
 
     // We need a minimal ExecutionContext for tool execution.
-    let ctx = datamirai_engine::adapters::DefaultExecutionContext::default_dev();
+    let ctx = openmirai_engine::adapters::DefaultExecutionContext::default_dev();
 
     match tool.execute(inputs, &config, &ctx).await {
         Ok(result) => {

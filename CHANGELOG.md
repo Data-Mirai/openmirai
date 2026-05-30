@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to datamirai-engine. Consumers: check **Breaking** sections before upgrading.
+All notable changes to openmirai-engine. Consumers: check **Breaking** sections before upgrading.
 
 ---
 

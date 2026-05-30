@@ -141,7 +141,7 @@ pub async fn serve(
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("datamirai-engine listening on {addr}");
+    tracing::info!("openmirai-engine listening on {addr}");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;

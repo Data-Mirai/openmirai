@@ -1,10 +1,10 @@
 """
-datamirai — Python SDK for Mirai Engine.
+openmirai — Python SDK for Open Mirai.
 
-Thin wrapper that communicates with the Mirai Engine via HTTP API or CLI binary.
+Thin wrapper that communicates with the Open Mirai via HTTP API or CLI binary.
 
 Usage:
-    from datamirai import Engine, Agent
+    from openmirai import Engine, Agent
 
     engine = Engine(provider="openai", model="gpt-4")
     agent = Agent.from_file("my-agent.yaml")
@@ -18,8 +18,8 @@ Usage:
 
 __version__ = "0.5.2"
 
-from datamirai.engine import Engine
-from datamirai.agent import Agent
-from datamirai.types import ExecutionResult, StreamEvent
+from openmirai.engine import Engine
+from openmirai.agent import Agent
+from openmirai.types import ExecutionResult, StreamEvent
 
 __all__ = ["Engine", "Agent", "ExecutionResult", "StreamEvent"]

@@ -1,11 +1,11 @@
 /**
- * datamirai — TypeScript SDK for Mirai Engine.
+ * openmirai — TypeScript SDK for Open Mirai.
  *
- * Thin wrapper that communicates with the Mirai Engine via HTTP API.
+ * Thin wrapper that communicates with the Open Mirai via HTTP API.
  *
  * @example
  * ```typescript
- * import { Engine, Agent } from 'datamirai';
+ * import { Engine, Agent } from 'openmirai';
  *
  * const engine = new Engine({ provider: 'openai', model: 'gpt-4' });
  * const agent = Agent.fromFile('my-agent.yaml');

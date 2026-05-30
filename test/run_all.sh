@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Data Mirai Engine — Integration Test Suite
+# Open Mirai — Integration Test Suite
 #
 # Runs 10 diverse agent tests covering different engine capabilities.
 # Uses --provider mock for deterministic execution (no LLM needed).
@@ -20,7 +20,7 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 echo "============================================"
-echo "  Data Mirai Engine — Integration Tests"
+echo "  Open Mirai — Integration Tests"
 echo "  Binary: $BINARY"
 echo "  Version: $($BINARY version)"
 echo "============================================"

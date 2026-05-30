@@ -6,7 +6,7 @@ import type {
   StreamEvent,
 } from './types';
 
-/** Mirai Engine client. Runs agents via HTTP API. */
+/** Open Mirai client. Runs agents via HTTP API. */
 export class Engine {
   private provider: string;
   private model?: string;

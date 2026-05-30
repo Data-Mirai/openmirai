@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "datamirai"
+name = "openmirai"
 version = "0.5.2"
-description = "Python SDK for Data Mirai Engine — agentic graph execution"
+description = "Python SDK for Open Mirai — agentic graph execution"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -18,7 +18,7 @@ yaml = ["pyyaml>=6.0"]
 all = ["pyyaml>=6.0"]
 
 [project.urls]
-Homepage = "https://github.com/Gabo-TheCreator/data-mirai-engine"
-Repository = "https://github.com/Gabo-TheCreator/data-mirai-engine"
-Issues = "https://github.com/Gabo-TheCreator/data-mirai-engine/issues"
-Changelog = "https://github.com/Gabo-TheCreator/data-mirai-engine/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Gabo-TheCreator/openmirai"
+Repository = "https://github.com/Gabo-TheCreator/openmirai"
+Issues = "https://github.com/Gabo-TheCreator/openmirai/issues"
+Changelog = "https://github.com/Gabo-TheCreator/openmirai/blob/main/CHANGELOG.md"

@@ -1,12 +1,12 @@
 [package]
-name = "datamirai-engine"
+name = "openmirai-engine"
 version = "0.5.2"
 edition = "2021"
 description = "Open-source agentic graph execution engine"
 license = "MIT"
 
 [lib]
-name = "datamirai_engine"
+name = "openmirai_engine"
 path = "src/lib.rs"
 
 [features]

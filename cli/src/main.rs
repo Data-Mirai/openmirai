@@ -18,11 +18,11 @@ mod terminal;
 use std::process;
 use std::sync::Arc;
 
-use datamirai_engine::{
+use openmirai_engine::{
     AdapterBridgeLLMResource, AgentSpec, ExecutionContext, ExecutionStatus, GraphRunner,
     RegistryExecutor, DefaultExecutionContext, ToolRegistry,
 };
-use datamirai_engine::tools::builtin::register_all_builtin_tools;
+use openmirai_engine::tools::builtin::register_all_builtin_tools;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -152,12 +152,12 @@ fn build_context(
     base_url: &str,
     system_prompt: Option<&str>,
 ) -> DefaultExecutionContext {
-    use datamirai_engine::adapters::InMemoryDBResource;
-    use datamirai_engine::adapters::InMemoryStorageResource;
-    use datamirai_engine::adapters::MockLLMResource;
+    use openmirai_engine::adapters::InMemoryDBResource;
+    use openmirai_engine::adapters::InMemoryStorageResource;
+    use openmirai_engine::adapters::MockLLMResource;
 
     // Special case: if provider is "mock", use MockLLMResource for testing
-    let llm: Box<dyn datamirai_engine::LLMResource> = if provider == "mock" {
+    let llm: Box<dyn openmirai_engine::LLMResource> = if provider == "mock" {
         Box::new(MockLLMResource::new())
     } else {
         let adapter = adapter_factory::create_adapter(provider, api_key, base_url);
@@ -215,8 +215,8 @@ async fn run_agent(args: &[String]) {
     if benchmark_enabled {
         let bench_path = std::env::var("MIRAI_BENCHMARK_FILE")
             .unwrap_or_else(|_| "benchmarks.jsonl".to_string());
-        datamirai_engine::benchmark::mark_process_start();
-        datamirai_engine::benchmark::enable(bench_path);
+        openmirai_engine::benchmark::mark_process_start();
+        openmirai_engine::benchmark::enable(bench_path);
     }
 
     // Show provider info
@@ -241,7 +241,7 @@ async fn run_agent(args: &[String]) {
     };
 
     // PRD-008: Reject live agents — they must be started with `mirai play`
-    if spec.agent_type == datamirai_engine::AgentType::Live {
+    if spec.agent_type == openmirai_engine::AgentType::Live {
         eprintln!(
             "{}Error: live agents must be started with `mirai play`, not `mirai run`{}",
             colors::RED,
@@ -272,7 +272,7 @@ async fn run_agent(args: &[String]) {
 
     // Resolve Soul if specified → system prompt
     let system_prompt = if let Some(ref soul_path) = spec.soul {
-        match datamirai_engine::soul::load_from_file(std::path::Path::new(soul_path)) {
+        match openmirai_engine::soul::load_from_file(std::path::Path::new(soul_path)) {
             Ok(soul) => {
                 eprintln!("{}Soul: {}{}", colors::DIM, soul.name, colors::RESET);
                 Some(soul.to_system_prompt())
@@ -310,7 +310,7 @@ async fn run_agent(args: &[String]) {
 
             // Validate against spec.inputs if defined (PRD-004 Capa 1)
             let validated_payload = if let Some(ref inputs_schema) = spec.inputs {
-                match datamirai_engine::core::agent_spec::validate_agent_inputs(&payload, inputs_schema) {
+                match openmirai_engine::core::agent_spec::validate_agent_inputs(&payload, inputs_schema) {
                     Ok(enriched) => enriched,
                     Err(errors) => {
                         eprintln!("{}Error: input validation failed for agent '{}':{}", colors::RED, spec.name, colors::RESET);
@@ -353,7 +353,7 @@ async fn run_agent(args: &[String]) {
 
     // Record cold start
     if benchmark_enabled {
-        datamirai_engine::benchmark::record_cold_start();
+        openmirai_engine::benchmark::record_cold_start();
     }
     let exec_start = std::time::Instant::now();
 
@@ -365,11 +365,11 @@ async fn run_agent(args: &[String]) {
 
             // Print trace tree if --trace
             if trace_enabled {
-                let tree = datamirai_engine::observability::build_trace_tree(&result, &spec.name);
-                let rendered = datamirai_engine::observability::render_trace_tree(&tree);
+                let tree = openmirai_engine::observability::build_trace_tree(&result, &spec.name);
+                let rendered = openmirai_engine::observability::render_trace_tree(&tree);
                 eprintln!("\n{}Trace:{}\n{}\n", colors::BOLD, colors::RESET, rendered);
 
-                let metrics = datamirai_engine::observability::compute_metrics(&result.trace);
+                let metrics = openmirai_engine::observability::compute_metrics(&result.trace);
                 eprintln!(
                     "{}Metrics:{} {} nodes, {}ms total, {:.1}ms avg, {} retries\n",
                     colors::BOLD,
@@ -383,7 +383,7 @@ async fn run_agent(args: &[String]) {
 
             // Log benchmarks
             if benchmark_enabled {
-                datamirai_engine::benchmark::log_execution(
+                openmirai_engine::benchmark::log_execution(
                     exec_ms,
                     &spec.name,
                     graph.nodes.len(),
@@ -391,13 +391,13 @@ async fn run_agent(args: &[String]) {
                 );
                 // Log individual node latencies from trace
                 for entry in &result.trace {
-                    datamirai_engine::benchmark::log_tool_latency(
+                    openmirai_engine::benchmark::log_tool_latency(
                         entry.duration_ms,
                         &entry.tool_type,
                         &entry.node_id,
                     );
                 }
-                datamirai_engine::benchmark::log_memory_usage();
+                openmirai_engine::benchmark::log_memory_usage();
             }
 
             let output = serde_json::json!({
@@ -472,7 +472,7 @@ async fn run_serve(args: &[String]) {
     let (provider, model, api_key, base_url) = resolve_provider(args);
 
     eprintln!(
-        "{}Starting datamirai-engine server on {}:{}{}",
+        "{}Starting openmirai-engine server on {}:{}{}",
         colors::GREEN,
         host,
         port,
@@ -485,7 +485,7 @@ async fn run_serve(args: &[String]) {
     );
 
     // Build a factory that creates REAL LLM resources for each request.
-    let llm_factory: std::sync::Arc<dyn Fn() -> Box<dyn datamirai_engine::LLMResource> + Send + Sync> = {
+    let llm_factory: std::sync::Arc<dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync> = {
         let provider = provider.clone();
         let model = model.clone();
         let api_key = api_key.clone();
@@ -493,7 +493,7 @@ async fn run_serve(args: &[String]) {
         std::sync::Arc::new(move || {
             if provider == "mock" {
                 // Only allowed in explicit --provider mock for testing
-                Box::new(datamirai_engine::MockLLMResource::new())
+                Box::new(openmirai_engine::MockLLMResource::new())
             } else {
                 let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
                 Box::new(AdapterBridgeLLMResource::new(adapter, &model))
@@ -505,7 +505,7 @@ async fn run_serve(args: &[String]) {
     let server_api_key = parse_flag(args, "--api-key")
         .or_else(|| std::env::var("MIRAI_API_KEY").ok());
 
-    if let Err(e) = datamirai_engine::server::serve(&host, port, llm_factory, server_api_key).await {
+    if let Err(e) = openmirai_engine::server::serve(&host, port, llm_factory, server_api_key).await {
         eprintln!(
             "{}Server error: {e}{}",
             colors::RED,
@@ -520,8 +520,8 @@ async fn run_serve(args: &[String]) {
 /// `mirai tools`                → list all tools grouped by category
 /// `mirai tools ai/claude_code` → show inputs, outputs, config for that tool
 fn cmd_tools(args: &[String]) {
-    let mut registry = datamirai_engine::ToolRegistry::new();
-    datamirai_engine::tools::builtin::register_all_builtin_tools(&mut registry);
+    let mut registry = openmirai_engine::ToolRegistry::new();
+    openmirai_engine::tools::builtin::register_all_builtin_tools(&mut registry);
 
     let specs = registry.list_tools();
 
@@ -574,7 +574,7 @@ fn cmd_tools(args: &[String]) {
         // List view: mirai tools
         None => {
             // Group by category.
-            let mut by_category: std::collections::BTreeMap<String, Vec<&datamirai_engine::ToolSpec>> =
+            let mut by_category: std::collections::BTreeMap<String, Vec<&openmirai_engine::ToolSpec>> =
                 std::collections::BTreeMap::new();
             for spec in &specs {
                 by_category.entry(spec.category.clone()).or_default().push(spec);
@@ -644,7 +644,7 @@ fn cmd_describe(args: &[String]) {
 
 /// List available agent templates.
 fn cmd_templates(_args: &[String]) {
-    let templates = datamirai_engine::templates::builtin_templates();
+    let templates = openmirai_engine::templates::builtin_templates();
     println!(
         "{bold}Available templates ({count}):{reset}\n",
         bold = colors::BOLD,
@@ -684,7 +684,7 @@ fn cmd_new(args: &[String]) {
 
     let name = parse_flag(args, "--name").unwrap_or_else(|| template_id.clone());
 
-    let template = match datamirai_engine::templates::get_template(&template_id) {
+    let template = match openmirai_engine::templates::get_template(&template_id) {
         Some(t) => t,
         None => {
             eprintln!(
@@ -760,19 +760,19 @@ async fn cmd_eval(args: &[String]) {
         process::exit(1);
     }
 
-    let eval_types: Vec<datamirai_engine::eval::EvalType> = types_str.split(',').filter_map(|s| match s.trim() {
-        "relevance" => Some(datamirai_engine::eval::EvalType::Relevance),
-        "faithfulness" => Some(datamirai_engine::eval::EvalType::Faithfulness),
-        "completeness" => Some(datamirai_engine::eval::EvalType::Completeness),
-        "format_compliance" => Some(datamirai_engine::eval::EvalType::FormatCompliance),
-        "latency" => Some(datamirai_engine::eval::EvalType::Latency),
+    let eval_types: Vec<openmirai_engine::eval::EvalType> = types_str.split(',').filter_map(|s| match s.trim() {
+        "relevance" => Some(openmirai_engine::eval::EvalType::Relevance),
+        "faithfulness" => Some(openmirai_engine::eval::EvalType::Faithfulness),
+        "completeness" => Some(openmirai_engine::eval::EvalType::Completeness),
+        "format_compliance" => Some(openmirai_engine::eval::EvalType::FormatCompliance),
+        "latency" => Some(openmirai_engine::eval::EvalType::Latency),
         _ => None,
     }).collect();
 
     let (provider, model, api_key, base_url) = resolve_provider(args);
     let context = build_context(&provider, &model, &api_key, &base_url, None);
 
-    let results = datamirai_engine::eval::execute_eval(
+    let results = openmirai_engine::eval::execute_eval(
         &eval_types, &input, &output, None, 0, None, context.llm(), "",
     ).await;
 
@@ -825,10 +825,10 @@ async fn cmd_rag(args: &[String]) {
             let context = build_context(&provider, &model, &api_key, &base_url, None);
 
             // Chunk + embed + search.
-            let rag_config = datamirai_engine::rag::RAGPipelineConfig {
+            let rag_config = openmirai_engine::rag::RAGPipelineConfig {
                 name: "cli".into(),
-                source_type: datamirai_engine::rag::SourceType::Text,
-                chunking_strategy: datamirai_engine::rag::ChunkingStrategy::Paragraph,
+                source_type: openmirai_engine::rag::SourceType::Text,
+                chunking_strategy: openmirai_engine::rag::ChunkingStrategy::Paragraph,
                 chunk_size: 512,
                 chunk_overlap: 50,
                 embedding_model: String::new(),
@@ -836,7 +836,7 @@ async fn cmd_rag(args: &[String]) {
 
             let mut all_chunks: Vec<String> = Vec::new();
             for doc in &documents {
-                all_chunks.extend(datamirai_engine::rag::chunk_text(doc, &rag_config));
+                all_chunks.extend(openmirai_engine::rag::chunk_text(doc, &rag_config));
             }
 
             eprintln!("{}Chunks: {} | Embedding...{}", colors::DIM, all_chunks.len(), colors::RESET);

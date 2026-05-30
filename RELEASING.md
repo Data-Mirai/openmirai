@@ -18,7 +18,7 @@ Bump all of these before tagging:
 | `engine/Cargo.toml` | `version` |
 | `cli/Cargo.toml` | `version` |
 | `sdks/python/pyproject.toml` | `version` |
-| `sdks/python/datamirai/__init__.py` | `__version__` |
+| `sdks/python/openmirai/__init__.py` | `__version__` |
 | `sdks/typescript/package.json` | `version` |
 | `CHANGELOG.md` | new entry at the top |
 
@@ -57,7 +57,7 @@ When a tag matching `v*` is pushed, `.github/workflows/release.yml` automaticall
 2. Computes `SHA256SUMS` for all artifacts.
 3. Creates a GitHub Release with auto-generated notes and uploads every artifact.
 
-End users download the binary for their platform from the [Releases page](https://github.com/Gabo-TheCreator/data-mirai-engine/releases).
+End users download the binary for their platform from the [Releases page](https://github.com/Gabo-TheCreator/openmirai/releases).
 
 ## Publishing the SDKs
 

@@ -1,4 +1,4 @@
-# Data Mirai Engine — Documentation Index
+# Open Mirai — Documentation Index
 
 ## 1. Overview
 

@@ -14,8 +14,8 @@ mod types;
 mod tests;
 
 // Re-export everything that was public before the split.
-// External code using `use datamirai_engine::GraphRunner` or
-// `use datamirai_engine::core::runner::*` continues to work unchanged.
+// External code using `use openmirai_engine::GraphRunner` or
+// `use openmirai_engine::core::runner::*` continues to work unchanged.
 
 pub use graph_runner::GraphRunner;
 pub use traits::{CheckpointCallback, HookHandler, ToolExecutor};

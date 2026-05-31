@@ -1,1456 +1,1613 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>mirai edit — Visual Agent Editor</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #1e1e1e;
-            color: #e0e0e0;
-            overflow: hidden;
-        }
-
-        .editor-container {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-
-        /* Toolbar */
-        .toolbar {
-            background: #252526;
-            border-bottom: 1px solid #3e3e42;
-            padding: 10px 15px;
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .toolbar-group {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            border-right: 1px solid #3e3e42;
-            padding-right: 15px;
-        }
-
-        .toolbar-group:last-child {
-            border-right: none;
-        }
-
-        .tab-toggle {
-            display: flex;
-            gap: 0;
-            background: #3c3c3c;
-            border-radius: 3px;
-            border: 1px solid #3e3e42;
-        }
-
-        .tab-toggle button {
-            padding: 6px 12px;
-            background: transparent;
-            border: none;
-            color: #858585;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-
-        .tab-toggle button.active {
-            background: #1e1e1e;
-            color: #ffffff;
-        }
-
-        .tab-toggle button:hover:not(.active) {
-            color: #cccccc;
-        }
-
-        button {
-            padding: 6px 12px;
-            background: #0e639c;
-            border: 1px solid #0e639c;
-            color: #ffffff;
-            cursor: pointer;
-            border-radius: 3px;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-
-        button:hover {
-            background: #1177bb;
-            border-color: #1177bb;
-        }
-
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        button.danger {
-            background: #d13438;
-            border-color: #d13438;
-        }
-
-        button.danger:hover:not(:disabled) {
-            background: #f14547;
-        }
-
-        .status-indicator {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            font-size: 12px;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-
-        .status-dot.clean {
-            background: #4ec9b0;
-        }
-
-        .status-dot.dirty {
-            background: #dcdcaa;
-        }
-
-        .status-dot.valid {
-            background: #4ec9b0;
-        }
-
-        .status-dot.invalid {
-            background: #f48771;
-        }
-
-        /* Main content area */
-        .content {
-            display: flex;
-            flex: 1;
-            min-height: 0;
-        }
-
-        /* Left panel: Palette */
-        .palette {
-            width: 280px;
-            background: #252526;
-            border-right: 1px solid #3e3e42;
-            display: flex;
-            flex-direction: column;
-            overflow-y: auto;
-        }
-
-        .palette-header {
-            padding: 10px 15px;
-            font-size: 12px;
-            font-weight: 600;
-            color: #858585;
-            border-bottom: 1px solid #3e3e42;
-            text-transform: uppercase;
-        }
-
-        .tool-category {
-            border-bottom: 1px solid #3e3e42;
-        }
-
-        .category-name {
-            padding: 8px 15px;
-            font-size: 12px;
-            font-weight: 600;
-            color: #cccccc;
-            background: #2d2d30;
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .category-name:hover {
-            background: #3c3c3c;
-        }
-
-        .category-tools {
-            padding: 4px 0;
-        }
-
-        .tool-item {
-            padding: 6px 15px;
-            font-size: 12px;
-            color: #cccccc;
-            cursor: move;
-            transition: all 0.2s;
-            user-select: none;
-        }
-
-        .tool-item:hover {
-            background: #3c3c3c;
-            color: #ffffff;
-        }
-
-        /* Center: Canvas */
-        .canvas-wrapper {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background: #1e1e1e;
-            position: relative;
-        }
-
-        #canvas {
-            flex: 1;
-            background: linear-gradient(90deg, #2a2a2a 1px, transparent 1px),
-                        linear-gradient(#2a2a2a 1px, transparent 1px);
-            background-size: 20px 20px;
-            cursor: default;
-        }
-
-        svg {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-
-        .node-rect {
-            fill: #252526;
-            stroke: #3e3e42;
-            stroke-width: 2;
-            cursor: move;
-        }
-
-        .node-rect.selected {
-            stroke: #0e639c;
-            stroke-width: 2;
-        }
-
-        .node-rect.error {
-            stroke: #f48771;
-        }
-
-        .node-rect.running {
-            stroke: #dcdcaa;
-            fill: #3a3a2a;
-        }
-
-        .node-rect.completed {
-            stroke: #4ec9b0;
-            fill: #2a3a2f;
-        }
-
-        .node-label {
-            font-size: 12px;
-            font-weight: 500;
-            text-anchor: middle;
-            dominant-baseline: middle;
-            pointer-events: none;
-            user-select: none;
-        }
-
-        .node-label-id {
-            fill: #ffffff;
-        }
-
-        .node-label-type {
-            fill: #858585;
-            font-size: 10px;
-        }
-
-        .edge-line {
-            stroke: #3e3e42;
-            stroke-width: 2;
-            fill: none;
-            marker-end: url(#arrowhead);
-            cursor: pointer;
-        }
-
-        .edge-line.selected {
-            stroke: #0e639c;
-            stroke-width: 2;
-        }
-
-        .edge-label {
-            font-size: 10px;
-            fill: #858585;
-            background: #1e1e1e;
-            pointer-events: none;
-            user-select: none;
-        }
-
-        .output-handle {
-            fill: #0e639c;
-            cursor: crosshair;
-            r: 4;
-        }
-
-        .output-handle:hover {
-            fill: #1177bb;
-            r: 5;
-        }
-
-        defs marker {
-            fill: #3e3e42;
-        }
-
-        defs marker.selected {
-            fill: #0e639c;
-        }
-
-        /* Right panel: Properties */
-        .properties {
-            width: 320px;
-            background: #252526;
-            border-left: 1px solid #3e3e42;
-            display: flex;
-            flex-direction: column;
-            overflow-y: auto;
-        }
-
-        .properties-header {
-            padding: 10px 15px;
-            font-size: 12px;
-            font-weight: 600;
-            color: #858585;
-            border-bottom: 1px solid #3e3e42;
-            text-transform: uppercase;
-        }
-
-        .properties-content {
-            padding: 15px;
-            flex: 1;
-            overflow-y: auto;
-        }
-
-        .property-group {
-            margin-bottom: 20px;
-        }
-
-        .property-label {
-            font-size: 12px;
-            font-weight: 600;
-            color: #cccccc;
-            margin-bottom: 6px;
-            display: block;
-        }
-
-        .property-input {
-            width: 100%;
-            padding: 6px 8px;
-            background: #3c3c3c;
-            border: 1px solid #3e3e42;
-            color: #e0e0e0;
-            border-radius: 3px;
-            font-size: 12px;
-        }
-
-        .property-input:focus {
-            outline: none;
-            border-color: #0e639c;
-            background: #3c3c3c;
-        }
-
-        .property-input.textarea {
-            font-family: 'Monaco', 'Menlo', monospace;
-            resize: vertical;
-            min-height: 100px;
-        }
-
-        /* YAML view */
-        .yaml-editor {
-            width: 100%;
-            height: 100%;
-            background: #1e1e1e;
-            color: #e0e0e0;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .yaml-textarea {
-            flex: 1;
-            padding: 15px;
-            background: #1e1e1e;
-            color: #e0e0e0;
-            border: none;
-            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-            font-size: 13px;
-            resize: none;
-            outline: none;
-        }
-
-        .error-panel {
-            background: #3c2625;
-            border: 1px solid #f48771;
-            border-radius: 3px;
-            padding: 10px;
-            margin-top: 10px;
-            font-size: 12px;
-        }
-
-        .error-panel .error-title {
-            color: #f48771;
-            font-weight: 600;
-            margin-bottom: 5px;
-        }
-
-        .error-panel .error-message {
-            color: #d09999;
-            font-family: monospace;
-            word-break: break-word;
-        }
-
-        .diagnostics-list {
-            font-size: 12px;
-        }
-
-        .diagnostic-item {
-            padding: 8px;
-            border-left: 3px solid #f48771;
-            background: #3c2625;
-            margin-bottom: 5px;
-            border-radius: 2px;
-        }
-
-        .diagnostic-severity {
-            font-weight: 600;
-            color: #f48771;
-            text-transform: uppercase;
-        }
-
-        .diagnostic-location {
-            color: #858585;
-            font-size: 11px;
-            margin-top: 2px;
-        }
-
-        .diagnostic-message {
-            color: #d09999;
-            margin-top: 2px;
-            word-break: break-word;
-        }
-
-        .empty-state {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: #858585;
-            padding: 20px;
-            text-align: center;
-        }
-
-        .empty-state-text {
-            font-size: 14px;
-            margin-bottom: 10px;
-        }
-
-        .test-panel {
-            padding: 15px;
-            border-top: 1px solid #3e3e42;
-            background: #252526;
-        }
-
-        .test-input-area {
-            margin-bottom: 10px;
-        }
-
-        .test-input-label {
-            font-size: 12px;
-            font-weight: 600;
-            color: #cccccc;
-            margin-bottom: 6px;
-            display: block;
-        }
-
-        .test-buttons {
-            display: flex;
-            gap: 8px;
-        }
-
-        .test-output {
-            font-size: 11px;
-            font-family: monospace;
-            background: #1e1e1e;
-            border: 1px solid #3e3e42;
-            border-radius: 3px;
-            padding: 10px;
-            margin-top: 10px;
-            max-height: 200px;
-            overflow-y: auto;
-            color: #858585;
-        }
-
-        .test-output.error {
-            border-color: #f48771;
-            color: #f48771;
-        }
-
-        .test-output-item {
-            padding: 4px 0;
-            border-bottom: 1px solid #3e3e42;
-        }
-
-        .test-output-item:last-child {
-            border-bottom: none;
-        }
-
-        .node-output {
-            margin-top: 10px;
-        }
-
-        .node-output-header {
-            font-weight: 600;
-            color: #0e639c;
-            font-size: 11px;
-            margin-bottom: 5px;
-        }
-
-        .node-output-value {
-            background: #1e1e1e;
-            padding: 6px;
-            border-left: 2px solid #0e639c;
-            font-size: 11px;
-            word-break: break-word;
-        }
-
-        /* Scrollbars */
-        ::-webkit-scrollbar {
-            width: 10px;
-            height: 10px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #464647;
-            border-radius: 5px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #5a5a5a;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenMirai — Visual Agent Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+      background: #fafafa;
+      color: #111;
+      line-height: 1.5;
+    }
+
+    /* Global structure */
+    .editor-root { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ===== TOOLBAR (always visible) ===== */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 12px 16px;
+      background: #fff;
+      border-bottom: 1px solid #e5e5e5;
+      flex-wrap: wrap;
+      min-height: 56px;
+      z-index: 100;
+      position: relative;
+    }
+
+    .toolbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: 0.5px;
+      color: #111;
+      flex-shrink: 0;
+    }
+
+    .toolbar-logo svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .toolbar-filename {
+      font-size: 12px;
+      color: #999;
+      flex-shrink: 0;
+    }
+
+    .toolbar-divider {
+      width: 1px;
+      height: 24px;
+      background: #e5e5e5;
+      margin: 0 8px;
+    }
+
+    .toolbar-center {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-left: auto;
+    }
+
+    .segmented-toggle {
+      display: inline-flex;
+      border: 1px solid #e5e5e5;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .segmented-toggle button {
+      padding: 6px 12px;
+      border: none;
+      background: transparent;
+      color: #999;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      transition: all 0.15s;
+    }
+
+    .segmented-toggle button:not(:last-child) {
+      border-right: 1px solid #e5e5e5;
+    }
+
+    .segmented-toggle button.active {
+      background: #f0f0f0;
+      color: #111;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    button {
+      padding: 6px 14px;
+      border: 1px solid #e5e5e5;
+      background: #fff;
+      color: #111;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.4px;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: #111;
+      background: #f0f0f0;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      background: #111;
+      color: #fff;
+      border-color: #111;
+    }
+
+    button.primary:hover:not(:disabled) {
+      background: #333;
+      border-color: #333;
+    }
+
+    button.danger {
+      color: #d1314c;
+      border-color: #d1314c;
+    }
+
+    button.danger:hover:not(:disabled) {
+      background: #fff3f5;
+      border-color: #d1314c;
+    }
+
+    button.success {
+      color: #2a8c6c;
+      border-color: #2a8c6c;
+    }
+
+    button.success:hover:not(:disabled) {
+      background: #f0faf8;
+    }
+
+    /* Status strip */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 16px;
+      background: #fff;
+      border-top: 1px solid #e5e5e5;
+      font-size: 11px;
+      color: #999;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      z-index: 99;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.saved { background: #2a8c6c; }
+    .status-dot.unsaved { background: #9ca3af; }
+    .status-dot.valid { background: #2a8c6c; }
+    .status-dot.invalid { background: #d1314c; }
+
+    /* Main content */
+    .content-area {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      background: #fafafa;
+      position: relative;
+    }
+
+    /* Left palette */
+    .palette {
+      width: 240px;
+      background: #fff;
+      border-right: 1px solid #e5e5e5;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .palette-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e5e5;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+    }
+
+    .palette-search {
+      padding: 8px 12px;
+      border: none;
+      border-bottom: 1px solid #e5e5e5;
+      width: 100%;
+      font-size: 12px;
+      background: #fff;
+    }
+
+    .palette-search::placeholder {
+      color: #ccc;
+    }
+
+    .tool-category {
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .category-header {
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #111;
+      background: #f9f9f9;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .category-header:hover { background: #f0f0f0; }
+
+    .category-tools {
+      display: none;
+      padding: 4px 0;
+    }
+
+    .category-tools.open { display: block; }
+
+    .tool-item {
+      padding: 8px 16px;
+      font-size: 12px;
+      color: #666;
+      cursor: move;
+      user-select: none;
+      transition: all 0.15s;
+      border-left: 2px solid transparent;
+    }
+
+    .tool-item:hover {
+      color: #111;
+      background: #f9f9f9;
+      border-left-color: #111;
+    }
+
+    /* Canvas area */
+    .canvas-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background: #fff;
+      background-image: 
+        linear-gradient(rgba(200, 200, 200, 0.1) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(200, 200, 200, 0.1) 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+
+    .canvas-view {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    svg.canvas { display: block; width: 100%; height: 100%; }
+
+    .node {
+      cursor: move;
+    }
+
+    .node-rect {
+      fill: #fff;
+      stroke: #ccc;
+      stroke-width: 1px;
+      transition: all 0.1s;
+    }
+
+    .node-rect.selected {
+      stroke: #111;
+      stroke-width: 2px;
+    }
+
+    .node-rect.running {
+      stroke: #2a8c6c;
+      stroke-width: 1px;
+    }
+
+    .node-rect.error {
+      stroke: #d1314c;
+      stroke-width: 1px;
+    }
+
+    .node-text {
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .node-id {
+      font-size: 12px;
+      font-weight: 500;
+      fill: #111;
+      text-anchor: middle;
+    }
+
+    .node-type {
+      font-size: 10px;
+      fill: #999;
+      text-anchor: middle;
+    }
+
+    .edge {
+      pointer-events: stroke;
+    }
+
+    .edge-line {
+      fill: none;
+      stroke: #ccc;
+      stroke-width: 1px;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+
+    .edge-line.selected {
+      stroke: #111;
+      stroke-width: 2px;
+    }
+
+    .edge-label {
+      fill: #666;
+      font-size: 10px;
+      pointer-events: none;
+      text-anchor: middle;
+    }
+
+    .node-handle {
+      fill: #111;
+      cursor: crosshair;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+
+    .node-handle:hover {
+      opacity: 1;
+    }
+
+    /* Right inspector */
+    .inspector {
+      width: 280px;
+      background: #fff;
+      border-left: 1px solid #e5e5e5;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -2px 0 8px rgba(0, 0, 0, 0.02);
+    }
+
+    .inspector-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .inspector-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+    }
+
+    .inspector-close {
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .inspector-close:hover {
+      color: #111;
+    }
+
+    .inspector-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #111;
+      margin-bottom: 6px;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #e5e5e5;
+      background: #fafafa;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #111;
+      transition: all 0.15s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #111;
+      background: #fff;
+    }
+
+    .form-input.textarea {
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    /* Views (hidden by default) */
+    .view {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      flex-direction: column;
+      background: #fff;
+    }
+
+    .view.active {
+      display: flex;
+      position: relative;
+    }
+
+    .yaml-view {
+      background: #f9f9f9;
+    }
+
+    .yaml-textarea {
+      flex: 1;
+      padding: 16px;
+      border: none;
+      background: #fff;
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 12px;
+      color: #111;
+      resize: none;
+    }
+
+    .yaml-error {
+      background: #fef2f2;
+      border-top: 1px solid #e5e5e5;
+      padding: 12px 16px;
+      border-radius: 0;
+    }
+
+    .yaml-error-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #d1314c;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .yaml-error-message {
+      font-size: 12px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      color: #666;
+      word-break: break-word;
+    }
+
+    .console-view {
+      background: #111;
+      color: #ccc;
+    }
+
+    .console-header {
+      padding: 8px 16px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .console-output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .console-line {
+      margin-bottom: 4px;
+    }
+
+    .console-line.ok { color: #2a8c6c; }
+    .console-line.error { color: #d1314c; }
+    .console-line.info { color: #999; }
+    .console-line.running { color: #f59e0b; }
+
+    .console-input {
+      padding: 12px 16px;
+      border-top: 1px solid #333;
+      display: flex;
+      gap: 8px;
+    }
+
+    .console-input input {
+      flex: 1;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #ccc;
+      padding: 6px 10px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    /* Toast notifications */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #111;
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 4px;
+      font-size: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      animation: slideInRight 0.3s ease-out;
+      z-index: 1000;
+    }
+
+    .toast.error {
+      background: #d1314c;
+    }
+
+    .toast.success {
+      background: #2a8c6c;
+    }
+
+    @keyframes slideInRight {
+      from { transform: translateX(300px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Empty / blank state */
+    .blank-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #999;
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .blank-state h2 {
+      font-size: 16px;
+      color: #111;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .blank-state p {
+      font-size: 12px;
+      margin-bottom: 20px;
+    }
+
+    /* Modals / overlays */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.3);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal {
+      background: #fff;
+      border-radius: 6px;
+      box-shadow: 0 20px 25px rgba(0, 0, 0, 0.15);
+      max-width: 500px;
+      width: 90%;
+    }
+
+    .modal-header {
+      padding: 16px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .modal-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111;
+    }
+
+    .modal-body {
+      padding: 16px;
+    }
+
+    .modal-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #e5e5e5;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #d0d0d0;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #999;
+    }
+  </style>
 </head>
 <body>
-    <div class="editor-container">
-        <div class="toolbar">
-            <div class="toolbar-group">
-                <div class="tab-toggle">
-                    <button id="visualTab" class="active">Visual</button>
-                    <button id="yamlTab">YAML</button>
-                </div>
-            </div>
 
-            <div class="toolbar-group">
-                <button id="compileBtn">Compilar</button>
-                <button id="saveBtn">Guardar</button>
-            </div>
+<div class="editor-root">
+  
+  <!-- TOOLBAR (always visible) -->
+  <div class="toolbar">
+    <div class="toolbar-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="10"/>
+        <circle cx="12" cy="12" r="6"/>
+      </svg>
+      OpenMirai
+    </div>
+    <span class="toolbar-filename" id="filename">agent</span>
+    <span class="toolbar-divider"></span>
+    
+    <div class="toolbar-center">
+      <div class="segmented-toggle">
+        <button class="view-toggle active" data-view="visual">Visual</button>
+        <button class="view-toggle" data-view="yaml">YAML</button>
+      </div>
+      
+      <button id="btnCompile">Compile</button>
+      <button id="btnSave">Save</button>
+      <button id="btnUndo" disabled>Undo</button>
+      <button id="btnRedo" disabled>Redo</button>
+      <button id="btnRun" class="primary">Run</button>
+    </div>
+  </div>
 
-            <div class="toolbar-group">
-                <button id="undoBtn" disabled>↶ Undo</button>
-                <button id="redoBtn" disabled>↷ Redo</button>
-            </div>
+  <!-- STATUS BAR -->
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="status-dot unsaved" id="saveDot"></div>
+      <span id="saveStatus">unsaved</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot valid" id="validDot"></div>
+      <span id="validStatus">valid</span>
+    </div>
+    <div class="status-item" style="margin-left:auto; color:#bbb;">
+      OpenMirai · Data Mirai
+    </div>
+  </div>
 
-            <div class="toolbar-group">
-                <button id="runBtn" style="background: #107c10; border-color: #107c10;">▶ Probar</button>
-                <button id="stopBtn" class="danger" disabled>■ Detener</button>
-            </div>
-
-            <div style="flex: 1;"></div>
-
-            <div class="status-indicator">
-                <span class="status-dot clean" id="statusClean"></span>
-                <span id="statusText">guardado</span>
-            </div>
-
-            <div class="status-indicator">
-                <span class="status-dot valid" id="statusValid"></span>
-                <span id="validText">válido</span>
-            </div>
-        </div>
-
-        <div class="content">
-            <div class="palette">
-                <div class="palette-header">Herramientas</div>
-                <div id="paletteContent"></div>
-            </div>
-
-            <div class="canvas-wrapper">
-                <svg id="canvas">
-                    <defs>
-                        <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-                            <polygon points="0 0, 10 3, 0 6" fill="#3e3e42"/>
-                        </marker>
-                        <marker id="arrowhead-selected" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-                            <polygon points="0 0, 10 3, 0 6" fill="#0e639c"/>
-                        </marker>
-                    </defs>
-                </svg>
-            </div>
-
-            <div class="properties">
-                <div class="properties-header" id="propertiesTitle">Propiedades</div>
-                <div class="properties-content" id="propertiesPanel">
-                    <div class="empty-state">
-                        <div class="empty-state-text">Selecciona un nodo o conexión</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="testPanel" class="test-panel" style="display: none;">
-            <div class="test-input-area">
-                <label class="test-input-label">Entrada (JSON):</label>
-                <textarea id="testInput" class="property-input textarea" style="min-height: 60px;"></textarea>
-            </div>
-            <div class="test-buttons">
-                <button id="runTestBtn" style="flex: 1;">Ejecutar</button>
-            </div>
-            <div class="test-output" id="testOutput" style="display: none;"></div>
-        </div>
+  <!-- CONTENT AREA -->
+  <div class="content-area">
+    
+    <!-- LEFT PALETTE -->
+    <div class="palette">
+      <div class="palette-header">Tools</div>
+      <input type="text" class="palette-search" id="paletteSearch" placeholder="Search tools...">
+      <div id="paletteContent"></div>
     </div>
 
-    <div id="yamlEditorContainer" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; flex-direction: column;">
-        <textarea id="yamlEditor" class="yaml-textarea"></textarea>
-        <div id="yamlErrors" style="display: none; padding: 15px; background: #3c2625; border-top: 1px solid #f48771;"></div>
+    <!-- CANVAS / YAML / CONSOLE -->
+    <div style="flex: 1; display: flex; flex-direction: column; position: relative;">
+      
+      <!-- VISUAL VIEW -->
+      <div class="view active" data-view="visual">
+        <div class="canvas-container">
+          <div class="canvas-view">
+            <svg class="canvas" id="canvas">
+              <defs>
+                <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                  <polygon points="0 0, 10 3, 0 6" fill="#999" />
+                </marker>
+              </defs>
+              <g id="edges"></g>
+              <g id="nodes"></g>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- YAML VIEW -->
+      <div class="view" data-view="yaml">
+        <textarea class="yaml-textarea" id="yamlEditor" spellcheck="false"></textarea>
+        <div class="yaml-error" id="yamlError" style="display: none;">
+          <div class="yaml-error-title">Parse Error</div>
+          <div class="yaml-error-message" id="yamlErrorMsg"></div>
+        </div>
+      </div>
+
+      <!-- CONSOLE VIEW -->
+      <div class="view" data-view="console">
+        <div class="console-header">
+          <span>Run Output</span>
+          <button id="consoleClose" style="background: none; border: none; color: #999; font-size: 16px; cursor: pointer; padding: 0; width: 24px; height: 24px;">✕</button>
+        </div>
+        <div class="console-output" id="consoleOutput"></div>
+        <div class="console-input" id="consoleInputArea" style="display: none;">
+          <input type="text" id="consoleInput" placeholder="trigger_data (JSON)...">
+          <button id="btnStop">Stop</button>
+        </div>
+      </div>
+
     </div>
 
-    <script>
-        // =====================================================================
-        // STATE MANAGEMENT
-        // =====================================================================
+    <!-- RIGHT INSPECTOR -->
+    <div class="inspector" id="inspector" style="display: none;">
+      <div class="inspector-header">
+        <div class="inspector-title" id="inspectorTitle">Properties</div>
+        <button class="inspector-close" id="inspectorClose">✕</button>
+      </div>
+      <div class="inspector-content" id="inspectorContent"></div>
+    </div>
 
-        const STATE = {
-            spec: null,
-            raw: '',
-            path: '',
-            isDirty: false,
-            isValid: false,
-            canUndo: false,
-            canRedo: false,
-            mode: 'visual',
-            selectedNodeId: null,
-            selectedEdgeId: null,
-            tools: [],
-            toolsByType: {},
-            nodePositions: {},
-            draggingNode: null,
-            connectingFrom: null,
-            runningNodeId: null,
-            completedNodeIds: new Set(),
-            errorNodeIds: new Set(),
-            abortController: null,
-            testMode: false,
-        };
+  </div>
 
-        // =====================================================================
-        // INITIALIZATION
-        // =====================================================================
+</div>
 
-        async function init() {
-            try {
-                await loadAgent();
-                await loadTools();
-                setupEventHandlers();
-                renderUI();
-            } catch (e) {
-                console.error('Init failed:', e);
-            }
+<!-- MODAL: Run Input -->
+<div class="modal-overlay" id="runModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Run Agent</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Trigger Data (JSON)</label>
+        <textarea class="form-input textarea" id="runInput" placeholder='{}' spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="runCancel">Cancel</button>
+      <button id="runStart" class="primary">Start</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toastContainer"></div>
+
+<script>
+// ============================================================================
+// STATE & INITIALIZATION
+// ============================================================================
+
+const state = {
+  spec: null,
+  raw: '',
+  path: '',
+  parseError: null,
+  isDirty: false,
+  isCompiling: false,
+  isRunning: false,
+  selectedNode: null,
+  selectedEdge: null,
+  canUndo: false,
+  canRedo: false,
+  tools: [],
+  runningAgentId: null,
+  canvas: {
+    panX: 0,
+    panY: 0,
+    zoom: 1,
+  },
+};
+
+const ui = {
+  canvas: document.getElementById('canvas'),
+  yamlEditor: document.getElementById('yamlEditor'),
+  paletteContent: document.getElementById('paletteContent'),
+  inspector: document.getElementById('inspector'),
+  inspectorContent: document.getElementById('inspectorContent'),
+  btnSave: document.getElementById('btnSave'),
+  btnCompile: document.getElementById('btnCompile'),
+  btnRun: document.getElementById('btnRun'),
+  btnUndo: document.getElementById('btnUndo'),
+  btnRedo: document.getElementById('btnRedo'),
+  saveDot: document.getElementById('saveDot'),
+  saveStatus: document.getElementById('saveStatus'),
+  validDot: document.getElementById('validDot'),
+  validStatus: document.getElementById('validStatus'),
+  viewToggles: document.querySelectorAll('.view-toggle'),
+  views: document.querySelectorAll('.view'),
+};
+
+// ============================================================================
+// API CALLS (error-wrapped)
+// ============================================================================
+
+async function api(method, path, body = null) {
+  try {
+    const opts = { method };
+    if (body) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(path, opts);
+    if (!resp.ok) {
+      throw new Error(`${resp.status}: ${resp.statusText}`);
+    }
+    return await resp.json();
+  } catch (err) {
+    console.error(`API error on ${method} ${path}:`, err);
+    showToast(`API error: ${err.message}`, 'error');
+    return null;
+  }
+}
+
+async function loadAgent() {
+  try {
+    const data = await api('GET', '/api/edit/agent');
+    if (!data) return false;
+    
+    state.path = data.path || 'agent';
+    state.raw = data.raw || '';
+    state.spec = data.spec || null;
+    state.parseError = data.parse_error || null;
+    
+    const filename = state.path.split('/').pop() || 'agent';
+    document.getElementById('filename').textContent = filename;
+    
+    updateYAMLEditor();
+    await updatePalette();
+    updateStatus();
+    
+    if (state.parseError) {
+      showView('yaml');
+      renderCanvasBlank('Parse Error', state.parseError);
+    } else if (!state.spec || state.spec === null) {
+      showView('visual');
+      renderCanvasBlank('New Agent', 'Click Visual → edit in YAML or add nodes from Tools');
+    } else {
+      showView('visual');
+      renderCanvas();
+    }
+    
+    return true;
+  } catch (err) {
+    console.error('Load agent error:', err);
+    showToast(`Load error: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+async function saveAgent() {
+  if (!state.isDirty) return;
+  
+  try {
+    const body = state.spec ? { spec: state.spec } : { raw: state.raw };
+    const data = await api('PUT', '/api/edit/agent', body);
+    if (!data || !data.ok) {
+      showToast(data?.error || 'Save failed', 'error');
+      return false;
+    }
+    
+    state.raw = data.raw || '';
+    state.isDirty = false;
+    updateYAMLEditor();
+    updateStatus();
+    showToast('Saved', 'success');
+    return true;
+  } catch (err) {
+    console.error('Save error:', err);
+    showToast(`Save error: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+async function compileAgent() {
+  if (state.isCompiling) return;
+  state.isCompiling = true;
+  ui.btnCompile.disabled = true;
+  
+  try {
+    const body = state.spec ? { spec: state.spec } : { raw: state.raw };
+    const data = await api('POST', '/api/edit/compile', body);
+    if (!data) return;
+    
+    if (data.ok) {
+      showToast('Compiled successfully', 'success');
+      state.parseError = null;
+    } else {
+      const msg = (data.diagnostics && data.diagnostics[0]) ? data.diagnostics[0].message : 'Compile failed';
+      showToast(`Error: ${msg}`, 'error');
+      state.parseError = msg;
+    }
+    updateStatus();
+  } catch (err) {
+    console.error('Compile error:', err);
+    showToast(`Compile error: ${err.message}`, 'error');
+  } finally {
+    state.isCompiling = false;
+    ui.btnCompile.disabled = false;
+  }
+}
+
+async function undoRedo(action) {
+  try {
+    const data = await api('POST', `/api/edit/${action}`);
+    if (!data) return;
+    
+    state.spec = data.spec || null;
+    state.raw = data.raw || '';
+    state.canUndo = data.can_undo || false;
+    state.canRedo = data.can_redo || false;
+    state.isDirty = false;
+    state.parseError = null;
+    state.selectedNode = null;
+    state.selectedEdge = null;
+    
+    updateYAMLEditor();
+    updateStatus();
+    
+    if (state.spec && state.spec !== null) {
+      renderCanvas();
+    } else {
+      renderCanvasBlank('Blank', 'Edit in YAML or start from a template');
+    }
+  } catch (err) {
+    console.error(`${action} error:`, err);
+    showToast(`${action} failed`, 'error');
+  }
+}
+
+async function runAgent() {
+  if (state.isRunning || !state.spec) {
+    showToast('No spec to run', 'error');
+    return;
+  }
+  
+  try {
+    const modal = document.getElementById('runModal');
+    modal.classList.add('active');
+    
+    document.getElementById('runStart').onclick = async () => {
+      try {
+        const triggerDataStr = document.getElementById('runInput').value || '{}';
+        let triggerData;
+        try {
+          triggerData = JSON.parse(triggerDataStr);
+        } catch (e) {
+          showToast('Invalid JSON in trigger data', 'error');
+          return;
         }
-
-        async function loadAgent() {
-            const res = await fetch('/api/edit/agent');
-            const data = await res.json();
-            STATE.spec = data.spec;
-            STATE.raw = data.raw;
-            STATE.path = data.path;
-            STATE.isValid = !data.parse_error;
-
-            if (data.spec && data.spec.graph) {
-                (data.spec.graph.nodes || []).forEach(n => {
-                    const pos = n.position || { x: 0, y: 0 };
-                    STATE.nodePositions[n.id] = {
-                        x: typeof pos.x === 'number' ? pos.x : (pos['x'] || 0),
-                        y: typeof pos.y === 'number' ? pos.y : (pos['y'] || 0)
-                    };
-                });
-            }
-
-            if (data.parse_error && !STATE.spec) {
-                STATE.spec = {
-                    name: 'new-agent',
-                    version: 'v1',
-                    graph: { nodes: [], edges: [] }
-                };
-            }
-
-            updateStatus();
+        
+        modal.classList.remove('active');
+        
+        const createResp = await api('POST', '/api/v1/agents/from-spec', state.spec);
+        if (!createResp || !createResp.id) {
+          showToast('Failed to create agent instance', 'error');
+          return;
         }
-
-        async function loadTools() {
-            const res = await fetch('/api/v1/tools');
-            const tools = await res.json();
-            STATE.tools = tools;
-            STATE.tools.forEach(t => {
-                STATE.toolsByType[t.tool_type] = t;
-            });
-            renderPalette();
-        }
-
-        function setupEventHandlers() {
-            document.getElementById('visualTab').addEventListener('click', () => switchMode('visual'));
-            document.getElementById('yamlTab').addEventListener('click', () => switchMode('yaml'));
-            document.getElementById('compileBtn').addEventListener('click', compile);
-            document.getElementById('saveBtn').addEventListener('click', save);
-            document.getElementById('undoBtn').addEventListener('click', undo);
-            document.getElementById('redoBtn').addEventListener('click', redo);
-            document.getElementById('runBtn').addEventListener('click', showTestPanel);
-            document.getElementById('runTestBtn').addEventListener('click', runTest);
-            document.getElementById('stopBtn').addEventListener('click', stopTest);
-
-            document.getElementById('canvas').addEventListener('click', onCanvasClick);
-            document.getElementById('canvas').addEventListener('mousedown', onCanvasMouseDown);
-            document.getElementById('canvas').addEventListener('mousemove', onCanvasMouseMove);
-            document.getElementById('canvas').addEventListener('mouseup', onCanvasMouseUp);
-
-            document.getElementById('yamlEditor').addEventListener('input', () => {
-                STATE.isDirty = true;
-                STATE.raw = document.getElementById('yamlEditor').value;
-                updateStatus();
-            });
-        }
-
-        // =====================================================================
-        // UI RENDERING
-        // =====================================================================
-
-        function renderUI() {
-            if (STATE.mode === 'visual') {
-                renderVisual();
-            } else {
-                renderYAML();
-            }
-        }
-
-        function renderVisual() {
-            document.getElementById('yamlEditorContainer').style.display = 'none';
-            document.querySelector('.content').style.display = 'flex';
-            renderCanvas();
-        }
-
-        function renderYAML() {
-            document.getElementById('yamlEditorContainer').style.display = 'flex';
-            document.querySelector('.content').style.display = 'none';
-            document.getElementById('yamlEditor').value = STATE.raw;
-        }
-
-        function renderPalette() {
-            const categories = {};
-            STATE.tools.forEach(tool => {
-                if (!categories[tool.category]) {
-                    categories[tool.category] = [];
+        
+        state.runningAgentId = createResp.id;
+        state.isRunning = true;
+        showView('console');
+        clearConsole();
+        addConsoleLine('Starting run...', 'info');
+        
+        // POST to stream endpoint
+        try {
+          const streamResp = await fetch(`/api/v1/agents/${state.runningAgentId}/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(triggerData),
+          });
+          
+          if (!streamResp.ok) {
+            addConsoleLine(`Stream failed: ${streamResp.statusText}`, 'error');
+            state.isRunning = false;
+            return;
+          }
+          
+          const reader = streamResp.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          
+          while (state.isRunning) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const json = line.substring(6);
+                try {
+                  const event = JSON.parse(json);
+                  handleStreamEvent(event);
+                } catch (e) {
+                  console.error('Parse event error:', e);
                 }
-                categories[tool.category].push(tool);
-            });
-
-            const html = Object.entries(categories).map(([cat, tools]) => `
-                <div class="tool-category">
-                    <div class="category-name">${cat}</div>
-                    <div class="category-tools">
-                        ${tools.map(t => `
-                            <div class="tool-item" data-tool-type="${t.tool_type}" draggable="true">
-                                ${t.name}
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `).join('');
-
-            document.getElementById('paletteContent').innerHTML = html;
-
-            document.querySelectorAll('.tool-item').forEach(item => {
-                item.addEventListener('dragstart', (e) => {
-                    e.dataTransfer.effectAllowed = 'copy';
-                    e.dataTransfer.setData('toolType', item.dataset.toolType);
-                });
-            });
-        }
-
-        function renderCanvas() {
-            const canvas = document.getElementById('canvas');
-            canvas.innerHTML = `
-                <defs>
-                    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-                        <polygon points="0 0, 10 3, 0 6" fill="#3e3e42"/>
-                    </marker>
-                    <marker id="arrowhead-selected" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-                        <polygon points="0 0, 10 3, 0 6" fill="#0e639c"/>
-                    </marker>
-                </defs>
-            `;
-
-            if (!STATE.spec || !STATE.spec.graph) {
-                return;
+              }
             }
-
-            const nodes = STATE.spec.graph.nodes || [];
-            const edges = STATE.spec.graph.edges || [];
-
-            layoutNodes();
-
-            edges.forEach(edge => {
-                drawEdge(canvas, edge);
-            });
-
-            nodes.forEach(node => {
-                drawNode(canvas, node);
-            });
+          }
+        } catch (err) {
+          addConsoleLine(`Stream error: ${err.message}`, 'error');
+          console.error('Stream error:', err);
+        } finally {
+          state.isRunning = false;
         }
+      } catch (err) {
+        showToast(`Run setup error: ${err.message}`, 'error');
+        console.error('Run setup error:', err);
+        modal.classList.remove('active');
+      }
+    };
+    
+    document.getElementById('runCancel').onclick = () => {
+      modal.classList.remove('active');
+    };
+    
+    document.getElementById('btnStop').onclick = () => {
+      state.isRunning = false;
+      addConsoleLine('Stopped.', 'info');
+    };
+  } catch (err) {
+    console.error('Run init error:', err);
+    showToast(`Run error: ${err.message}`, 'error');
+  }
+}
+
+function handleStreamEvent(event) {
+  try {
+    const { event_type, node_id, data } = event;
+    
+    if (event_type === 'block_started') {
+      addConsoleLine(`→ ${node_id || '?'}: running`, 'running');
+      highlightNode(node_id, 'running');
+    } else if (event_type === 'block_completed') {
+      addConsoleLine(`✓ ${node_id || '?'}: completed`, 'ok');
+      highlightNode(node_id, null);
+    } else if (event_type === 'block_error') {
+      addConsoleLine(`✗ ${node_id || '?'}: ${(data && data.error) || 'error'}`, 'error');
+      highlightNode(node_id, 'error');
+    } else if (event_type === 'session_completed') {
+      addConsoleLine('Session completed.', 'ok');
+    } else if (event_type === 'session_failed') {
+      addConsoleLine(`Session failed: ${(data && data.error) || 'unknown error'}`, 'error');
+    } else if (event_type === 'llm_token') {
+      if (data && data.token) {
+        addConsoleLine(data.token, 'info');
+      }
+    }
+  } catch (err) {
+    console.error('Handle stream event error:', err);
+  }
+}
+
+// ============================================================================
+// UI UPDATES
+// ============================================================================
+
+function updateStatus() {
+  const saved = !state.isDirty;
+  const valid = !state.parseError;
+  
+  ui.saveDot.className = `status-dot ${saved ? 'saved' : 'unsaved'}`;
+  ui.saveStatus.textContent = saved ? 'saved' : 'unsaved';
+  
+  ui.validDot.className = `status-dot ${valid ? 'valid' : 'invalid'}`;
+  ui.validStatus.textContent = valid ? 'valid' : 'invalid';
+  
+  ui.btnUndo.disabled = !state.canUndo;
+  ui.btnRedo.disabled = !state.canRedo;
+  ui.btnRun.disabled = !state.spec || state.spec === null || state.parseError;
+}
+
+function updateYAMLEditor() {
+  try {
+    ui.yamlEditor.value = state.raw;
+    const yamlError = document.getElementById('yamlError');
+    if (state.parseError) {
+      yamlError.style.display = 'block';
+      document.getElementById('yamlErrorMsg').textContent = state.parseError;
+    } else {
+      yamlError.style.display = 'none';
+    }
+  } catch (err) {
+    console.error('Update YAML editor error:', err);
+  }
+}
+
+async function updatePalette() {
+  try {
+    if (state.tools.length === 0) {
+      const data = await api('GET', '/api/v1/tools');
+      if (!data) {
+        state.tools = [];
+        return;
+      }
+      state.tools = data;
+    }
+    
+    const grouped = {};
+    for (const tool of state.tools) {
+      const cat = tool.category || 'other';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(tool);
+    }
+    
+    let html = '';
+    for (const [cat, tools] of Object.entries(grouped).sort()) {
+      const catEscaped = cat.replace(/"/g, '&quot;');
+      html += `<div class="tool-category">
+        <div class="category-header" onclick="toggleCategory(this)">${escapeHtml(cat)}</div>
+        <div class="category-tools open">`;
+      
+      for (const tool of tools) {
+        const toolId = tool.tool_type || tool.id || 'unknown';
+        html += `<div class="tool-item" data-tool="${escapeHtml(toolId)}">${escapeHtml(tool.name || toolId)}</div>`;
+      }
+      html += `</div></div>`;
+    }
+    
+    ui.paletteContent.innerHTML = html;
+  } catch (err) {
+    console.error('Update palette error:', err);
+  }
+}
+
+function renderCanvasBlank(title, msg) {
+  try {
+    const edgesGroup = document.getElementById('edges');
+    const nodesGroup = document.getElementById('nodes');
+    edgesGroup.innerHTML = '';
+    nodesGroup.innerHTML = '';
+    
+    const g = nodesGroup;
+    const text1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text1.setAttribute('x', '50%');
+    text1.setAttribute('y', '45%');
+    text1.setAttribute('text-anchor', 'middle');
+    text1.setAttribute('font-size', '18');
+    text1.setAttribute('fill', '#999');
+    text1.textContent = title;
+    g.appendChild(text1);
+    
+    const text2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text2.setAttribute('x', '50%');
+    text2.setAttribute('y', '55%');
+    text2.setAttribute('text-anchor', 'middle');
+    text2.setAttribute('font-size', '12');
+    text2.setAttribute('fill', '#bbb');
+    text2.textContent = msg;
+    g.appendChild(text2);
+  } catch (err) {
+    console.error('Render blank canvas error:', err);
+  }
+}
+
+function renderCanvas() {
+  try {
+    if (!state.spec || !state.spec.graph) {
+      renderCanvasBlank('No graph', 'Create nodes to get started');
+      return;
+    }
+    
+    const { nodes = [], edges = [] } = state.spec.graph;
+    if (nodes.length === 0) {
+      renderCanvasBlank('Empty graph', 'Add nodes from the palette');
+      return;
+    }
+    
+    const edgesGroup = document.getElementById('edges');
+    const nodesGroup = document.getElementById('nodes');
+    edgesGroup.innerHTML = '';
+    nodesGroup.innerHTML = '';
+    
+    const nodeMap = {};
+    for (const n of nodes) {
+      const pos = n.position || {};
+      const x = (pos.x || pos['x'] || 0) + 200;
+      const y = (pos.y || pos['y'] || 0) + 100;
+      nodeMap[n.id] = { x, y, ...n };
+      
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('class', 'node-rect');
+      rect.setAttribute('x', x - 60);
+      rect.setAttribute('y', y - 30);
+      rect.setAttribute('width', '120');
+      rect.setAttribute('height', '60');
+      rect.setAttribute('rx', '4');
+      if (state.selectedNode === n.id) rect.classList.add('selected');
+      
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', 'node');
+      g.setAttribute('data-id', n.id);
+      g.appendChild(rect);
+      
+      const textId = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      textId.setAttribute('class', 'node-id');
+      textId.setAttribute('x', x);
+      textId.setAttribute('y', y - 8);
+      textId.textContent = n.id;
+      g.appendChild(textId);
+      
+      const textType = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      textType.setAttribute('class', 'node-type');
+      textType.setAttribute('x', x);
+      textType.setAttribute('y', y + 12);
+      textType.textContent = n.tool_type || '?';
+      g.appendChild(textType);
+      
+      nodesGroup.appendChild(g);
+      
+      g.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectNode(n.id);
+      });
+    }
+    
+    // Render edges
+    for (const e of edges) {
+      const src = nodeMap[e.source];
+      const tgt = nodeMap[e.target];
+      if (!src || !tgt) continue;
+      
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'edge-line');
+      if (state.selectedEdge === e.id) path.classList.add('selected');
+      
+      const dx = tgt.x - src.x;
+      const dy = tgt.y - src.y;
+      const d = `M ${src.x} ${src.y} Q ${src.x + dx / 2} ${src.y - 50} ${tgt.x} ${tgt.y}`;
+      path.setAttribute('d', d);
+      path.setAttribute('marker-end', 'url(#arrowhead)');
+      
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', 'edge');
+      g.setAttribute('data-id', e.id);
+      g.appendChild(path);
+      
+      edgesGroup.appendChild(g);
+      
+      g.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        selectEdge(e.id);
+      });
+    }
+  } catch (err) {
+    console.error('Render canvas error:', err);
+  }
+}
+
+function selectNode(id) {
+  try {
+    state.selectedNode = id;
+    state.selectedEdge = null;
+    const node = state.spec && state.spec.graph ? state.spec.graph.nodes.find(n => n.id === id) : null;
+    if (node) {
+      showInspector(node, 'node');
+    }
+    renderCanvas();
+  } catch (err) {
+    console.error('Select node error:', err);
+  }
+}
+
+function selectEdge(id) {
+  try {
+    state.selectedEdge = id;
+    state.selectedNode = null;
+    const edge = state.spec && state.spec.graph ? state.spec.graph.edges.find(e => e.id === id) : null;
+    if (edge) {
+      showInspector(edge, 'edge');
+    }
+    renderCanvas();
+  } catch (err) {
+    console.error('Select edge error:', err);
+  }
+}
+
+function showInspector(item, type) {
+  try {
+    ui.inspector.style.display = 'flex';
+    
+    if (type === 'node') {
+      ui.inspectorContent.innerHTML = `
+        <div class="form-group">
+          <label class="form-label">Node ID</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.id)}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tool Type</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.tool_type || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Config (JSON)</label>
+          <textarea class="form-input textarea">${escapeHtml(JSON.stringify(item.config || {}, null, 2))}</textarea>
+        </div>
+      `;
+    } else if (type === 'edge') {
+      ui.inspectorContent.innerHTML = `
+        <div class="form-group">
+          <label class="form-label">Source</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.source)}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.target)}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Condition (JSON)</label>
+          <textarea class="form-input textarea">${escapeHtml(JSON.stringify(item.condition || null, null, 2))}</textarea>
+        </div>
+      `;
+    }
+    
+    document.getElementById('inspectorClose').onclick = () => {
+      ui.inspector.style.display = 'none';
+      state.selectedNode = null;
+      state.selectedEdge = null;
+      renderCanvas();
+    };
+  } catch (err) {
+    console.error('Show inspector error:', err);
+  }
+}
+
+function showView(name) {
+  try {
+    ui.views.forEach(v => v.classList.remove('active'));
+    const view = document.querySelector(`[data-view="${name}"]`);
+    if (view) view.classList.add('active');
+    ui.viewToggles.forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  } catch (err) {
+    console.error('Show view error:', err);
+  }
+}
+
+function highlightNode(id, status) {
+  try {
+    const rect = document.querySelector(`[data-id="${id}"] .node-rect`);
+    if (rect) {
+      rect.classList.remove('running', 'error');
+      if (status) rect.classList.add(status);
+    }
+  } catch (err) {
+    console.error('Highlight node error:', err);
+  }
+}
+
+function addConsoleLine(text, cls) {
+  try {
+    const out = document.getElementById('consoleOutput');
+    const line = document.createElement('div');
+    line.className = `console-line ${cls}`;
+    line.textContent = text;
+    out.appendChild(line);
+    out.scrollTop = out.scrollHeight;
+  } catch (err) {
+    console.error('Add console line error:', err);
+  }
+}
+
+function clearConsole() {
+  try {
+    document.getElementById('consoleOutput').innerHTML = '';
+  } catch (err) {
+    console.error('Clear console error:', err);
+  }
+}
+
+function showToast(msg, type = 'info') {
+  try {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = msg;
+    document.getElementById('toastContainer').appendChild(toast);
+    
+    setTimeout(() => {
+      try {
+        toast.style.opacity = '0';
+        setTimeout(() => {
+          try {
+            toast.remove();
+          } catch (e) {
+            console.error('Remove toast error:', e);
+          }
+        }, 300);
+      } catch (e) {
+        console.error('Toast fade error:', e);
+      }
+    }, 3000);
+  } catch (err) {
+    console.error('Show toast error:', err);
+  }
+}
+
+function toggleCategory(el) {
+  try {
+    const tools = el.nextElementSibling;
+    if (tools) tools.classList.toggle('open');
+  } catch (err) {
+    console.error('Toggle category error:', err);
+  }
+}
+
+function escapeHtml(text) {
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return String(text || '').replace(/[&<>"']/g, m => map[m]);
+}
+
+// ============================================================================
+// EVENT LISTENERS
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await loadAgent();
+  } catch (err) {
+    console.error('Init error:', err);
+    showToast(`Init error: ${err.message}`, 'error');
+    renderCanvasBlank('Error', 'Failed to load agent');
+  }
+});
+
+ui.btnSave.addEventListener('click', () => {
+  try {
+    saveAgent();
+  } catch (err) {
+    console.error('Save handler error:', err);
+    showToast(`Save error: ${err.message}`, 'error');
+  }
+});
+
+ui.btnCompile.addEventListener('click', () => {
+  try {
+    compileAgent();
+  } catch (err) {
+    console.error('Compile handler error:', err);
+    showToast(`Compile error: ${err.message}`, 'error');
+  }
+});
+
+ui.btnRun.addEventListener('click', () => {
+  try {
+    runAgent();
+  } catch (err) {
+    console.error('Run handler error:', err);
+    showToast(`Run error: ${err.message}`, 'error');
+  }
+});
+
+ui.btnUndo.addEventListener('click', () => {
+  try {
+    undoRedo('undo');
+  } catch (err) {
+    console.error('Undo handler error:', err);
+    showToast('Undo failed', 'error');
+  }
+});
+
+ui.btnRedo.addEventListener('click', () => {
+  try {
+    undoRedo('redo');
+  } catch (err) {
+    console.error('Redo handler error:', err);
+    showToast('Redo failed', 'error');
+  }
+});
+
+ui.viewToggles.forEach(btn => {
+  btn.addEventListener('click', () => {
+    try {
+      showView(btn.dataset.view);
+      if (btn.dataset.view === 'yaml') {
+        updateYAMLEditor();
+      }
+    } catch (err) {
+      console.error('View toggle error:', err);
+    }
+  });
+});
+
+ui.yamlEditor.addEventListener('input', () => {
+  try {
+    state.raw = ui.yamlEditor.value;
+    state.isDirty = true;
+    updateStatus();
+  } catch (err) {
+    console.error('YAML editor input error:', err);
+  }
+});
+
+document.getElementById('consoleClose').addEventListener('click', () => {
+  try {
+    showView('visual');
+  } catch (err) {
+    console.error('Console close error:', err);
+  }
+});
+
+document.getElementById('paletteSearch').addEventListener('input', (e) => {
+  try {
+    const query = (e.target.value || '').toLowerCase();
+    document.querySelectorAll('.tool-item').forEach(item => {
+      const tool = (item.dataset.tool || '').toLowerCase();
+      const matches = tool.includes(query) || item.textContent.toLowerCase().includes(query);
+      item.style.display = matches ? '' : 'none';
+    });
+  } catch (err) {
+    console.error('Palette search error:', err);
+  }
+});
+
+document.getElementById('runInput').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    document.getElementById('runStart').click();
+  }
+});
+</script>
 
-        function layoutNodes() {
-            if (!STATE.spec || !STATE.spec.graph) return;
-
-            const nodes = STATE.spec.graph.nodes || [];
-            const cols = Math.ceil(Math.sqrt(nodes.length));
-            let col = 0, row = 0;
-
-            nodes.forEach((node, i) => {
-                if (!STATE.nodePositions[node.id]) {
-                    STATE.nodePositions[node.id] = {
-                        x: 100 + col * 200,
-                        y: 100 + row * 150
-                    };
-                    col++;
-                    if (col >= cols) {
-                        col = 0;
-                        row++;
-                    }
-                }
-                const pos = STATE.nodePositions[node.id];
-                node.position = { x: pos.x, y: pos.y };
-            });
-        }
-
-        function drawNode(canvas, node) {
-            const pos = STATE.nodePositions[node.id] || { x: 0, y: 0 };
-            const w = 160, h = 60;
-            const x = pos.x - w / 2;
-            const y = pos.y - h / 2;
-
-            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            g.setAttribute('class', 'node-group');
-            g.setAttribute('data-node-id', node.id);
-
-            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            rect.setAttribute('x', x);
-            rect.setAttribute('y', y);
-            rect.setAttribute('width', w);
-            rect.setAttribute('height', h);
-            rect.setAttribute('rx', 4);
-            rect.setAttribute('class', 'node-rect');
-            if (STATE.selectedNodeId === node.id) rect.classList.add('selected');
-            if (STATE.runningNodeId === node.id) rect.classList.add('running');
-            if (STATE.completedNodeIds.has(node.id)) rect.classList.add('completed');
-            if (STATE.errorNodeIds.has(node.id)) rect.classList.add('error');
-
-            rect.addEventListener('click', (e) => {
-                e.stopPropagation();
-                selectNode(node.id);
-            });
-
-            g.appendChild(rect);
-
-            const idText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            idText.setAttribute('x', pos.x);
-            idText.setAttribute('y', pos.y - 10);
-            idText.setAttribute('class', 'node-label node-label-id');
-            idText.textContent = node.id;
-            g.appendChild(idText);
-
-            const typeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            typeText.setAttribute('x', pos.x);
-            typeText.setAttribute('y', pos.y + 10);
-            typeText.setAttribute('class', 'node-label node-label-type');
-            typeText.textContent = node.tool_type;
-            g.appendChild(typeText);
-
-            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            handle.setAttribute('cx', x + w);
-            handle.setAttribute('cy', pos.y);
-            handle.setAttribute('class', 'output-handle');
-            handle.setAttribute('data-node-id', node.id);
-            handle.addEventListener('mousedown', (e) => {
-                e.stopPropagation();
-                STATE.connectingFrom = node.id;
-            });
-            g.appendChild(handle);
-
-            document.getElementById('canvas').appendChild(g);
-        }
-
-        function drawEdge(canvas, edge) {
-            const fromNode = STATE.spec.graph.nodes.find(n => n.id === edge.source);
-            const toNode = STATE.spec.graph.nodes.find(n => n.id === edge.target);
-
-            if (!fromNode || !toNode) return;
-
-            const fromPos = STATE.nodePositions[fromNode.id] || { x: 0, y: 0 };
-            const toPos = STATE.nodePositions[toNode.id] || { x: 0, y: 0 };
-
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('x1', fromPos.x + 80);
-            line.setAttribute('y1', fromPos.y);
-            line.setAttribute('x2', toPos.x - 80);
-            line.setAttribute('y2', toPos.y);
-            line.setAttribute('class', 'edge-line');
-            if (STATE.selectedEdgeId === edge.id) line.classList.add('selected');
-
-            line.addEventListener('click', (e) => {
-                e.stopPropagation();
-                selectEdge(edge.id);
-            });
-
-            canvas.appendChild(line);
-
-            if (edge.condition) {
-                const midX = (fromPos.x + toPos.x) / 2;
-                const midY = (fromPos.y + toPos.y) / 2;
-                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                text.setAttribute('x', midX);
-                text.setAttribute('y', midY - 5);
-                text.setAttribute('class', 'edge-label');
-                text.textContent = `${edge.condition.field} ${edge.condition.op}`;
-                canvas.appendChild(text);
-            }
-        }
-
-        function renderPropertiesForNode(nodeId) {
-            const node = STATE.spec.graph.nodes.find(n => n.id === nodeId);
-            if (!node) return;
-
-            const tool = STATE.toolsByType[node.tool_type];
-            let html = `<div class="property-group">`;
-            html += `<label class="property-label">Node ID</label>`;
-            html += `<input type="text" class="property-input" value="${node.id}" readonly>`;
-            html += `</div>`;
-
-            html += `<div class="property-group">`;
-            html += `<label class="property-label">Tool Type</label>`;
-            html += `<input type="text" class="property-input" value="${node.tool_type}" readonly>`;
-            html += `</div>`;
-
-            if (tool && tool.inputs) {
-                html += `<div class="property-group">`;
-                html += `<label class="property-label">Inputs</label>`;
-                tool.inputs.forEach(input => {
-                    const val = (node.config && node.config[input.name]) || '';
-                    html += `<label class="property-label" style="margin-top: 8px; margin-bottom: 4px;">${input.name}</label>`;
-                    html += `<input type="text" class="property-input" data-field="config" data-key="${input.name}" value="${JSON.stringify(val).replace(/"/g, '&quot;')}">`;
-                });
-                html += `</div>`;
-            }
-
-            document.getElementById('propertiesPanel').innerHTML = html;
-
-            document.querySelectorAll('[data-field="config"]').forEach(input => {
-                input.addEventListener('change', () => {
-                    try {
-                        const val = input.value ? JSON.parse(input.value) : null;
-                        if (!node.config) node.config = {};
-                        node.config[input.dataset.key] = val;
-                        STATE.isDirty = true;
-                        updateStatus();
-                    } catch (e) {
-                        console.error('Config parse error:', e);
-                    }
-                });
-            });
-        }
-
-        function renderPropertiesForEdge(edgeId) {
-            const edge = STATE.spec.graph.edges.find(e => e.id === edgeId);
-            if (!edge) return;
-
-            let html = `<div class="property-group">`;
-            html += `<label class="property-label">Source</label>`;
-            html += `<input type="text" class="property-input" value="${edge.source}" readonly>`;
-            html += `</div>`;
-
-            html += `<div class="property-group">`;
-            html += `<label class="property-label">Target</label>`;
-            html += `<input type="text" class="property-input" value="${edge.target}" readonly>`;
-            html += `</div>`;
-
-            if (edge.condition) {
-                html += `<div class="property-group">`;
-                html += `<label class="property-label">Condition Field</label>`;
-                html += `<input type="text" class="property-input" data-edge-field="condition-field" value="${edge.condition.field}">`;
-                html += `</div>`;
-
-                html += `<div class="property-group">`;
-                html += `<label class="property-label">Condition Op</label>`;
-                html += `<input type="text" class="property-input" data-edge-field="condition-op" value="${edge.condition.op}">`;
-                html += `</div>`;
-
-                html += `<div class="property-group">`;
-                html += `<label class="property-label">Condition Value</label>`;
-                html += `<input type="text" class="property-input" data-edge-field="condition-value" value="${JSON.stringify(edge.condition.value).replace(/"/g, '&quot;')}">`;
-                html += `</div>`;
-            }
-
-            document.getElementById('propertiesPanel').innerHTML = html;
-
-            document.querySelectorAll('[data-edge-field]').forEach(input => {
-                input.addEventListener('change', () => {
-                    try {
-                        if (input.dataset.edgeField === 'condition-field') {
-                            edge.condition.field = input.value;
-                        } else if (input.dataset.edgeField === 'condition-op') {
-                            edge.condition.op = input.value;
-                        } else if (input.dataset.edgeField === 'condition-value') {
-                            edge.condition.value = JSON.parse(input.value);
-                        }
-                        STATE.isDirty = true;
-                        updateStatus();
-                    } catch (e) {
-                        console.error('Edge property error:', e);
-                    }
-                });
-            });
-        }
-
-        // =====================================================================
-        // MODE SWITCHING
-        // =====================================================================
-
-        function switchMode(mode) {
-            STATE.mode = mode;
-            document.getElementById('visualTab').classList.toggle('active', mode === 'visual');
-            document.getElementById('yamlTab').classList.toggle('active', mode === 'yaml');
-            renderUI();
-        }
-
-        // =====================================================================
-        // API CALLS
-        // =====================================================================
-
-        async function compile() {
-            const payload = STATE.mode === 'visual' ? { spec: STATE.spec } : { raw: STATE.raw };
-            const res = await fetch('/api/edit/compile', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            const data = await res.json();
-
-            STATE.isValid = data.ok;
-            updateStatus();
-
-            if (data.diagnostics && data.diagnostics.length > 0) {
-                let html = '<div class="diagnostics-list">';
-                data.diagnostics.forEach(d => {
-                    html += `
-                        <div class="diagnostic-item">
-                            <div class="diagnostic-severity">${d.severity}</div>
-                            <div class="diagnostic-location">${d.location}</div>
-                            <div class="diagnostic-message">${d.message}</div>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-
-                const panel = document.getElementById('yamlErrors');
-                panel.innerHTML = html;
-                panel.style.display = data.ok ? 'none' : 'block';
-            }
-        }
-
-        async function save() {
-            const payload = STATE.mode === 'visual' ? { spec: STATE.spec } : { raw: STATE.raw };
-            const res = await fetch('/api/edit/agent', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            const data = await res.json();
-
-            if (data.ok) {
-                STATE.raw = data.raw;
-                STATE.isDirty = false;
-                updateStatus();
-            } else {
-                alert('Save failed: ' + (data.error || 'unknown error'));
-            }
-        }
-
-        async function undo() {
-            const res = await fetch('/api/edit/undo', { method: 'POST' });
-            const data = await res.json();
-            STATE.spec = data.spec;
-            STATE.raw = data.raw;
-            STATE.canUndo = data.can_undo;
-            STATE.canRedo = data.can_redo;
-            STATE.isDirty = false;
-            updateStatus();
-            renderUI();
-        }
-
-        async function redo() {
-            const res = await fetch('/api/edit/redo', { method: 'POST' });
-            const data = await res.json();
-            STATE.spec = data.spec;
-            STATE.raw = data.raw;
-            STATE.canUndo = data.can_undo;
-            STATE.canRedo = data.can_redo;
-            STATE.isDirty = false;
-            updateStatus();
-            renderUI();
-        }
-
-        async function runTest() {
-            if (!STATE.spec) {
-                alert('No agent spec');
-                return;
-            }
-
-            let triggerData = {};
-            try {
-                const input = document.getElementById('testInput').value.trim();
-                if (input) {
-                    triggerData = JSON.parse(input);
-                }
-            } catch (e) {
-                alert('Invalid JSON in input');
-                return;
-            }
-
-            STATE.abortController = new AbortController();
-            document.getElementById('stopBtn').disabled = false;
-            document.getElementById('runTestBtn').disabled = true;
-            STATE.completedNodeIds.clear();
-            STATE.errorNodeIds.clear();
-            STATE.runningNodeId = null;
-
-            const createRes = await fetch('/api/v1/agents/from-spec', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(STATE.spec),
-                signal: STATE.abortController.signal,
-            }).catch(e => {
-                if (e.name !== 'AbortError') {
-                    document.getElementById('testOutput').innerHTML += `<div class="test-output-item error">Error creating agent: ${e.message}</div>`;
-                }
-                return null;
-            });
-
-            if (!createRes || !createRes.ok) {
-                document.getElementById('stopBtn').disabled = true;
-                document.getElementById('runTestBtn').disabled = false;
-                return;
-            }
-
-            const createData = await createRes.json();
-            const agentId = createData.id;
-
-            const streamRes = await fetch(`/api/v1/agents/${agentId}/stream`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ trigger_data: triggerData }),
-                signal: STATE.abortController.signal,
-            }).catch(e => {
-                if (e.name !== 'AbortError') {
-                    document.getElementById('testOutput').innerHTML += `<div class="test-output-item error">Error streaming: ${e.message}</div>`;
-                }
-                return null;
-            });
-
-            if (!streamRes || !streamRes.body) {
-                document.getElementById('stopBtn').disabled = true;
-                document.getElementById('runTestBtn').disabled = false;
-                return;
-            }
-
-            const reader = streamRes.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            const outputEl = document.getElementById('testOutput');
-            outputEl.innerHTML = '';
-            outputEl.style.display = 'block';
-
-            try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-
-                    let i = 0;
-                    while (i < lines.length) {
-                        const line = lines[i];
-                        if (line.startsWith('event: ')) {
-                            const eventType = line.substring(7);
-                            const dataLine = lines[i + 1];
-                            if (dataLine && dataLine.startsWith('data: ')) {
-                                try {
-                                    const eventData = JSON.parse(dataLine.substring(6));
-                                    handleStreamEvent(eventType, eventData, outputEl);
-                                } catch (e) {
-                                    console.error('Failed to parse event data:', e);
-                                }
-                                i += 2;
-                            } else {
-                                i += 1;
-                            }
-                        } else {
-                            i += 1;
-                        }
-                    }
-                }
-            } catch (e) {
-                if (e.name !== 'AbortError') {
-                    outputEl.innerHTML += `<div class="test-output-item error">Error: ${e.message}</div>`;
-                }
-            } finally {
-                document.getElementById('stopBtn').disabled = true;
-                document.getElementById('runTestBtn').disabled = false;
-                renderCanvas();
-            }
-        }
-
-        function handleStreamEvent(eventType, eventData, outputEl) {
-            if (eventType === 'graph.started') {
-                const item = document.createElement('div');
-                item.className = 'test-output-item';
-                item.textContent = `Graph started: ${eventData.data.graph_name || eventData.graph_name || 'agent'}`;
-                outputEl.appendChild(item);
-            } else if (eventType === 'node.started') {
-                STATE.runningNodeId = eventData.data.node_id || eventData.node_id;
-                renderCanvas();
-                const item = document.createElement('div');
-                item.className = 'test-output-item';
-                const nodeId = eventData.data.node_id || eventData.node_id;
-                const toolType = eventData.data.tool_type || eventData.tool_type;
-                item.textContent = `${nodeId} (${toolType}) started`;
-                outputEl.appendChild(item);
-            } else if (eventType === 'node.completed') {
-                const nodeId = eventData.data.node_id || eventData.node_id;
-                STATE.runningNodeId = null;
-                STATE.completedNodeIds.add(nodeId);
-                renderCanvas();
-                const item = document.createElement('div');
-                item.className = 'test-output-item';
-                const durationMs = eventData.data.duration_ms || eventData.duration_ms || 0;
-                item.innerHTML = `<span style="color: #4ec9b0;"><strong>${nodeId}</strong> completed (${durationMs}ms)</span>`;
-                outputEl.appendChild(item);
-            } else if (eventType === 'node.error') {
-                const nodeId = eventData.data.node_id || eventData.node_id;
-                STATE.runningNodeId = null;
-                STATE.errorNodeIds.add(nodeId);
-                renderCanvas();
-                const item = document.createElement('div');
-                item.className = 'test-output-item error';
-                const error = eventData.data.error || eventData.error || 'unknown error';
-                item.textContent = `${nodeId} error: ${error}`;
-                outputEl.appendChild(item);
-            } else if (eventType === 'graph.completed') {
-                STATE.runningNodeId = null;
-                renderCanvas();
-                const item = document.createElement('div');
-                item.className = 'test-output-item';
-                const totalMs = eventData.data.total_duration_ms || eventData.total_duration_ms || 0;
-                item.innerHTML = `<span style="color: #4ec9b0;">Graph completed (${totalMs}ms)</span>`;
-                outputEl.appendChild(item);
-            } else if (eventType === 'graph.error') {
-                STATE.runningNodeId = null;
-                renderCanvas();
-                const item = document.createElement('div');
-                item.className = 'test-output-item error';
-                const error = eventData.data.error || eventData.error || 'unknown error';
-                item.textContent = `Graph error: ${error}`;
-                outputEl.appendChild(item);
-            }
-            outputEl.scrollTop = outputEl.scrollHeight;
-        }
-
-        function stopTest() {
-            if (STATE.abortController) {
-                STATE.abortController.abort();
-                STATE.abortController = null;
-            }
-            STATE.runningNodeId = null;
-            STATE.testMode = false;
-            document.getElementById('stopBtn').disabled = true;
-            document.getElementById('runTestBtn').disabled = false;
-            renderCanvas();
-        }
-
-        function showTestPanel() {
-            STATE.testMode = true;
-            document.getElementById('testPanel').style.display = 'block';
-        }
-
-        // =====================================================================
-        // CANVAS INTERACTIONS
-        // =====================================================================
-
-        function onCanvasClick(e) {
-            if (e.target === document.getElementById('canvas')) {
-                STATE.selectedNodeId = null;
-                STATE.selectedEdgeId = null;
-                document.getElementById('propertiesPanel').innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-text">Selecciona un nodo o conexión</div>
-                    </div>
-                `;
-                renderCanvas();
-            }
-        }
-
-        function onCanvasMouseDown(e) {
-            if (e.target.classList.contains('node-rect')) {
-                const nodeGroup = e.target.closest('.node-group');
-                const nodeId = nodeGroup.dataset.nodeId;
-                STATE.draggingNode = nodeId;
-            }
-        }
-
-        function onCanvasMouseMove(e) {
-            if (STATE.draggingNode) {
-                const rect = document.getElementById('canvas').getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-                STATE.nodePositions[STATE.draggingNode] = { x, y };
-                const node = STATE.spec.graph.nodes.find(n => n.id === STATE.draggingNode);
-                if (node) node.position = { x, y };
-                STATE.isDirty = true;
-                updateStatus();
-                renderCanvas();
-            }
-
-            if (STATE.connectingFrom) {
-                // Preview line could be added here in the future
-            }
-        }
-
-        function onCanvasMouseUp(e) {
-            STATE.draggingNode = null;
-
-            if (STATE.connectingFrom && e.target.classList.contains('node-rect')) {
-                const nodeGroup = e.target.closest('.node-group');
-                const toNodeId = nodeGroup.dataset.nodeId;
-                if (toNodeId !== STATE.connectingFrom) {
-                    addEdge(STATE.connectingFrom, toNodeId);
-                }
-            }
-
-            STATE.connectingFrom = null;
-            renderCanvas();
-        }
-
-        function selectNode(nodeId) {
-            STATE.selectedNodeId = nodeId;
-            STATE.selectedEdgeId = null;
-            renderPropertiesForNode(nodeId);
-            renderCanvas();
-        }
-
-        function selectEdge(edgeId) {
-            STATE.selectedEdgeId = edgeId;
-            STATE.selectedNodeId = null;
-            renderPropertiesForEdge(edgeId);
-            renderCanvas();
-        }
-
-        function addEdge(fromId, toId) {
-            const edgeId = `${fromId}__${toId}`;
-            const existing = STATE.spec.graph.edges.find(e => e.id === edgeId);
-            if (existing) return;
-
-            const edge = {
-                id: edgeId,
-                source: fromId,
-                target: toId,
-                condition: null,
-                data_map: null,
-            };
-            STATE.spec.graph.edges.push(edge);
-            STATE.isDirty = true;
-            updateStatus();
-            renderCanvas();
-        }
-
-        document.getElementById('canvas').addEventListener('dragover', (e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-        });
-
-        document.getElementById('canvas').addEventListener('drop', (e) => {
-            e.preventDefault();
-            const toolType = e.dataTransfer.getData('toolType');
-            if (!toolType) return;
-
-            const rect = document.getElementById('canvas').getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            addNode(toolType, x, y);
-        });
-
-        function addNode(toolType, x, y) {
-            const tool = STATE.toolsByType[toolType];
-            if (!tool) return;
-
-            const shortType = toolType.split('/')[1] || toolType;
-            const nodeId = `${shortType}_${Date.now()}`;
-            const node = {
-                id: nodeId,
-                tool_type: toolType,
-                version: '1.0.0',
-                config: {},
-                position: { x, y },
-            };
-
-            STATE.spec.graph.nodes.push(node);
-            STATE.nodePositions[nodeId] = { x, y };
-            STATE.isDirty = true;
-            updateStatus();
-            renderCanvas();
-        }
-
-        function updateStatus() {
-            const cleanDot = document.getElementById('statusClean');
-            const statusText = document.getElementById('statusText');
-            const validDot = document.getElementById('statusValid');
-            const validText = document.getElementById('validText');
-
-            cleanDot.classList.toggle('clean', !STATE.isDirty);
-            cleanDot.classList.toggle('dirty', STATE.isDirty);
-            statusText.textContent = STATE.isDirty ? 'sin guardar' : 'guardado';
-
-            validDot.classList.toggle('valid', STATE.isValid);
-            validDot.classList.toggle('invalid', !STATE.isValid);
-            validText.textContent = STATE.isValid ? 'válido' : 'inválido';
-
-            document.getElementById('undoBtn').disabled = !STATE.canUndo;
-            document.getElementById('redoBtn').disabled = !STATE.canRedo;
-        }
-
-        // =====================================================================
-        // START
-        // =====================================================================
-
-        window.addEventListener('DOMContentLoaded', init);
-    </script>
 </body>
 </html>

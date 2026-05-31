@@ -807,7 +807,7 @@ pub async fn run_setup_wizard(
         });
     }
 
-    println!("\n  {BOLD}{MAGENTA}Mirai Code -- Setup{RESET}\n");
+    println!("\n  {BOLD}{MAGENTA}OpenMirai -- Setup{RESET}\n");
 
     // --- Step 1: Local or Cloud? ---
     let mode_choices = vec![

@@ -1,4 +1,4 @@
-//! Mirai CLI — entry point.
+//! OpenMirai CLI — entry point.
 //!
 //! Subcommands:
 //!   mirai              → interactive setup wizard + terminal (default)

@@ -1,4 +1,4 @@
-//! Interactive agent terminal — the agentic loop that powers Mirai Code.
+//! Interactive agent terminal — the agentic loop that powers OpenMirai.
 //!
 //! User talks to an LLM that has access to the engine's tool catalog.
 //! The LLM reasons, calls tools, gets results, and repeats until done.
@@ -343,7 +343,7 @@ fn build_system_prompt(cwd: &str, autonomy_level: &str) -> String {
     };
 
     format!(
-        "You are Mirai Code -- an agentic coding assistant that runs in the terminal.\n\
+        "You are OpenMirai -- an agentic coding assistant that runs in the terminal.\n\
 \n\
 # Environment\n\
 - Working directory: {cwd}\n\
@@ -917,8 +917,8 @@ fn handle_slash(
 const BANNER: &str = concat!(
     "\x1b[1m\x1b[35m\n",
     "  \u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}\n",
-    "  \u{2551}         Mirai Code v", env!("CARGO_PKG_VERSION"), "           \u{2551}\n",
-    "  \u{2551}   Agentic coding in your terminal   \u{2551}\n",
+    "  \u{2551}         OpenMirai v", env!("CARGO_PKG_VERSION"), "             \u{2551}\n",
+    "  \u{2551}   Agentic coding in your terminal    \u{2551}\n",
     "  \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
     "\x1b[0m\n"
 );

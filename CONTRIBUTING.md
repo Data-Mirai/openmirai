@@ -5,6 +5,8 @@ Thanks for helping build OpenMirai — the open-source engine for **decentralize
 ## TL;DR
 
 ```bash
+# Requires Rust 1.80+ via rustup (https://rustup.rs). Ubuntu's `apt install cargo`
+# is too old — `rustup update stable` then build (the repo pins its toolchain).
 git clone https://github.com/Gabo-TheCreator/openmirai
 cd openmirai
 cargo build --release          # builds engine + cli (binary: ./target/release/mirai)

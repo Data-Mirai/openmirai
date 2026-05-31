@@ -26,6 +26,13 @@ Most agent platforms run *their* runtime, on *their* cloud, against *their* pref
 
 ## Quick Start
 
+**Requires [Rust](https://rustup.rs) 1.80+ via `rustup`.** Ubuntu's `apt install cargo` is too old (it can't parse this repo's lockfile) — install with rustup, then `cargo build` auto-selects the pinned toolchain:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # if you don't have rustup
+rustup update stable
+```
+
 ```bash
 # Build from source
 cargo build --release

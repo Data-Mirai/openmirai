@@ -10,7 +10,7 @@
 | Vector Search | SQLite FTS5 | built-in |
 | LLM | 7 providers via trait adapters | — |
 | Agent Specs | YAML-only (serde_yaml) | — |
-| SDK | Python (openmirai) | 3.10+ |
+| SDKs | Python (openmirai) + TypeScript (openmirai) | 3.10+ / Node 18+ |
 
 ## 2. Distribution
 
@@ -203,7 +203,7 @@ Authentication: `X-API-Key` header (optional, configured via `MIRAI_API_KEY`).
 openmirai-engine (open source, MIT)     Mirai Local (free desktop app)
 ┌──────────────────────────────┐       ┌─────────────────────────────┐
 │ Graph execution engine        │       │ Implements Engine            │
-│ 48+ built-in tools            │◄──────│ Desktop UI for agents        │
+│ 50 built-in tools             │◄──────│ Desktop UI for agents        │
 │ 7 LLM providers              │  uses │ Local-first, no cloud needed │
 │ HTTP API + CLI                │       └─────────────────────────────┘
 │ YAML agent specs              │

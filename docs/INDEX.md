@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 48+ built-in tools, 7 LLM providers, 712 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.6.0.
+Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 50 built-in tools, 7 LLM providers, 712 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.6.0.
 
 ## 2. Stack
 
@@ -12,14 +12,19 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 
 | Document | Description | Path |
 |---|---|---|
-| ARCHITECTURE.md | Stack, modules, conventions, API reference | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| ARCHITECTURE.md | Stack, modules, conventions | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | DOMINIO.md | Domain glossary, roles, capabilities | [producto/DOMINIO.md](producto/DOMINIO.md) |
 | FLUJOS.md | Execution flows, state machines, business rules | [producto/FLUJOS.md](producto/FLUJOS.md) |
-| SCHEMA.md | SQLite schemas, migrations | [database/SCHEMA.md](database/SCHEMA.md) |
 | API.md | HTTP API endpoints and contracts | [backend/API.md](backend/API.md) |
-| PRIMITIVES.md | Reusable code patterns | [backend/PRIMITIVES.md](backend/PRIMITIVES.md) |
-| TESTS.md | Test scenarios | [TESTS.md](TESTS.md) |
-| GAPS.md | Feature gap tracking | [GAPS.md](GAPS.md) |
+| PRIMITIVES.md | Reusable engine code patterns | [backend/PRIMITIVES.md](backend/PRIMITIVES.md) |
+| SCHEMA.md | SQLite schema (tables, stores) | [database/SCHEMA.md](database/SCHEMA.md) |
+| STORAGE.md | Storage backends, vault, FileRef | [database/STORAGE.md](database/STORAGE.md) |
+| INFRA.md | Build, CI/CD, release, deploy, env vars | [infra/INFRA.md](infra/INFRA.md) |
+| PANTALLAS.md | Interfaces (headless: CLI + HTTP API) | [frontend/PANTALLAS.md](frontend/PANTALLAS.md) |
+| COMPONENTS.md | Reusable units (built-in tools, SDKs) | [frontend/COMPONENTS.md](frontend/COMPONENTS.md) |
+| DESIGN-GUIDE.md | CLI terminal UX conventions | [frontend/DESIGN-GUIDE.md](frontend/DESIGN-GUIDE.md) |
+| TESTS.md | Test strategy and scenarios | [TESTS.md](TESTS.md) |
+| GAPS.md | Feature gap tracking (historical) | [GAPS.md](GAPS.md) |
 | ROADMAP-PARITY.md | Competitive parity analysis | [ROADMAP-PARITY.md](ROADMAP-PARITY.md) |
 
 ## 4. Key Decisions

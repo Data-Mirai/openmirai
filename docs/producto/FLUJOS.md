@@ -45,7 +45,8 @@
 
 ### maquina-execution {#maquina-execution}
 **Entidad:** ExecutionResult
-**Estados:** Running | Completed | Failed | Timeout | Interrupted
+**Estados (ciclo de vida):** Running (transitorio, en ejecución) → Completed | Failed | Timeout | Interrupted
+**Enum persistido `ExecutionStatus`:** `Completed | Failed | Timeout | Interrupted` — `Running` es el estado en vuelo y no se serializa.
 
 ```
                     ┌────────────┐
@@ -75,7 +76,8 @@
 
 ### maquina-node-execution {#maquina-node-execution}
 **Entidad:** TraceEntry (por nodo)
-**Estados:** Pending | Executing | Ok | Error | Skipped
+**Estados (ciclo de vida):** Pending → Executing (transitorios) → Ok | Error | Skipped
+**Enum persistido `TraceStatus`:** `Ok | Error | Skipped` — `Pending`/`Executing` son fases en vuelo y no se serializan.
 
 ```
    ┌──────────┐

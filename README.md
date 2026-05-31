@@ -11,7 +11,7 @@ OpenMirai is a Rust-native engine that runs agentic workflows defined as simple 
 
 A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
 
-**48+ built-in tools** · **7 LLM providers** · **712 tests** · **MIT license**
+**50 built-in tools** · **7 LLM providers** · **712 tests** · **MIT license**
 
 ## Why decentralized?
 
@@ -96,15 +96,16 @@ The point isn't "more features" — it's **where and how it runs**: yours, porta
 | Category | Tools |
 |----------|-------|
 | **Trigger** | webhook, manual, schedule, event, heartbeat |
-| **AI** | llm_call, embeddings, transcribe |
+| **AI** | llm_call, embeddings, transcribe, claude_code |
 | **Logic** | condition, switch, loop, merge, wait, human_input, deadline |
-| **Data** | db_read, db_write, db_query, storage_read, storage_write, storage_delete, vault_read, vault_write, entity_store, web_scrape, rag_search |
-| **Filesystem** | read_file, write_file, edit_file, glob, grep, list_dir, tree, copy, move, delete, mkdir, file_info |
+| **Data** | db_read, db_write, entity_query, entity_upsert, storage_read, storage_write, vault_read, vault_write, web_scrape, html_to_markdown, rag_search |
+| **Filesystem** | read_file, write_file, edit_file, glob_files, grep_files, list_dir, tree, copy, move, delete, mkdir, file_info |
 | **System** | bash, process_list, sandbox_exec |
 | **Git** | status, diff, log, commit |
 | **Output** | response |
 | **Agent** | run_agent |
-| **MCP** | mcp_call, mcp_discover |
+| **MCP** | call |
+| **State** | memory |
 
 ## LLM Providers
 

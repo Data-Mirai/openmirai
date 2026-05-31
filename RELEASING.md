@@ -49,10 +49,11 @@ git push origin vX.Y.Z
 
 When a tag matching `v*` is pushed, `.github/workflows/release.yml` automatically:
 
-1. Builds release binaries for four targets:
+1. Builds release binaries for five targets:
    - `mirai-darwin-arm64` (macOS Apple Silicon)
    - `mirai-darwin-x86_64` (macOS Intel)
-   - `mirai-linux-x86_64` (Linux glibc)
+   - `mirai-linux-x86_64` (Linux glibc, x86_64)
+   - `mirai-linux-arm64` (Linux glibc, aarch64 — ARM servers, Graviton/Ampere, Raspberry Pi)
    - `mirai-windows-x86_64.exe` (Windows)
 2. Computes `SHA256SUMS` for all artifacts.
 3. Creates a GitHub Release with auto-generated notes and uploads every artifact.

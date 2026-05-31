@@ -8,7 +8,7 @@ Thanks for helping build OpenMirai — the open-source engine for **decentralize
 git clone https://github.com/Gabo-TheCreator/openmirai
 cd openmirai
 cargo build --release          # builds engine + cli (binary: ./target/release/mirai)
-cargo test --workspace         # run the full suite (700+ tests)
+cargo test --workspace         # run the full suite (712 tests)
 ./target/release/mirai run examples/hello-world.yaml
 ```
 
@@ -35,7 +35,7 @@ docs/          Technical documentation
 
 ## Ways to contribute
 
-- **New built-in tools** — add to `engine/src/tools/builtin/` following an existing tool.
+- **New built-in tools** — add to `engine/src/tools/builtin/<category>/` (category = filesystem, data, logic, ai, system, git, output, agent, mcp, trigger, or state), following an existing tool and registering it in that category's `register_*` fn.
 - **New LLM providers** — implement the adapter in `engine/src/llm/`, register in `cli/src/adapter_factory.rs`.
 - **Example agents** — a well-commented `examples/*.yaml` is a great first PR.
 - **Docs** — clarity fixes, missing explanations, typos.

@@ -13,7 +13,7 @@ path = "src/lib.rs"
 default = ["server", "builtin-tools"]
 ## HTTP API server (axum + tower-http + tokio-stream).
 server = ["dep:axum", "dep:tower-http", "dep:tokio-stream"]
-## All 48+ built-in tools. Disable to use only the core graph runner.
+## All 50 built-in tools. Disable to use only the core graph runner.
 builtin-tools = []
 
 [dependencies]

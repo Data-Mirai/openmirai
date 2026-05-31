@@ -161,6 +161,7 @@ Short forms also work: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`.
 | `ai/llm_call` | Call any LLM (config: prompt, model, temperature, max_tokens, system_prompt, output_schema) |
 | `ai/embeddings` | Generate text embeddings |
 | `ai/transcribe` | Speech-to-text |
+| `ai/claude_code` | Agentic code generation via Claude (requires an Anthropic API key) |
 
 ### Logic
 
@@ -180,14 +181,14 @@ Short forms also work: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`.
 |------|-------------|
 | `data/db_read` | Read from SQLite |
 | `data/db_write` | Write to SQLite |
-| `data/db_query` | Run arbitrary SQL query |
-| `data/storage_read` | Read a file from object storage |
-| `data/storage_write` | Write a file to object storage |
-| `data/storage_delete` | Delete a file from object storage |
+| `data/entity_query` | Query/retrieve structured entities |
+| `data/entity_upsert` | Store/update structured entities |
+| `data/storage_read` | Read a file from configured storage (filesystem or in-memory) |
+| `data/storage_write` | Write a file to configured storage (filesystem or in-memory) |
 | `data/vault_read` | Read a secret from the vault |
 | `data/vault_write` | Write a secret to the vault |
-| `data/entity_store` | Store/retrieve structured entities |
 | `data/web_scrape` | Fetch and parse a web page |
+| `data/html_to_markdown` | Convert HTML into clean Markdown |
 | `data/rag_search` | Semantic search with embeddings |
 
 ### Filesystem
@@ -197,8 +198,8 @@ Short forms also work: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`.
 | `filesystem/read_file` | Read a local file |
 | `filesystem/write_file` | Write a local file |
 | `filesystem/edit_file` | Edit a local file (patch) |
-| `filesystem/glob` | Find files by pattern |
-| `filesystem/grep` | Search file contents |
+| `filesystem/glob_files` | Find files by pattern |
+| `filesystem/grep_files` | Search file contents |
 | `filesystem/list_dir` | List directory contents |
 | `filesystem/tree` | Tree view of directory |
 | `filesystem/copy` | Copy file or directory |
@@ -240,8 +241,13 @@ Short forms also work: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`.
 
 | Tool | What it does |
 |------|-------------|
-| `mcp/mcp_call` | Call a tool on an MCP server |
-| `mcp/mcp_discover` | Discover available tools on an MCP server |
+| `mcp/call` | Call a tool on an MCP server |
+
+### State
+
+| Tool | What it does |
+|------|-------------|
+| `state/memory` | Persist agent memory between cycles (only keys declared in `graph.memory`) |
 
 ---
 
@@ -510,7 +516,7 @@ graph:
     - id: trigger
       tool_type: trigger/manual
     - id: call_tool
-      tool_type: mcp/mcp_call
+      tool_type: mcp/call
       config:
         server_name: my-tools
         tool_name: search_documents

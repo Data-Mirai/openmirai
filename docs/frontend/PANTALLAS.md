@@ -12,13 +12,13 @@ Reglas:
 - No código de componentes — apuntar a COMPONENTS.md si se usan componentes del catálogo
 -->
 
-# PANTALLAS.md — OpenMirai es un Motor sin Interfaz Gráfica
+# PANTALLAS.md — Interfaces de OpenMirai
 
 ## Resumen
 
-**OpenMirai es un motor agentico _headless_ — no posee interfaz gráfica (GUI) ni pantallas propias.**
+**El núcleo de OpenMirai es _headless_, pero el binario incluye tres interfaces locales: la terminal interactiva (CLI), la HTTP API, y un editor visual de agentes (`mirai edit`, PRD-013).** No hay GUI multiusuario ni dashboard — el editor es una herramienta local de un agente a la vez.
 
-Este documento clarifica qué interfaces sí existen y dónde se definen las experiencias de usuario.
+Este documento clarifica qué interfaces existen y dónde se definen las experiencias de usuario downstream.
 
 ---
 
@@ -57,6 +57,7 @@ mirai                  # Inicia wizard de setup → terminal interactiva
 | `mirai run <file.yaml>` | Ejecución | Ejecuta un agente de archivo; output JSON |
 | `mirai validate <file.yaml>` | Validación | Valida spec sin ejecutar |
 | `mirai serve --port N` | Servidor | Inicia HTTP API (ver abajo) |
+| `mirai edit <file.yaml>` | Editor visual | Abre el mini-IDE en el navegador (ver §3) |
 | `mirai version` | Info | Muestra versión |
 | `mirai tools [type]` | Catálogo | Lista o detalla herramientas |
 | `mirai templates` | Catálogo | Lista templates disponibles |
@@ -125,6 +126,28 @@ Si no se proporciona clave, servidor advierte y continúa sin auth.
 
 ---
 
+### 3. **Editor Visual (mini-IDE)** — `mirai edit`
+
+**Punto de entrada:** `mirai edit <archivo.yaml>` (PRD-013)
+**Implementación:** → `/engine/src/server/editor.rs` + SPA embebida `editor_index.html`
+**Disponibilidad:** editor visual local de **un** agente a la vez, servido por el propio binario en loopback, sin dependencias externas.
+
+```bash
+mirai edit examples/hello-world.yaml    # abre el editor en el navegador
+```
+
+**Qué ofrece** (estilo n8n, tema blanco/negro plano):
+- Canvas del grafo: nodos arrastrables, edges, auto-layout L→R
+- Palette de las 50 tools por categoría + panel de propiedades por nodo (config según ToolSpec)
+- Vista **Visual ⇄ YAML crudo** sincronizada
+- **Compilar/validar** (diagnósticos), **Guardar** (YAML canónico + snapshots para undo/redo)
+- **Probar** el agente con paso a paso (resaltado vía SSE)
+
+**Estados UI:** cargando · nuevo (lienzo en blanco) · editando · inválido (diagnósticos) · parse_error · ejecutando.
+**Endpoints propios:** `/api/edit/{agent,compile,undo,redo}` (reusa `/api/v1/*` para catálogo de tools y run).
+
+---
+
 ## Dónde viven las Interfaces de Usuario
 
 Las experiencias de usuario **NO están en este repositorio** (openmirai-engine):
@@ -139,30 +162,30 @@ Este repositorio (**openmirai-engine**) es solo el **motor sin interfaz**. Las p
 
 ---
 
-## Por qué sin GUI
+## Por qué el núcleo es headless
 
-OpenMirai prioriza **portabilidad y decentralización** sobre interfaz gráfica incorporada:
+OpenMirai prioriza **portabilidad y descentralización**; el editor visual es una capa local opcional, no parte del runtime:
 
 ✅ Un binario — corre en laptop, servidor, edge, CI/CD  
 ✅ Cero dependencias — no necesita GTK, Qt, web server, base de datos externa  
 ✅ Agnóstico a UI — cada consumidor (desktop, web, CLI) elige su stack  
 ✅ Compacto — ~30 MB compiled, bundled SQLite, batteries included  
 
-La GUI es **aplicación, no infraestructura**. OpenMirai es infraestructura.
+OpenMirai es **infraestructura**; el editor `mirai edit` es una herramienta local opcional embebida (no un servicio ni dependencia de runtime). Las GUIs de producto (Mirai Local, Mirai Cloud) viven en sus repos.
 
 ---
 
 ## Resumen para el Equipo
 
-**No busques:**
-- Pantallas de login
-- Dashboard visual
-- Editor gráfico de agentes
-- Lista interactiva de agents con clicks
+**No busques (no existen aquí):**
+- Pantallas de login / multiusuario
+- Dashboard visual con métricas
+- Edición colaborativa de varios agentes a la vez
 
 **En su lugar:**
 - Terminal interactiva REPL (`mirai`)
 - HTTP API JSON (`mirai serve`)
+- **Editor visual local de un agente (`mirai edit`)**
 - Definiciones YAML versionables
 - Integración en apps externas
 

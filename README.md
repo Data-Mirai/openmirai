@@ -45,6 +45,9 @@ cargo build --release
 
 # Start the HTTP server
 ./target/release/mirai serve --port 3000
+
+# Open the visual editor — a mini-IDE for an agent in your browser
+./target/release/mirai edit examples/hello-world.yaml
 ```
 
 ## How It Works

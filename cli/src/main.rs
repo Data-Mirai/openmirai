@@ -47,6 +47,7 @@ async fn main() {
             let rest = &args[1..];
             run_serve(rest).await;
         }
+        Some("edit") => run_edit(&args[1..]).await,
         Some("tools") => cmd_tools(&args[1..]),
         Some("templates") => cmd_templates(&args[1..]),
         Some("new") => cmd_new(&args[1..]),
@@ -538,6 +539,81 @@ async fn run_serve(args: &[String]) {
     {
         eprintln!("{}Server error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);
+    }
+}
+
+/// `mirai edit <archivo.yaml>` — abre el mini-IDE visual en el navegador (PRD-013).
+async fn run_edit(args: &[String]) {
+    let path = match args.iter().find(|a| !a.starts_with("--")) {
+        Some(p) => p.clone(),
+        None => {
+            eprintln!(
+                "{}Uso: mirai edit <archivo.yaml>{}",
+                colors::RED,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    };
+
+    let port: u16 = parse_flag(args, "--port")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(4317);
+
+    let (provider, model, api_key, base_url) = resolve_provider(args);
+
+    // Real LLM factory (for the run/test feature). NO mocks unless --provider mock.
+    let llm_factory: std::sync::Arc<
+        dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync,
+    > = {
+        let provider = provider.clone();
+        let model = model.clone();
+        let api_key = api_key.clone();
+        let base_url = base_url.clone();
+        std::sync::Arc::new(move || {
+            if provider == "mock" {
+                Box::new(openmirai_engine::MockLLMResource::new())
+            } else {
+                let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
+                Box::new(AdapterBridgeLLMResource::new(adapter, &model))
+            }
+        })
+    };
+
+    let url = format!("http://127.0.0.1:{port}");
+    eprintln!(
+        "{}OpenMirai editor{} → {}{url}{}  (archivo: {path})",
+        colors::BOLD,
+        colors::RESET,
+        colors::GREEN,
+        colors::RESET
+    );
+    eprintln!("{}Ctrl-C para salir{}", colors::DIM, colors::RESET);
+    open_browser(&url);
+
+    if let Err(e) =
+        openmirai_engine::server::editor::serve_editor("127.0.0.1", port, llm_factory, &path).await
+    {
+        eprintln!("{}Editor error: {e}{}", colors::RED, colors::RESET);
+        process::exit(1);
+    }
+}
+
+/// Best-effort: abre el navegador por defecto en `url`.
+fn open_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = process::Command::new("xdg-open").arg(url).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn();
     }
 }
 

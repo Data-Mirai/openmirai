@@ -1,0 +1,1690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="data:,">
+  <title>OpenMirai — Visual Agent Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+      background: #fafafa;
+      color: #111;
+      line-height: 1.5;
+    }
+
+    /* Global structure */
+    .editor-root { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ===== TOOLBAR (always visible) ===== */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 12px 16px;
+      background: #fff;
+      border-bottom: 1px solid #e5e5e5;
+      flex-wrap: wrap;
+      min-height: 56px;
+      z-index: 100;
+      position: relative;
+    }
+
+    .toolbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: 0.5px;
+      color: #111;
+      flex-shrink: 0;
+    }
+
+    .toolbar-logo svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .toolbar-filename {
+      font-size: 12px;
+      color: #999;
+      flex-shrink: 0;
+    }
+
+    .toolbar-divider {
+      width: 1px;
+      height: 24px;
+      background: #e5e5e5;
+      margin: 0 8px;
+    }
+
+    .toolbar-center {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-left: auto;
+    }
+
+    .segmented-toggle {
+      display: inline-flex;
+      border: 1px solid #e5e5e5;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .segmented-toggle button {
+      padding: 6px 12px;
+      border: none;
+      background: transparent;
+      color: #999;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      transition: all 0.15s;
+    }
+
+    .segmented-toggle button:not(:last-child) {
+      border-right: 1px solid #e5e5e5;
+    }
+
+    .segmented-toggle button.active {
+      background: #f0f0f0;
+      color: #111;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    button {
+      padding: 6px 14px;
+      border: 1px solid #e5e5e5;
+      background: #fff;
+      color: #111;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.4px;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: #111;
+      background: #f0f0f0;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      background: #111;
+      color: #fff;
+      border-color: #111;
+    }
+
+    button.primary:hover:not(:disabled) {
+      background: #333;
+      border-color: #333;
+    }
+
+    button.danger {
+      color: #d1314c;
+      border-color: #d1314c;
+    }
+
+    button.danger:hover:not(:disabled) {
+      background: #fff3f5;
+      border-color: #d1314c;
+    }
+
+    button.success {
+      color: #2a8c6c;
+      border-color: #2a8c6c;
+    }
+
+    button.success:hover:not(:disabled) {
+      background: #f0faf8;
+    }
+
+    /* Status strip */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 16px;
+      background: #fff;
+      border-top: 1px solid #e5e5e5;
+      font-size: 11px;
+      color: #999;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      z-index: 99;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.saved { background: #2a8c6c; }
+    .status-dot.unsaved { background: #9ca3af; }
+    .status-dot.valid { background: #2a8c6c; }
+    .status-dot.invalid { background: #d1314c; }
+
+    /* Main content */
+    .content-area {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      background: #fafafa;
+      position: relative;
+    }
+
+    /* Left palette */
+    .palette {
+      width: 240px;
+      background: #fff;
+      border-right: 1px solid #e5e5e5;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .palette-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e5e5;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+    }
+
+    .palette-search {
+      padding: 8px 12px;
+      border: none;
+      border-bottom: 1px solid #e5e5e5;
+      width: 100%;
+      font-size: 12px;
+      background: #fff;
+    }
+
+    .palette-search::placeholder {
+      color: #ccc;
+    }
+
+    .tool-category {
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .category-header {
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #111;
+      background: #f9f9f9;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .category-header:hover { background: #f0f0f0; }
+
+    .category-tools {
+      display: none;
+      padding: 4px 0;
+    }
+
+    .category-tools.open { display: block; }
+
+    .tool-item {
+      padding: 8px 16px;
+      font-size: 12px;
+      color: #666;
+      cursor: move;
+      user-select: none;
+      transition: all 0.15s;
+      border-left: 2px solid transparent;
+    }
+
+    .tool-item:hover {
+      color: #111;
+      background: #f9f9f9;
+      border-left-color: #111;
+    }
+
+    /* Canvas area */
+    .canvas-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background: #fff;
+      background-image: 
+        linear-gradient(rgba(200, 200, 200, 0.1) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(200, 200, 200, 0.1) 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+
+    .canvas-view {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    svg.canvas { display: block; width: 100%; height: 100%; }
+
+    .node {
+      cursor: move;
+    }
+
+    .node-rect {
+      fill: #fff;
+      stroke: #ccc;
+      stroke-width: 1px;
+      transition: all 0.1s;
+    }
+
+    .node-rect.selected {
+      stroke: #111;
+      stroke-width: 2px;
+    }
+
+    .node-rect.running {
+      stroke: #2a8c6c;
+      stroke-width: 1px;
+    }
+
+    .node-rect.error {
+      stroke: #d1314c;
+      stroke-width: 1px;
+    }
+
+    .node-text {
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .node-id {
+      font-size: 12px;
+      font-weight: 500;
+      fill: #111;
+      text-anchor: middle;
+    }
+
+    .node-type {
+      font-size: 10px;
+      fill: #999;
+      text-anchor: middle;
+    }
+
+    .edge {
+      pointer-events: stroke;
+    }
+
+    .edge-line {
+      fill: none;
+      stroke: #ccc;
+      stroke-width: 1px;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+
+    .edge-line.selected {
+      stroke: #111;
+      stroke-width: 2px;
+    }
+
+    .edge-label {
+      fill: #666;
+      font-size: 10px;
+      pointer-events: none;
+      text-anchor: middle;
+    }
+
+    .node-handle {
+      fill: #111;
+      cursor: crosshair;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+
+    .node-handle:hover {
+      opacity: 1;
+    }
+
+    /* Right inspector */
+    .inspector {
+      width: 280px;
+      background: #fff;
+      border-left: 1px solid #e5e5e5;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -2px 0 8px rgba(0, 0, 0, 0.02);
+    }
+
+    .inspector-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .inspector-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+    }
+
+    .inspector-close {
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .inspector-close:hover {
+      color: #111;
+    }
+
+    .inspector-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #111;
+      margin-bottom: 6px;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #e5e5e5;
+      background: #fafafa;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #111;
+      transition: all 0.15s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #111;
+      background: #fff;
+    }
+
+    .form-input.textarea {
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    /* Views (hidden by default) */
+    .view {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      flex-direction: column;
+      background: #fff;
+    }
+
+    .view.active {
+      display: flex;
+    }
+
+    .yaml-view {
+      background: #f9f9f9;
+    }
+
+    .yaml-textarea {
+      flex: 1;
+      padding: 16px;
+      border: none;
+      background: #fff;
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 12px;
+      color: #111;
+      resize: none;
+    }
+
+    .yaml-error {
+      background: #fef2f2;
+      border-top: 1px solid #e5e5e5;
+      padding: 12px 16px;
+      border-radius: 0;
+    }
+
+    .yaml-error-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #d1314c;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .yaml-error-message {
+      font-size: 12px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      color: #666;
+      word-break: break-word;
+    }
+
+    .console-view {
+      background: #111;
+      color: #ccc;
+    }
+
+    .console-header {
+      padding: 8px 16px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .console-output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .console-line {
+      margin-bottom: 4px;
+    }
+
+    .console-line.ok { color: #2a8c6c; }
+    .console-line.error { color: #d1314c; }
+    .console-line.info { color: #999; }
+    .console-line.running { color: #f59e0b; }
+
+    .console-input {
+      padding: 12px 16px;
+      border-top: 1px solid #333;
+      display: flex;
+      gap: 8px;
+    }
+
+    .console-input input {
+      flex: 1;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #ccc;
+      padding: 6px 10px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    /* Toast notifications */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #111;
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 4px;
+      font-size: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      animation: slideInRight 0.3s ease-out;
+      z-index: 1000;
+    }
+
+    .toast.error {
+      background: #d1314c;
+    }
+
+    .toast.success {
+      background: #2a8c6c;
+    }
+
+    @keyframes slideInRight {
+      from { transform: translateX(300px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Empty / blank state */
+    .blank-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #999;
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .blank-state h2 {
+      font-size: 16px;
+      color: #111;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .blank-state p {
+      font-size: 12px;
+      margin-bottom: 20px;
+    }
+
+    /* Modals / overlays */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.3);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal {
+      background: #fff;
+      border-radius: 6px;
+      box-shadow: 0 20px 25px rgba(0, 0, 0, 0.15);
+      max-width: 500px;
+      width: 90%;
+    }
+
+    .modal-header {
+      padding: 16px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .modal-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111;
+    }
+
+    .modal-body {
+      padding: 16px;
+    }
+
+    .modal-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #e5e5e5;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #d0d0d0;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #999;
+    }
+  </style>
+</head>
+<body>
+
+<div class="editor-root">
+  
+  <!-- TOOLBAR (always visible) -->
+  <div class="toolbar">
+    <div class="toolbar-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="10"/>
+        <circle cx="12" cy="12" r="6"/>
+      </svg>
+      OpenMirai
+    </div>
+    <span class="toolbar-filename" id="filename">agent</span>
+    <span class="toolbar-divider"></span>
+    
+    <div class="toolbar-center">
+      <div class="segmented-toggle">
+        <button class="view-toggle active" data-view="visual">Visual</button>
+        <button class="view-toggle" data-view="yaml">YAML</button>
+      </div>
+      
+      <button id="btnCompile">Compile</button>
+      <button id="btnSave">Save</button>
+      <button id="btnUndo" disabled>Undo</button>
+      <button id="btnRedo" disabled>Redo</button>
+      <button id="btnRun" class="primary">Run</button>
+    </div>
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="status-dot unsaved" id="saveDot"></div>
+      <span id="saveStatus">unsaved</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot valid" id="validDot"></div>
+      <span id="validStatus">valid</span>
+    </div>
+    <div class="status-item" style="margin-left:auto; color:#bbb;">
+      OpenMirai · Data Mirai
+    </div>
+  </div>
+
+  <!-- CONTENT AREA -->
+  <div class="content-area">
+    
+    <!-- LEFT PALETTE -->
+    <div class="palette">
+      <div class="palette-header">Tools</div>
+      <input type="text" class="palette-search" id="paletteSearch" placeholder="Search tools...">
+      <div id="paletteContent"></div>
+    </div>
+
+    <!-- CANVAS / YAML / CONSOLE -->
+    <div style="flex: 1; display: flex; flex-direction: column; position: relative;">
+      
+      <!-- VISUAL VIEW -->
+      <div class="view active" data-view="visual">
+        <div class="canvas-container">
+          <div class="canvas-view">
+            <svg class="canvas" id="canvas">
+              <defs>
+                <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                  <polygon points="0 0, 10 3, 0 6" fill="#999" />
+                </marker>
+              </defs>
+              <g id="edges"></g>
+              <g id="nodes"></g>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- YAML VIEW -->
+      <div class="view" data-view="yaml">
+        <textarea class="yaml-textarea" id="yamlEditor" spellcheck="false"></textarea>
+        <div class="yaml-error" id="yamlError" style="display: none;">
+          <div class="yaml-error-title">Parse Error</div>
+          <div class="yaml-error-message" id="yamlErrorMsg"></div>
+        </div>
+      </div>
+
+      <!-- CONSOLE VIEW -->
+      <div class="view" data-view="console">
+        <div class="console-header">
+          <span>Run Output</span>
+          <button id="consoleClose" style="background: none; border: none; color: #999; font-size: 16px; cursor: pointer; padding: 0; width: 24px; height: 24px;">✕</button>
+        </div>
+        <div class="console-output" id="consoleOutput"></div>
+        <div class="console-input" id="consoleInputArea" style="display: none;">
+          <input type="text" id="consoleInput" placeholder="trigger_data (JSON)...">
+          <button id="btnStop">Stop</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT INSPECTOR -->
+    <div class="inspector" id="inspector" style="display: none;">
+      <div class="inspector-header">
+        <div class="inspector-title" id="inspectorTitle">Properties</div>
+        <button class="inspector-close" id="inspectorClose">✕</button>
+      </div>
+      <div class="inspector-content" id="inspectorContent"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- MODAL: Run Input -->
+<div class="modal-overlay" id="runModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Run Agent</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Trigger Data (JSON)</label>
+        <textarea class="form-input textarea" id="runInput" placeholder='{}' spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="runCancel">Cancel</button>
+      <button id="runStart" class="primary">Start</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toastContainer"></div>
+
+<script>
+// ============================================================================
+// STATE & INITIALIZATION
+// ============================================================================
+
+const state = {
+  spec: null,
+  raw: '',
+  path: '',
+  parseError: null,
+  isDirty: false,
+  isCompiling: false,
+  isRunning: false,
+  selectedNode: null,
+  selectedEdge: null,
+  canUndo: false,
+  canRedo: false,
+  tools: [],
+  runningAgentId: null,
+  canvas: {
+    panX: 0,
+    panY: 0,
+    zoom: 1,
+  },
+};
+
+const ui = {
+  canvas: document.getElementById('canvas'),
+  yamlEditor: document.getElementById('yamlEditor'),
+  paletteContent: document.getElementById('paletteContent'),
+  inspector: document.getElementById('inspector'),
+  inspectorContent: document.getElementById('inspectorContent'),
+  btnSave: document.getElementById('btnSave'),
+  btnCompile: document.getElementById('btnCompile'),
+  btnRun: document.getElementById('btnRun'),
+  btnUndo: document.getElementById('btnUndo'),
+  btnRedo: document.getElementById('btnRedo'),
+  saveDot: document.getElementById('saveDot'),
+  saveStatus: document.getElementById('saveStatus'),
+  validDot: document.getElementById('validDot'),
+  validStatus: document.getElementById('validStatus'),
+  viewToggles: document.querySelectorAll('.view-toggle'),
+  views: document.querySelectorAll('.view'),
+};
+
+// ============================================================================
+// API CALLS (error-wrapped)
+// ============================================================================
+
+async function api(method, path, body = null) {
+  try {
+    const opts = { method };
+    if (body) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(path, opts);
+    if (!resp.ok) {
+      throw new Error(`${resp.status}: ${resp.statusText}`);
+    }
+    return await resp.json();
+  } catch (err) {
+    console.error(`API error on ${method} ${path}:`, err);
+    showToast(`API error: ${err.message}`, 'error');
+    return null;
+  }
+}
+
+async function loadAgent() {
+  try {
+    const data = await api('GET', '/api/edit/agent');
+    if (!data) return false;
+    
+    state.path = data.path || 'agent';
+    state.raw = data.raw || '';
+    state.spec = data.spec || null;
+    state.parseError = data.parse_error || null;
+    
+    const filename = state.path.split('/').pop() || 'agent';
+    document.getElementById('filename').textContent = filename;
+    
+    updateYAMLEditor();
+    await updatePalette();
+    updateStatus();
+    
+    if (state.parseError) {
+      showView('yaml');
+      renderCanvasBlank('Parse Error', state.parseError);
+    } else if (!state.spec || state.spec === null) {
+      showView('visual');
+      renderCanvasBlank('New Agent', 'Click Visual → edit in YAML or add nodes from Tools');
+    } else {
+      showView('visual');
+      autoLayout(state.spec);
+      renderCanvas();
+    }
+    
+    return true;
+  } catch (err) {
+    console.error('Load agent error:', err);
+    showToast(`Load error: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+async function saveAgent() {
+  if (!state.isDirty) return;
+  
+  try {
+    const body = state.spec ? { spec: state.spec } : { raw: state.raw };
+    const data = await api('PUT', '/api/edit/agent', body);
+    if (!data || !data.ok) {
+      showToast(data?.error || 'Save failed', 'error');
+      return false;
+    }
+    
+    state.raw = data.raw || '';
+    state.isDirty = false;
+    updateYAMLEditor();
+    updateStatus();
+    showToast('Saved', 'success');
+    return true;
+  } catch (err) {
+    console.error('Save error:', err);
+    showToast(`Save error: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+async function compileAgent() {
+  if (state.isCompiling) return;
+  state.isCompiling = true;
+  ui.btnCompile.disabled = true;
+  
+  try {
+    const body = state.spec ? { spec: state.spec } : { raw: state.raw };
+    const data = await api('POST', '/api/edit/compile', body);
+    if (!data) return;
+    
+    if (data.ok) {
+      showToast('Compiled successfully', 'success');
+      state.parseError = null;
+    } else {
+      const msg = (data.diagnostics && data.diagnostics[0]) ? data.diagnostics[0].message : 'Compile failed';
+      showToast(`Error: ${msg}`, 'error');
+      state.parseError = msg;
+    }
+    updateStatus();
+  } catch (err) {
+    console.error('Compile error:', err);
+    showToast(`Compile error: ${err.message}`, 'error');
+  } finally {
+    state.isCompiling = false;
+    ui.btnCompile.disabled = false;
+  }
+}
+
+async function undoRedo(action) {
+  try {
+    const data = await api('POST', `/api/edit/${action}`);
+    if (!data) return;
+    
+    state.spec = data.spec || null;
+    state.raw = data.raw || '';
+    state.canUndo = data.can_undo || false;
+    state.canRedo = data.can_redo || false;
+    state.isDirty = false;
+    state.parseError = null;
+    state.selectedNode = null;
+    state.selectedEdge = null;
+    
+    updateYAMLEditor();
+    updateStatus();
+    
+    if (state.spec && state.spec !== null) {
+      renderCanvas();
+    } else {
+      renderCanvasBlank('Blank', 'Edit in YAML or start from a template');
+    }
+  } catch (err) {
+    console.error(`${action} error:`, err);
+    showToast(`${action} failed`, 'error');
+  }
+}
+
+async function runAgent() {
+  if (state.isRunning || !state.spec) {
+    showToast('No spec to run', 'error');
+    return;
+  }
+  
+  try {
+    const modal = document.getElementById('runModal');
+    modal.classList.add('active');
+    
+    document.getElementById('runStart').onclick = async () => {
+      try {
+        const triggerDataStr = document.getElementById('runInput').value || '{}';
+        let triggerData;
+        try {
+          triggerData = JSON.parse(triggerDataStr);
+        } catch (e) {
+          showToast('Invalid JSON in trigger data', 'error');
+          return;
+        }
+        
+        modal.classList.remove('active');
+        
+        const createResp = await api('POST', '/api/v1/agents/from-spec', state.spec);
+        if (!createResp || !createResp.id) {
+          showToast('Failed to create agent instance', 'error');
+          return;
+        }
+        
+        state.runningAgentId = createResp.id;
+        state.isRunning = true;
+        showView('console');
+        clearConsole();
+        addConsoleLine('Starting run...', 'info');
+        
+        // POST to stream endpoint
+        try {
+          const streamResp = await fetch(`/api/v1/agents/${state.runningAgentId}/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(triggerData),
+          });
+          
+          if (!streamResp.ok) {
+            addConsoleLine(`Stream failed: ${streamResp.statusText}`, 'error');
+            state.isRunning = false;
+            return;
+          }
+          
+          const reader = streamResp.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          
+          while (state.isRunning) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const json = line.substring(6);
+                try {
+                  const event = JSON.parse(json);
+                  handleStreamEvent(event);
+                } catch (e) {
+                  console.error('Parse event error:', e);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          addConsoleLine(`Stream error: ${err.message}`, 'error');
+          console.error('Stream error:', err);
+        } finally {
+          state.isRunning = false;
+        }
+      } catch (err) {
+        showToast(`Run setup error: ${err.message}`, 'error');
+        console.error('Run setup error:', err);
+        modal.classList.remove('active');
+      }
+    };
+    
+    document.getElementById('runCancel').onclick = () => {
+      modal.classList.remove('active');
+    };
+    
+    document.getElementById('btnStop').onclick = () => {
+      state.isRunning = false;
+      addConsoleLine('Stopped.', 'info');
+    };
+  } catch (err) {
+    console.error('Run init error:', err);
+    showToast(`Run error: ${err.message}`, 'error');
+  }
+}
+
+function handleStreamEvent(event) {
+  try {
+    const { event_type, node_id, data } = event;
+    
+    if (event_type === 'block_started') {
+      addConsoleLine(`→ ${node_id || '?'}: running`, 'running');
+      highlightNode(node_id, 'running');
+    } else if (event_type === 'block_completed') {
+      addConsoleLine(`✓ ${node_id || '?'}: completed`, 'ok');
+      highlightNode(node_id, null);
+    } else if (event_type === 'block_error') {
+      addConsoleLine(`✗ ${node_id || '?'}: ${(data && data.error) || 'error'}`, 'error');
+      highlightNode(node_id, 'error');
+    } else if (event_type === 'session_completed') {
+      addConsoleLine('Session completed.', 'ok');
+    } else if (event_type === 'session_failed') {
+      addConsoleLine(`Session failed: ${(data && data.error) || 'unknown error'}`, 'error');
+    } else if (event_type === 'llm_token') {
+      if (data && data.token) {
+        addConsoleLine(data.token, 'info');
+      }
+    }
+  } catch (err) {
+    console.error('Handle stream event error:', err);
+  }
+}
+
+// ============================================================================
+// UI UPDATES
+// ============================================================================
+
+function updateStatus() {
+  const saved = !state.isDirty;
+  const valid = !state.parseError;
+  
+  ui.saveDot.className = `status-dot ${saved ? 'saved' : 'unsaved'}`;
+  ui.saveStatus.textContent = saved ? 'saved' : 'unsaved';
+  
+  ui.validDot.className = `status-dot ${valid ? 'valid' : 'invalid'}`;
+  ui.validStatus.textContent = valid ? 'valid' : 'invalid';
+  
+  ui.btnUndo.disabled = !state.canUndo;
+  ui.btnRedo.disabled = !state.canRedo;
+  ui.btnRun.disabled = !state.spec || state.spec === null || state.parseError;
+}
+
+function updateYAMLEditor() {
+  try {
+    ui.yamlEditor.value = state.raw;
+    const yamlError = document.getElementById('yamlError');
+    if (state.parseError) {
+      yamlError.style.display = 'block';
+      document.getElementById('yamlErrorMsg').textContent = state.parseError;
+    } else {
+      yamlError.style.display = 'none';
+    }
+  } catch (err) {
+    console.error('Update YAML editor error:', err);
+  }
+}
+
+async function updatePalette() {
+  try {
+    if (state.tools.length === 0) {
+      const data = await api('GET', '/api/v1/tools');
+      if (!data) {
+        state.tools = [];
+        return;
+      }
+      state.tools = data;
+    }
+    
+    const grouped = {};
+    for (const tool of state.tools) {
+      const cat = tool.category || 'other';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(tool);
+    }
+    
+    let html = '';
+    for (const [cat, tools] of Object.entries(grouped).sort()) {
+      const catEscaped = cat.replace(/"/g, '&quot;');
+      html += `<div class="tool-category">
+        <div class="category-header" onclick="toggleCategory(this)">${escapeHtml(cat)}</div>
+        <div class="category-tools open">`;
+      
+      for (const tool of tools) {
+        const toolId = tool.tool_type || tool.id || 'unknown';
+        html += `<div class="tool-item" data-tool="${escapeHtml(toolId)}">${escapeHtml(tool.name || toolId)}</div>`;
+      }
+      html += `</div></div>`;
+    }
+    
+    ui.paletteContent.innerHTML = html;
+  } catch (err) {
+    console.error('Update palette error:', err);
+  }
+}
+
+function renderCanvasBlank(title, msg) {
+  try {
+    const edgesGroup = document.getElementById('edges');
+    const nodesGroup = document.getElementById('nodes');
+    edgesGroup.innerHTML = '';
+    nodesGroup.innerHTML = '';
+    
+    const g = nodesGroup;
+    const text1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text1.setAttribute('x', '50%');
+    text1.setAttribute('y', '45%');
+    text1.setAttribute('text-anchor', 'middle');
+    text1.setAttribute('font-size', '18');
+    text1.setAttribute('fill', '#999');
+    text1.textContent = title;
+    g.appendChild(text1);
+    
+    const text2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text2.setAttribute('x', '50%');
+    text2.setAttribute('y', '55%');
+    text2.setAttribute('text-anchor', 'middle');
+    text2.setAttribute('font-size', '12');
+    text2.setAttribute('fill', '#bbb');
+    text2.textContent = msg;
+    g.appendChild(text2);
+  } catch (err) {
+    console.error('Render blank canvas error:', err);
+  }
+}
+
+// Assign a left→right topological layout when nodes have no saved positions.
+// Respects positions already present in the YAML.
+function autoLayout(spec) {
+  try {
+    if (!spec || !spec.graph) return;
+    const nodes = spec.graph.nodes || [];
+    const edges = spec.graph.edges || [];
+    if (!nodes.length) return;
+    const hasPos = nodes.some((n) => n.position && (Number(n.position.x) || Number(n.position.y)));
+    if (hasPos) return;
+    const indeg = {};
+    nodes.forEach((n) => { indeg[n.id] = 0; });
+    edges.forEach((e) => { if (indeg[e.target] != null) indeg[e.target]++; });
+    const adj = {};
+    edges.forEach((e) => { (adj[e.source] = adj[e.source] || []).push(e.target); });
+    let layer = nodes.filter((n) => indeg[n.id] === 0).map((n) => n.id);
+    if (!layer.length) layer = [nodes[0].id];
+    const placed = new Set();
+    let col = 0;
+    while (layer.length && col < nodes.length + 2) {
+      layer.forEach((id, row) => {
+        const n = nodes.find((x) => x.id === id);
+        if (n && !placed.has(id)) {
+          n.position = { x: col * 220 + 120, y: row * 120 + 100 };
+          placed.add(id);
+        }
+      });
+      const next = [];
+      layer.forEach((id) => (adj[id] || []).forEach((t) => {
+        if (!placed.has(t) && !next.includes(t)) next.push(t);
+      }));
+      layer = next;
+      col++;
+    }
+    let row = 0;
+    nodes.forEach((n) => {
+      if (!placed.has(n.id)) {
+        n.position = { x: col * 220 + 120, y: row++ * 120 + 100 };
+        placed.add(n.id);
+      }
+    });
+  } catch (err) {
+    console.error('autoLayout error:', err);
+  }
+}
+
+function renderCanvas() {
+  try {
+    if (!state.spec || !state.spec.graph) {
+      renderCanvasBlank('No graph', 'Create nodes to get started');
+      return;
+    }
+    
+    const { nodes = [], edges = [] } = state.spec.graph;
+    if (nodes.length === 0) {
+      renderCanvasBlank('Empty graph', 'Add nodes from the palette');
+      return;
+    }
+    
+    const edgesGroup = document.getElementById('edges');
+    const nodesGroup = document.getElementById('nodes');
+    edgesGroup.innerHTML = '';
+    nodesGroup.innerHTML = '';
+    
+    const nodeMap = {};
+    for (const n of nodes) {
+      const pos = n.position || {};
+      const x = Number(pos.x) || 0;
+      const y = Number(pos.y) || 0;
+      nodeMap[n.id] = { x, y, ...n };
+      
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('class', 'node-rect');
+      rect.setAttribute('x', x - 60);
+      rect.setAttribute('y', y - 30);
+      rect.setAttribute('width', '120');
+      rect.setAttribute('height', '60');
+      rect.setAttribute('rx', '4');
+      if (state.selectedNode === n.id) rect.classList.add('selected');
+      
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', 'node');
+      g.setAttribute('data-id', n.id);
+      g.appendChild(rect);
+      
+      const textId = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      textId.setAttribute('class', 'node-id');
+      textId.setAttribute('x', x);
+      textId.setAttribute('y', y - 8);
+      textId.textContent = n.id;
+      g.appendChild(textId);
+      
+      const textType = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      textType.setAttribute('class', 'node-type');
+      textType.setAttribute('x', x);
+      textType.setAttribute('y', y + 12);
+      textType.textContent = n.tool_type || '?';
+      g.appendChild(textType);
+      
+      nodesGroup.appendChild(g);
+      
+      g.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectNode(n.id);
+      });
+
+      // Drag to reposition (n8n-style). Listeners live on document so the
+      // drag survives the re-render that happens on every move.
+      g.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        const node = state.spec.graph.nodes.find((nn) => nn.id === n.id);
+        if (!node) return;
+        const startMx = e.clientX, startMy = e.clientY;
+        const startX = Number(node.position && node.position.x) || 0;
+        const startY = Number(node.position && node.position.y) || 0;
+        let moved = false;
+        const onMove = (me) => {
+          moved = true;
+          node.position = {
+            x: startX + (me.clientX - startMx),
+            y: startY + (me.clientY - startMy),
+          };
+          renderCanvas();
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          if (moved) { state.isDirty = true; updateStatus(); }
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    }
+
+    // Render edges
+    for (const e of edges) {
+      const src = nodeMap[e.source];
+      const tgt = nodeMap[e.target];
+      if (!src || !tgt) continue;
+      
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'edge-line');
+      if (state.selectedEdge === e.id) path.classList.add('selected');
+      
+      const dx = tgt.x - src.x;
+      const dy = tgt.y - src.y;
+      const d = `M ${src.x} ${src.y} Q ${src.x + dx / 2} ${src.y - 50} ${tgt.x} ${tgt.y}`;
+      path.setAttribute('d', d);
+      path.setAttribute('marker-end', 'url(#arrowhead)');
+      
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', 'edge');
+      g.setAttribute('data-id', e.id);
+      g.appendChild(path);
+      
+      edgesGroup.appendChild(g);
+      
+      g.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        selectEdge(e.id);
+      });
+    }
+  } catch (err) {
+    console.error('Render canvas error:', err);
+  }
+}
+
+function selectNode(id) {
+  try {
+    state.selectedNode = id;
+    state.selectedEdge = null;
+    const node = state.spec && state.spec.graph ? state.spec.graph.nodes.find(n => n.id === id) : null;
+    if (node) {
+      showInspector(node, 'node');
+    }
+    renderCanvas();
+  } catch (err) {
+    console.error('Select node error:', err);
+  }
+}
+
+function selectEdge(id) {
+  try {
+    state.selectedEdge = id;
+    state.selectedNode = null;
+    const edge = state.spec && state.spec.graph ? state.spec.graph.edges.find(e => e.id === id) : null;
+    if (edge) {
+      showInspector(edge, 'edge');
+    }
+    renderCanvas();
+  } catch (err) {
+    console.error('Select edge error:', err);
+  }
+}
+
+function showInspector(item, type) {
+  try {
+    ui.inspector.style.display = 'flex';
+    
+    if (type === 'node') {
+      ui.inspectorContent.innerHTML = `
+        <div class="form-group">
+          <label class="form-label">Node ID</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.id)}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tool Type</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.tool_type || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Config (JSON)</label>
+          <textarea class="form-input textarea">${escapeHtml(JSON.stringify(item.config || {}, null, 2))}</textarea>
+        </div>
+      `;
+    } else if (type === 'edge') {
+      ui.inspectorContent.innerHTML = `
+        <div class="form-group">
+          <label class="form-label">Source</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.source)}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target</label>
+          <input type="text" class="form-input" value="${escapeHtml(item.target)}" disabled>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Condition (JSON)</label>
+          <textarea class="form-input textarea">${escapeHtml(JSON.stringify(item.condition || null, null, 2))}</textarea>
+        </div>
+      `;
+    }
+    
+    document.getElementById('inspectorClose').onclick = () => {
+      ui.inspector.style.display = 'none';
+      state.selectedNode = null;
+      state.selectedEdge = null;
+      renderCanvas();
+    };
+  } catch (err) {
+    console.error('Show inspector error:', err);
+  }
+}
+
+function showView(name) {
+  try {
+    ui.views.forEach(v => v.classList.remove('active'));
+    // Scope to .view — the toggle BUTTON also carries data-view and appears
+    // earlier in the DOM, so an unscoped selector would match the button.
+    const view = document.querySelector(`.view[data-view="${name}"]`);
+    if (view) view.classList.add('active');
+    ui.viewToggles.forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  } catch (err) {
+    console.error('Show view error:', err);
+  }
+}
+
+function highlightNode(id, status) {
+  try {
+    const rect = document.querySelector(`[data-id="${id}"] .node-rect`);
+    if (rect) {
+      rect.classList.remove('running', 'error');
+      if (status) rect.classList.add(status);
+    }
+  } catch (err) {
+    console.error('Highlight node error:', err);
+  }
+}
+
+function addConsoleLine(text, cls) {
+  try {
+    const out = document.getElementById('consoleOutput');
+    const line = document.createElement('div');
+    line.className = `console-line ${cls}`;
+    line.textContent = text;
+    out.appendChild(line);
+    out.scrollTop = out.scrollHeight;
+  } catch (err) {
+    console.error('Add console line error:', err);
+  }
+}
+
+function clearConsole() {
+  try {
+    document.getElementById('consoleOutput').innerHTML = '';
+  } catch (err) {
+    console.error('Clear console error:', err);
+  }
+}
+
+function showToast(msg, type = 'info') {
+  try {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = msg;
+    document.getElementById('toastContainer').appendChild(toast);
+    
+    setTimeout(() => {
+      try {
+        toast.style.opacity = '0';
+        setTimeout(() => {
+          try {
+            toast.remove();
+          } catch (e) {
+            console.error('Remove toast error:', e);
+          }
+        }, 300);
+      } catch (e) {
+        console.error('Toast fade error:', e);
+      }
+    }, 3000);
+  } catch (err) {
+    console.error('Show toast error:', err);
+  }
+}
+
+function toggleCategory(el) {
+  try {
+    const tools = el.nextElementSibling;
+    if (tools) tools.classList.toggle('open');
+  } catch (err) {
+    console.error('Toggle category error:', err);
+  }
+}
+
+function escapeHtml(text) {
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return String(text || '').replace(/[&<>"']/g, m => map[m]);
+}
+
+// ============================================================================
+// EVENT LISTENERS
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await loadAgent();
+  } catch (err) {
+    console.error('Init error:', err);
+    showToast(`Init error: ${err.message}`, 'error');
+    renderCanvasBlank('Error', 'Failed to load agent');
+  }
+});
+
+ui.btnSave.addEventListener('click', () => {
+  try {
+    saveAgent();
+  } catch (err) {
+    console.error('Save handler error:', err);
+    showToast(`Save error: ${err.message}`, 'error');
+  }
+});
+
+ui.btnCompile.addEventListener('click', () => {
+  try {
+    compileAgent();
+  } catch (err) {
+    console.error('Compile handler error:', err);
+    showToast(`Compile error: ${err.message}`, 'error');
+  }
+});
+
+ui.btnRun.addEventListener('click', () => {
+  try {
+    runAgent();
+  } catch (err) {
+    console.error('Run handler error:', err);
+    showToast(`Run error: ${err.message}`, 'error');
+  }
+});
+
+ui.btnUndo.addEventListener('click', () => {
+  try {
+    undoRedo('undo');
+  } catch (err) {
+    console.error('Undo handler error:', err);
+    showToast('Undo failed', 'error');
+  }
+});
+
+ui.btnRedo.addEventListener('click', () => {
+  try {
+    undoRedo('redo');
+  } catch (err) {
+    console.error('Redo handler error:', err);
+    showToast('Redo failed', 'error');
+  }
+});
+
+ui.viewToggles.forEach(btn => {
+  btn.addEventListener('click', () => {
+    try {
+      showView(btn.dataset.view);
+      if (btn.dataset.view === 'yaml') {
+        updateYAMLEditor();
+      }
+    } catch (err) {
+      console.error('View toggle error:', err);
+    }
+  });
+});
+
+ui.yamlEditor.addEventListener('input', () => {
+  try {
+    state.raw = ui.yamlEditor.value;
+    state.isDirty = true;
+    updateStatus();
+  } catch (err) {
+    console.error('YAML editor input error:', err);
+  }
+});
+
+document.getElementById('consoleClose').addEventListener('click', () => {
+  try {
+    showView('visual');
+  } catch (err) {
+    console.error('Console close error:', err);
+  }
+});
+
+document.getElementById('paletteSearch').addEventListener('input', (e) => {
+  try {
+    const query = (e.target.value || '').toLowerCase();
+    document.querySelectorAll('.tool-item').forEach(item => {
+      const tool = (item.dataset.tool || '').toLowerCase();
+      const matches = tool.includes(query) || item.textContent.toLowerCase().includes(query);
+      item.style.display = matches ? '' : 'none';
+    });
+  } catch (err) {
+    console.error('Palette search error:', err);
+  }
+});
+
+document.getElementById('runInput').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    document.getElementById('runStart').click();
+  }
+});
+</script>
+
+</body>
+</html>

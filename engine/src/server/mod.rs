@@ -5,6 +5,7 @@
 //! - [`handlers`]: All endpoint implementations
 //! - [`helpers`]: Agent execution helpers shared by handlers
 
+pub mod editor;
 pub mod handlers;
 pub mod helpers;
 pub mod state;

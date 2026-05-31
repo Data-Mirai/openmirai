@@ -25,6 +25,9 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset: mirai-linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: mirai-linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset: mirai-windows-x86_64.exe
@@ -84,7 +87,7 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           body: |
-            Pre-built `mirai` binaries for macOS (arm64, x86_64), Linux (x86_64), and Windows (x86_64).
+            Pre-built `mirai` binaries for macOS (arm64, x86_64), Linux (x86_64, arm64), and Windows (x86_64).
 
             Verify integrity with `SHA256SUMS`.
 

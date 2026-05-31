@@ -10,7 +10,7 @@ data_tool! {
     struct StorageWriteTool, factory StorageWriteFactory;
     tool_type = "data/storage_write",
     name = "Storage Write",
-    description = "Writes file to S3-compatible storage",
+    description = "Writes file to configured storage (filesystem or in-memory)",
     inputs = [
         field("path", FieldType::String, true, "Storage path/key to write to"),
         field("content", FieldType::String, true, "Content to write"),

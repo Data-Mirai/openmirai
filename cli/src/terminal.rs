@@ -98,12 +98,12 @@ fn get_autonomy(level: &str) -> AutonomyConfig {
 
 // Write tool types that require confirmation at assisted level.
 const WRITE_TOOLS: &[&str] = &[
-    "fs/write_file",
-    "fs/edit_file",
-    "fs/move",
-    "fs/copy",
-    "fs/delete",
-    "fs/mkdir",
+    "filesystem/write_file",
+    "filesystem/edit_file",
+    "filesystem/move",
+    "filesystem/copy",
+    "filesystem/delete",
+    "filesystem/mkdir",
     "system/bash",
     "git/commit",
 ];
@@ -142,15 +142,15 @@ const EXCLUDED_TOOLS: &[&str] = &[
 
 /// Core tools for local models (smaller context, fewer tools).
 const CORE_TOOLS: &[&str] = &[
-    "fs/read_file",
-    "fs/write_file",
-    "fs/edit_file",
-    "fs/glob",
-    "fs/grep",
-    "fs/list_dir",
-    "fs/tree",
-    "fs/mkdir",
-    "fs/delete",
+    "filesystem/read_file",
+    "filesystem/write_file",
+    "filesystem/edit_file",
+    "filesystem/glob_files",
+    "filesystem/grep_files",
+    "filesystem/list_dir",
+    "filesystem/tree",
+    "filesystem/mkdir",
+    "filesystem/delete",
     "system/bash",
     "git/status",
     "git/diff",
@@ -351,15 +351,15 @@ fn build_system_prompt(cwd: &str, autonomy_level: &str) -> String {
 \n\
 # CRITICAL RULE: You MUST use tool calls to take actions\n\
 - NEVER write text describing what you would do. ALWAYS actually call the tool.\n\
-- If you want to create a file -> call fs_write_file\n\
-- If you want to read a file -> call fs_read_file\n\
+- If you want to create a file -> call filesystem_write_file\n\
+- If you want to read a file -> call filesystem_read_file\n\
 - If you want to run a command -> call system_bash\n\
 \n\
 # Tool usage guidelines\n\
-- fs_read_file: Read files before editing them\n\
-- fs_edit_file: Surgical search-and-replace edits on existing files\n\
-- fs_write_file: Create new files or complete rewrites\n\
-- fs_glob / fs_grep: Find files and search code\n\
+- filesystem_read_file: Read files before editing them\n\
+- filesystem_edit_file: Surgical search-and-replace edits on existing files\n\
+- filesystem_write_file: Create new files or complete rewrites\n\
+- filesystem_glob_files / filesystem_grep_files: Find files and search code\n\
 - system_bash: Run shell commands (tests, builds, installs, etc.)\n\
 - git_status / git_diff / git_log: Understand repository state\n\
 - git_commit: Commit changes (only when explicitly asked)\n\
@@ -917,7 +917,7 @@ fn handle_slash(
 const BANNER: &str = concat!(
     "\x1b[1m\x1b[35m\n",
     "  \u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}\n",
-    "  \u{2551}         Mirai Code v0.1.0           \u{2551}\n",
+    "  \u{2551}         Mirai Code v", env!("CARGO_PKG_VERSION"), "           \u{2551}\n",
     "  \u{2551}   Agentic coding in your terminal   \u{2551}\n",
     "  \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
     "\x1b[0m\n"

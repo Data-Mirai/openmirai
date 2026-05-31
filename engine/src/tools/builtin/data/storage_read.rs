@@ -10,7 +10,7 @@ data_tool! {
     struct StorageReadTool, factory StorageReadFactory;
     tool_type = "data/storage_read",
     name = "Storage Read",
-    description = "Reads file from S3-compatible storage or generates presigned URL",
+    description = "Reads file from configured storage (filesystem or in-memory)",
     inputs = [
         field("path", FieldType::String, true, "Storage path/key to read"),
     ],

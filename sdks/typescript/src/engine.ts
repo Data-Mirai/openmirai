@@ -30,7 +30,7 @@ export class Engine {
     const { input, timeout = 300000 } = options;
 
     // Create agent via from-spec.
-    const createResp = await fetch(`${this.serverUrl}/api/agents/from-spec`, {
+    const createResp = await fetch(`${this.serverUrl}/api/v1/agents/from-spec`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(agent.spec),
@@ -43,7 +43,7 @@ export class Engine {
 
     // Execute.
     const execResp = await fetch(
-      `${this.serverUrl}/api/agents/${agentId}/execute`,
+      `${this.serverUrl}/api/v1/agents/${agentId}/execute`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -66,7 +66,7 @@ export class Engine {
     const { input } = options;
 
     // Create agent.
-    const createResp = await fetch(`${this.serverUrl}/api/agents/from-spec`, {
+    const createResp = await fetch(`${this.serverUrl}/api/v1/agents/from-spec`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(agent.spec),
@@ -76,7 +76,7 @@ export class Engine {
 
     // Stream execution via SSE.
     const resp = await fetch(
-      `${this.serverUrl}/api/agents/${agentId}/stream`,
+      `${this.serverUrl}/api/v1/agents/${agentId}/stream`,
       {
         method: 'POST',
         headers: {

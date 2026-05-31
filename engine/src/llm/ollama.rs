@@ -64,13 +64,9 @@ impl OllamaAdapter {
         // Iteratively remove innermost <think>...</think> pairs.
         // An "innermost" pair is one where the content between <think> and
         // </think> does not itself contain another <think>.
-        loop {
-            // Find the last <think> that appears before the first </think>.
-            // That is guaranteed to be innermost.
-            let close_pos = match cleaned.find("</think>") {
-                Some(p) => p,
-                None => break, // no closing tag left
-            };
+        // Find the last <think> that appears before the first </think>.
+        // That is guaranteed to be innermost.
+        while let Some(close_pos) = cleaned.find("</think>") {
             // Search backwards from close_pos for the nearest <think>.
             let search_region = &cleaned[..close_pos];
             let open_pos = match search_region.rfind("<think>") {
@@ -248,10 +244,7 @@ impl LLMAdapter for OllamaAdapter {
             .get("prompt_eval_count")
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32;
-        let tokens_output = data
-            .get("eval_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32;
+        let tokens_output = data.get("eval_count").and_then(Value::as_u64).unwrap_or(0) as u32;
 
         Ok(NormalizedResponse {
             response: cleaned,
@@ -318,10 +311,7 @@ impl LLMAdapter for OllamaAdapter {
 
         let message = data.get("message").cloned().unwrap_or(json!({}));
 
-        let raw_text = message
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let raw_text = message.get("content").and_then(Value::as_str).unwrap_or("");
         let cleaned = Self::clean_response(raw_text);
 
         // Parse tool_calls from the response message.
@@ -354,10 +344,7 @@ impl LLMAdapter for OllamaAdapter {
             .get("prompt_eval_count")
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32;
-        let tokens_output = data
-            .get("eval_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32;
+        let tokens_output = data.get("eval_count").and_then(Value::as_u64).unwrap_or(0) as u32;
 
         Ok(NormalizedResponse {
             response: cleaned,
@@ -447,10 +434,7 @@ impl LLMAdapter for OllamaAdapter {
                 };
 
                 // Extract delta text.
-                if let Some(delta) = data
-                    .pointer("/message/content")
-                    .and_then(Value::as_str)
-                {
+                if let Some(delta) = data.pointer("/message/content").and_then(Value::as_str) {
                     if !delta.is_empty() {
                         accumulated.push_str(delta);
                         if let Some(cb) = on_token {
@@ -491,10 +475,8 @@ impl LLMAdapter for OllamaAdapter {
                         .get("prompt_eval_count")
                         .and_then(Value::as_u64)
                         .unwrap_or(0) as u32;
-                    tokens_output = data
-                        .get("eval_count")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0) as u32;
+                    tokens_output =
+                        data.get("eval_count").and_then(Value::as_u64).unwrap_or(0) as u32;
                     if let Some(m) = data.get("model").and_then(Value::as_str) {
                         final_model = m.to_string();
                     }
@@ -626,7 +608,10 @@ mod tests {
     #[test]
     fn clean_response_no_tags() {
         let input = "Just a normal response";
-        assert_eq!(OllamaAdapter::clean_response(input), "Just a normal response");
+        assert_eq!(
+            OllamaAdapter::clean_response(input),
+            "Just a normal response"
+        );
     }
 
     #[test]

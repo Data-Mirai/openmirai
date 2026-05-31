@@ -1,6 +1,11 @@
 //! WebScrapeTool -- production-grade stealth scraper
 
 use super::*;
+use std::sync::LazyLock;
+
+/// Compiled once: extracts the page `<title>` for scrape results.
+static TITLE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)<title[^>]*>(.*?)</title>").unwrap());
 
 // ===========================================================================
 // WebScrapeTool -- production-grade stealth scraper
@@ -83,9 +88,8 @@ impl SessionFingerprint {
 
         headers.insert(
             reqwest::header::USER_AGENT,
-            HeaderValue::from_str(&self.user_agent).unwrap_or_else(|_| {
-                HeaderValue::from_static("Mozilla/5.0")
-            }),
+            HeaderValue::from_str(&self.user_agent)
+                .unwrap_or_else(|_| HeaderValue::from_static("Mozilla/5.0")),
         );
 
         headers.insert(
@@ -386,9 +390,8 @@ pub(crate) fn extract_serp_links(html: &str, engine: &str) -> Vec<String> {
         }
         "bing" => {
             // Bing: article links inside <li class="b_algo">...<a href="...">
-            let re =
-                regex::Regex::new(r#"class="b_algo"[^>]*>.*?<a\s+href="(https?://[^"]+)""#)
-                    .unwrap();
+            let re = regex::Regex::new(r#"class="b_algo"[^>]*>.*?<a\s+href="(https?://[^"]+)""#)
+                .unwrap();
             for cap in re.captures_iter(html) {
                 if links.len() >= max_links {
                     break;
@@ -596,7 +599,9 @@ async fn fetch_single_url(
                 continue;
             }
             Err(e) => {
-                return Err(format!("HTTP request failed after {max_retries} retries: {e}"));
+                return Err(format!(
+                    "HTTP request failed after {max_retries} retries: {e}"
+                ));
             }
         }
     }
@@ -604,12 +609,15 @@ async fn fetch_single_url(
     // Cache successful response
     if success {
         let mut cache = state.cache.lock().await;
-        cache.insert(normalized, CachedResponse {
-            body: last_body.clone(),
-            status: last_status,
-            fetched_at: Instant::now(),
-            ttl: cache_ttl,
-        });
+        cache.insert(
+            normalized,
+            CachedResponse {
+                body: last_body.clone(),
+                status: last_status,
+                fetched_at: Instant::now(),
+                ttl: cache_ttl,
+            },
+        );
     }
 
     Ok((last_body, last_status, false))
@@ -668,16 +676,44 @@ impl Tool for WebScrapeTool {
         }
 
         // Read config
-        let max_retries = config.get("max_retries").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
-        let timeout_secs = config.get("timeout_seconds").and_then(|v| v.as_u64()).unwrap_or(30);
-        let cache_ttl_secs = config.get("cache_ttl_seconds").and_then(|v| v.as_u64()).unwrap_or(300);
+        let max_retries = config
+            .get("max_retries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as u32;
+        let timeout_secs = config
+            .get("timeout_seconds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30);
+        let cache_ttl_secs = config
+            .get("cache_ttl_seconds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(300);
         let cache_ttl = Duration::from_secs(cache_ttl_secs);
-        let max_results = config.get("max_results_per_query").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
-        let max_content_len = config.get("max_content_length").and_then(|v| v.as_u64()).unwrap_or(10000) as usize;
-        let date_range = config.get("date_range").and_then(|v| v.as_str()).unwrap_or("");
-        let engines_str = config.get("search_engines").and_then(|v| v.as_str()).unwrap_or("google");
-        let extract_links = config.get("extract_links").and_then(|v| v.as_bool()).unwrap_or(false);
-        let output_schema = config.get("output_schema").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let max_results = config
+            .get("max_results_per_query")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+        let max_content_len = config
+            .get("max_content_length")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10000) as usize;
+        let date_range = config
+            .get("date_range")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let engines_str = config
+            .get("search_engines")
+            .and_then(|v| v.as_str())
+            .unwrap_or("google");
+        let extract_links = config
+            .get("extract_links")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let output_schema = config
+            .get("output_schema")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         let state = get_scrape_state();
         let session_id = context.session_id();
@@ -687,7 +723,11 @@ impl Tool for WebScrapeTool {
         // MODE 1: Query-based search (search engines -> extract links -> fetch)
         // ---------------------------------------------------------------
         if !query.is_empty() {
-            let engines: Vec<&str> = engines_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            let engines: Vec<&str> = engines_str
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
             let mut all_results: Vec<Value> = Vec::new();
 
             for engine in &engines {
@@ -698,8 +738,15 @@ impl Tool for WebScrapeTool {
 
                 // Fetch the SERP page
                 let (serp_body, serp_status, _cached) = match fetch_single_url(
-                    &search_url, &fingerprint, &state, max_retries, timeout_secs, cache_ttl,
-                ).await {
+                    &search_url,
+                    &fingerprint,
+                    &state,
+                    max_retries,
+                    timeout_secs,
+                    cache_ttl,
+                )
+                .await
+                {
                     Ok(r) => r,
                     Err(_) => continue, // skip this engine on error
                 };
@@ -710,16 +757,21 @@ impl Tool for WebScrapeTool {
 
                 // Extract real article links from SERP
                 let links = extract_serp_links(&serp_body, engine);
-                let links_to_fetch: Vec<&str> = links.iter().map(|s| s.as_str()).take(max_results).collect();
+                let links_to_fetch: Vec<&str> =
+                    links.iter().map(|s| s.as_str()).take(max_results).collect();
 
                 // Fetch each result page
                 for link in links_to_fetch {
-                    let (body, status, cached) = match fetch_single_url(
-                        link, &fingerprint, &state, max_retries, timeout_secs, cache_ttl,
-                    ).await {
-                        Ok(r) => r,
-                        Err(_) => (String::new(), 0u16, false),
-                    };
+                    let (body, status, cached) = fetch_single_url(
+                        link,
+                        &fingerprint,
+                        &state,
+                        max_retries,
+                        timeout_secs,
+                        cache_ttl,
+                    )
+                    .await
+                    .unwrap_or_default();
 
                     let success = (200..400).contains(&(status as i32));
                     let truncated = if body.len() > max_content_len {
@@ -729,9 +781,8 @@ impl Tool for WebScrapeTool {
                     };
 
                     // Try to extract a title from <title> tag
-                    let title = regex::Regex::new(r"(?i)<title[^>]*>(.*?)</title>")
-                        .ok()
-                        .and_then(|re| re.captures(truncated))
+                    let title = TITLE_RE
+                        .captures(truncated)
                         .map(|c| c[1].trim().to_string())
                         .unwrap_or_default();
 
@@ -756,8 +807,15 @@ impl Tool for WebScrapeTool {
         // MODE 2: Direct URL fetch
         // ---------------------------------------------------------------
         let (last_body, last_status, cached) = fetch_single_url(
-            url_input, &fingerprint, &state, max_retries, timeout_secs, cache_ttl,
-        ).await.map_err(|e| ToolError::ExecutionFailed {
+            url_input,
+            &fingerprint,
+            &state,
+            max_retries,
+            timeout_secs,
+            cache_ttl,
+        )
+        .await
+        .map_err(|e| ToolError::ExecutionFailed {
             tool_type: "data/web_scrape".into(),
             message: e,
         })?;
@@ -795,10 +853,13 @@ impl Tool for WebScrapeTool {
                         out.insert("cached".to_string(), json!(cached));
                         out.insert("extracted".to_string(), extracted);
                         let truncated = &last_body[..last_body.len().min(max_content_len)];
-                        out.insert("results".to_string(), json!([{
-                            "url": url_input, "title": "", "content": truncated,
-                            "status_code": last_status, "success": success, "source": "direct",
-                        }]));
+                        out.insert(
+                            "results".to_string(),
+                            json!([{
+                                "url": url_input, "title": "", "content": truncated,
+                                "status_code": last_status, "success": success, "source": "direct",
+                            }]),
+                        );
                         if let Some(links) = extracted_links {
                             out.insert("links".to_string(), json!(links));
                         }
@@ -815,10 +876,13 @@ impl Tool for WebScrapeTool {
         out.insert("status".to_string(), json!(last_status));
         out.insert("url".to_string(), json!(url_input));
         out.insert("cached".to_string(), json!(cached));
-        out.insert("results".to_string(), json!([{
-            "url": url_input, "title": "", "content": truncated,
-            "status_code": last_status, "success": success, "source": "direct",
-        }]));
+        out.insert(
+            "results".to_string(),
+            json!([{
+                "url": url_input, "title": "", "content": truncated,
+                "status_code": last_status, "success": success, "source": "direct",
+            }]),
+        );
         if let Some(links) = extracted_links {
             out.insert("links".to_string(), json!(links));
         }
@@ -826,4 +890,3 @@ impl Tool for WebScrapeTool {
         Ok(out)
     }
 }
-

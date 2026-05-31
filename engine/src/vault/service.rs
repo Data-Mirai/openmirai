@@ -1,6 +1,8 @@
 //! VaultService -- filesystem-backed linked Markdown notes with in-memory index.
 
-use crate::vault::parser::{build_note_markdown, extract_wiki_links, parse_note, NoteMetadata, ParsedNote};
+use crate::vault::parser::{
+    build_note_markdown, extract_wiki_links, parse_note, NoteMetadata, ParsedNote,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -214,7 +216,11 @@ impl VaultService {
         }
 
         // Sort by modified_at descending so most recent matches come first
-        results.sort_by(|a, b| b.modified_at.partial_cmp(&a.modified_at).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.modified_at
+                .partial_cmp(&a.modified_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
         results
     }
@@ -239,7 +245,11 @@ impl VaultService {
     pub fn list_recent(&self, limit: usize) -> Vec<IndexedNote> {
         let idx = self.index.read().unwrap();
         let mut notes: Vec<IndexedNote> = idx.notes.values().cloned().collect();
-        notes.sort_by(|a, b| b.modified_at.partial_cmp(&a.modified_at).unwrap_or(std::cmp::Ordering::Equal));
+        notes.sort_by(|a, b| {
+            b.modified_at
+                .partial_cmp(&a.modified_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         notes.truncate(limit);
         notes
     }
@@ -332,7 +342,8 @@ mod tests {
             title: Some("Alpha".to_string()),
             ..Default::default()
         };
-        svc.write_note("alpha.md", "Unique keyword zebra", meta).unwrap();
+        svc.write_note("alpha.md", "Unique keyword zebra", meta)
+            .unwrap();
 
         let meta2 = NoteMetadata {
             title: Some("Beta".to_string()),
@@ -390,7 +401,8 @@ mod tests {
                 title: Some(format!("Note {}", i)),
                 ..Default::default()
             };
-            svc.write_note(&format!("note_{}.md", i), "Body", m).unwrap();
+            svc.write_note(&format!("note_{}.md", i), "Body", m)
+                .unwrap();
         }
         let recent = svc.list_recent(3);
         assert_eq!(recent.len(), 3);
@@ -442,7 +454,8 @@ mod tests {
             title: Some("Nested".to_string()),
             ..Default::default()
         };
-        svc.write_note("sub/dir/note.md", "Deep note", meta).unwrap();
+        svc.write_note("sub/dir/note.md", "Deep note", meta)
+            .unwrap();
 
         let note = svc.read_note("sub/dir/note.md").unwrap();
         assert_eq!(note.metadata.title.as_deref(), Some("Nested"));

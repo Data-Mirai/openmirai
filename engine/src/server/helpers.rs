@@ -8,10 +8,10 @@ use axum::Json;
 use serde_json::{json, Value};
 use tracing::warn;
 
+use crate::adapters::{DefaultExecutionContext, InMemoryDBResource, InMemoryStorageResource};
 use crate::core::agent_spec::{AgentSpec, MemoryPersistMode};
 use crate::core::runner::{ExecutionResult, ExecutionStatus};
 use crate::core::state::SharedState;
-use crate::adapters::{InMemoryDBResource, InMemoryStorageResource, DefaultExecutionContext};
 use crate::search::cosine_similarity;
 
 use super::state::{AppState, ErrorResponse};
@@ -115,7 +115,11 @@ pub(crate) async fn run_agent_spec_with_memory(
 
     // Inject trigger data into entry node.
     if !trigger_data.is_empty() {
-        if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
+        if let Some(entry) = graph
+            .nodes
+            .iter_mut()
+            .find(|n| n.tool_type.starts_with("trigger/"))
+        {
             if let Ok(val) = serde_json::to_value(trigger_data) {
                 entry.config.insert("payload".to_string(), val);
             }
@@ -127,7 +131,8 @@ pub(crate) async fn run_agent_spec_with_memory(
         let mcp_val = serde_json::to_value(&spec.config.mcp_servers).unwrap_or_default();
         for node in &mut graph.nodes {
             if node.tool_type == "mcp/call" {
-                node.config.insert("__mcp_servers".to_string(), mcp_val.clone());
+                node.config
+                    .insert("__mcp_servers".to_string(), mcp_val.clone());
             }
         }
     }
@@ -138,8 +143,12 @@ pub(crate) async fn run_agent_spec_with_memory(
         let mem_meta = serde_json::to_value(mem_spec).unwrap_or_default();
         for node in &mut graph.nodes {
             if node.tool_type == "state/memory" {
-                node.config.insert("__memory_spec".to_string(), mem_meta.clone());
-                node.config.insert("__agent_id".to_string(), Value::String(agent_id.to_string()));
+                node.config
+                    .insert("__memory_spec".to_string(), mem_meta.clone());
+                node.config.insert(
+                    "__agent_id".to_string(),
+                    Value::String(agent_id.to_string()),
+                );
             }
         }
     }
@@ -168,9 +177,14 @@ pub(crate) async fn run_agent_spec_with_memory(
     let context = ctx_builder.build();
 
     // PRD-008: Build state with memory injected
-    let initial_state = build_state_with_memory(spec, agent_id, state, is_first_cycle_of_session).await;
+    let initial_state =
+        build_state_with_memory(spec, agent_id, state, is_first_cycle_of_session).await;
 
-    match state.runner.run_with_state(&graph, &context, initial_state).await {
+    match state
+        .runner
+        .run_with_state(&graph, &context, initial_state)
+        .await
+    {
         Ok(result) => result,
         Err(e) => ExecutionResult {
             status: ExecutionStatus::Failed,
@@ -195,15 +209,21 @@ pub(crate) async fn run_agent_spec_streaming(
     graph.auto_generate_edge_ids();
 
     if let Err(e) = graph.validate() {
-        let _ = event_tx.send(crate::streaming::StreamEvent::GraphError {
-            error: format!("Graph validation failed: {e}"),
-        }).await;
+        let _ = event_tx
+            .send(crate::streaming::StreamEvent::GraphError {
+                error: format!("Graph validation failed: {e}"),
+            })
+            .await;
         return;
     }
 
     // Same injections as run_agent_spec.
     if !trigger_data.is_empty() {
-        if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
+        if let Some(entry) = graph
+            .nodes
+            .iter_mut()
+            .find(|n| n.tool_type.starts_with("trigger/"))
+        {
             if let Ok(val) = serde_json::to_value(trigger_data) {
                 entry.config.insert("payload".to_string(), val);
             }
@@ -213,7 +233,8 @@ pub(crate) async fn run_agent_spec_streaming(
         let mcp_val = serde_json::to_value(&spec.config.mcp_servers).unwrap_or_default();
         for node in &mut graph.nodes {
             if node.tool_type == "mcp/call" {
-                node.config.insert("__mcp_servers".to_string(), mcp_val.clone());
+                node.config
+                    .insert("__mcp_servers".to_string(), mcp_val.clone());
             }
         }
     }
@@ -245,9 +266,11 @@ pub(crate) async fn run_agent_spec_streaming(
     match streaming_runner.run(&graph, &context).await {
         Ok(_) => {} // GraphCompleted already sent by runner
         Err(e) => {
-            let _ = event_tx.send(crate::streaming::StreamEvent::GraphError {
-                error: e.to_string(),
-            }).await;
+            let _ = event_tx
+                .send(crate::streaming::StreamEvent::GraphError {
+                    error: e.to_string(),
+                })
+                .await;
         }
     }
     // Channel drops when event_tx is dropped → receiver gets None → stream ends
@@ -277,7 +300,7 @@ pub(crate) async fn persist_memory_after_execution(
     let state_snapshot = result.state.snapshot();
     let mut write_data: HashMap<String, Value> = HashMap::new();
 
-    for (_node_id, node_output) in &state_snapshot {
+    for node_output in state_snapshot.values() {
         if let Some(mw) = node_output.get("__memory_write") {
             if let Ok(data) = serde_json::from_value::<HashMap<String, Value>>(mw.clone()) {
                 write_data.extend(data);
@@ -316,13 +339,26 @@ pub(crate) async fn rag_search(
     let query = req.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let documents = req.get("documents").and_then(|v| v.as_array());
     let top_k = req.get("top_k").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
-    let chunk_strategy = req.get("chunk_strategy").and_then(|v| v.as_str()).unwrap_or("paragraph");
+    let chunk_strategy = req
+        .get("chunk_strategy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("paragraph");
 
     if query.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "query is required".into() })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "query is required".into(),
+            }),
+        ));
     }
     if documents.is_none() || documents.unwrap().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "documents array is required".into() })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "documents array is required".into(),
+            }),
+        ));
     }
 
     // Chunk all documents.
@@ -334,7 +370,10 @@ pub(crate) async fn rag_search(
             "sentence" => crate::rag::ChunkingStrategy::Sentence,
             _ => crate::rag::ChunkingStrategy::Paragraph,
         },
-        chunk_size: req.get("chunk_size").and_then(|v| v.as_u64()).unwrap_or(512) as usize,
+        chunk_size: req
+            .get("chunk_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(512) as usize,
         chunk_overlap: 50,
         embedding_model: "nomic-embed-text".into(),
     };
@@ -356,9 +395,12 @@ pub(crate) async fn rag_search(
     let llm = (state.llm_factory)();
 
     let query_embedding = llm.embed(query, "nomic-embed-text").await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-            error: format!("Failed to embed query: {e}"),
-        }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to embed query: {e}"),
+            }),
+        )
     })?;
 
     let mut chunk_embeddings = Vec::new();
@@ -366,9 +408,12 @@ pub(crate) async fn rag_search(
         match llm.embed(chunk, "nomic-embed-text").await {
             Ok(emb) => chunk_embeddings.push(emb),
             Err(e) => {
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                    error: format!("Failed to embed chunk: {e}"),
-                })));
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to embed chunk: {e}"),
+                    }),
+                ));
             }
         }
     }
@@ -401,5 +446,3 @@ pub(crate) async fn rag_search(
         "dimensions": query_embedding.len(),
     })))
 }
-
-

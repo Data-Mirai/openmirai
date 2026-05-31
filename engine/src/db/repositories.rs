@@ -231,7 +231,11 @@ impl Repository<AgentRecord> for InMemoryAgentRepo {
         let store = self.store.read().await;
         let mut items: Vec<AgentRecord> = store.values().cloned().collect();
         // Sort by created_at descending (newest first), matching Python behaviour.
-        items.sort_by(|a, b| b.created_at.partial_cmp(&a.created_at).unwrap_or(std::cmp::Ordering::Equal));
+        items.sort_by(|a, b| {
+            b.created_at
+                .partial_cmp(&a.created_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(items.into_iter().skip(offset).take(limit).collect())
     }
 
@@ -274,7 +278,11 @@ impl InMemorySessionRepo {
             })
             .cloned()
             .collect();
-        items.sort_by(|a, b| b.created_at.partial_cmp(&a.created_at).unwrap_or(std::cmp::Ordering::Equal));
+        items.sort_by(|a, b| {
+            b.created_at
+                .partial_cmp(&a.created_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(items.into_iter().take(limit).collect())
     }
 }
@@ -301,7 +309,11 @@ impl Repository<SessionRecord> for InMemorySessionRepo {
     async fn list(&self, limit: usize, offset: usize) -> Result<Vec<SessionRecord>, DbError> {
         let store = self.store.read().await;
         let mut items: Vec<SessionRecord> = store.values().cloned().collect();
-        items.sort_by(|a, b| b.created_at.partial_cmp(&a.created_at).unwrap_or(std::cmp::Ordering::Equal));
+        items.sort_by(|a, b| {
+            b.created_at
+                .partial_cmp(&a.created_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(items.into_iter().skip(offset).take(limit).collect())
     }
 
@@ -454,7 +466,9 @@ mod tests {
         let repo = InMemoryAgentRepo::new();
         repo.save(&make_agent("a1")).await.unwrap();
 
-        repo.update_status("a1", AgentStatus::Enabled).await.unwrap();
+        repo.update_status("a1", AgentStatus::Enabled)
+            .await
+            .unwrap();
         let got = repo.get("a1").await.unwrap().unwrap();
         assert_eq!(got.status, AgentStatus::Enabled);
     }

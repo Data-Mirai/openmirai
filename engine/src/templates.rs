@@ -234,7 +234,9 @@ fn multi_step_researcher() -> AgentTemplate {
         id: "multi-step-researcher".into(),
         name: "Multi-Step Researcher".into(),
         category: TemplateCategory::Analysis,
-        description: "Plans research, scrapes multiple sources in parallel (fan-out), then synthesizes".into(),
+        description:
+            "Plans research, scrapes multiple sources in parallel (fan-out), then synthesizes"
+                .into(),
         required_providers: vec!["any".into()],
         tags: vec!["research".into(), "fanout".into(), "synthesis".into()],
         spec: json!({
@@ -438,7 +440,9 @@ mod tests {
     fn filter_by_category() {
         let assistants = list_templates(Some(&TemplateCategory::Assistant));
         assert!(assistants.len() >= 3); // qa, email-summarizer, translator, meeting-notes
-        assert!(assistants.iter().all(|t| t.category == TemplateCategory::Assistant));
+        assert!(assistants
+            .iter()
+            .all(|t| t.category == TemplateCategory::Assistant));
     }
 
     #[test]

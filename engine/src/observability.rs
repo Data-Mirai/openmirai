@@ -57,7 +57,7 @@ pub fn build_trace_tree(result: &ExecutionResult, graph_name: &str) -> TraceSpan
                 node_id: entry.node_id.clone(),
                 operation: format!("node.{}", entry.node_id),
                 duration_ms: entry.duration_ms,
-                status: entry.status.clone(),
+                status: entry.status,
                 error: entry.error.clone(),
                 attributes: attrs,
                 children: vec![],
@@ -159,8 +159,14 @@ pub fn compute_metrics(trace: &[TraceEntry]) -> ExecutionMetrics {
 
     let total_nodes = trace.len();
     let successful = trace.iter().filter(|t| t.status == TraceStatus::Ok).count();
-    let failed = trace.iter().filter(|t| t.status == TraceStatus::Error).count();
-    let skipped = trace.iter().filter(|t| t.status == TraceStatus::Skipped).count();
+    let failed = trace
+        .iter()
+        .filter(|t| t.status == TraceStatus::Error)
+        .count();
+    let skipped = trace
+        .iter()
+        .filter(|t| t.status == TraceStatus::Skipped)
+        .count();
     let total_ms: u64 = trace.iter().map(|t| t.duration_ms).sum();
     let max_ms = trace.iter().map(|t| t.duration_ms).max().unwrap_or(0);
     let min_ms = trace.iter().map(|t| t.duration_ms).min().unwrap_or(0);

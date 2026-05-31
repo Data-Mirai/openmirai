@@ -32,18 +32,19 @@ impl Tool for StorageReadTool {
         config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let storage = context.storage().ok_or_else(|| ToolError::ExecutionFailed {
-            tool_type: "data/storage_read".into(),
-            message: "no storage resource configured".into(),
-        })?;
-
-        let path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
+        let storage = context
+            .storage()
             .ok_or_else(|| ToolError::ExecutionFailed {
                 tool_type: "data/storage_read".into(),
-                message: "input 'path' is required".into(),
+                message: "no storage resource configured".into(),
             })?;
+
+        let path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
+                tool_type: "data/storage_read".into(),
+                message: "input 'path' is required".into(),
+            }
+        })?;
 
         let mode = config
             .get("mode")
@@ -84,4 +85,3 @@ impl Tool for StorageReadTool {
         Ok(out)
     }
 }
-

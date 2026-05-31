@@ -72,7 +72,9 @@ impl ExecutionState {
     ///
     /// Useful when you need to read multiple fields without cloning.
     /// The guard holds the read lock — drop it when done.
-    pub fn read(&self) -> Option<RwLockReadGuard<'_, HashMap<String, HashMap<String, serde_json::Value>>>> {
+    pub fn read(
+        &self,
+    ) -> Option<RwLockReadGuard<'_, HashMap<String, HashMap<String, serde_json::Value>>>> {
         self.inner.read().ok()
     }
 
@@ -249,7 +251,10 @@ mod tests {
         let s = ExecutionState::new();
         s.set(
             "trigger",
-            output(&[("payload", json!({"question": "hola", "context": "sobre IA"}))]),
+            output(&[(
+                "payload",
+                json!({"question": "hola", "context": "sobre IA"}),
+            )]),
             false,
         )
         .unwrap();
@@ -273,8 +278,12 @@ mod tests {
     #[test]
     fn get_field_deep_nesting() {
         let s = ExecutionState::new();
-        s.set("n1", output(&[("a", json!({"b": {"c": {"d": "deep"}}}))]), false)
-            .unwrap();
+        s.set(
+            "n1",
+            output(&[("a", json!({"b": {"c": {"d": "deep"}}}))]),
+            false,
+        )
+        .unwrap();
         assert_eq!(s.get_field("n1", "a.b.c.d"), Some(json!("deep")));
         assert_eq!(s.get_field("n1", "a.b.c"), Some(json!({"d": "deep"})));
         assert_eq!(s.get_field("n1", "a.b"), Some(json!({"c": {"d": "deep"}})));
@@ -292,7 +301,8 @@ mod tests {
     #[test]
     fn get_field_nested_nonexistent_intermediate() {
         let s = ExecutionState::new();
-        s.set("n1", output(&[("a", json!({"b": 42}))]), false).unwrap();
+        s.set("n1", output(&[("a", json!({"b": 42}))]), false)
+            .unwrap();
         // b is a number, can't traverse into it
         assert_eq!(s.get_field("n1", "a.b.c"), None);
         // x doesn't exist at all

@@ -132,7 +132,9 @@ pub fn validate_node_inputs(
                 if !field.field_type.matches(value) {
                     errors.push(format!(
                         "Node '{}': input '{}' expected {}, got {}",
-                        node_id, field.name, field.field_type,
+                        node_id,
+                        field.name,
+                        field.field_type,
                         value_type_label(value),
                     ));
                 }

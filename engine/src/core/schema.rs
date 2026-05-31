@@ -83,10 +83,7 @@ impl TableSchema {
     pub fn from_config(
         config: &HashMap<String, serde_json::Value>,
     ) -> Result<Option<Self>, SchemaError> {
-        let table = config
-            .get("table")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let table = config.get("table").and_then(|v| v.as_str()).unwrap_or("");
 
         if table.is_empty() {
             return Ok(None);
@@ -103,10 +100,8 @@ impl TableSchema {
                             .unwrap_or("")
                             .to_string();
 
-                        let col_type_str = map
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("text");
+                        let col_type_str =
+                            map.get("type").and_then(|v| v.as_str()).unwrap_or("text");
 
                         let nullable = map
                             .get("nullable")
@@ -211,8 +206,14 @@ mod tests {
         assert_eq!(ColumnType::from_str_loose("bool"), ColumnType::Boolean);
         assert_eq!(ColumnType::from_str_loose("json"), ColumnType::Json);
         assert_eq!(ColumnType::from_str_loose("object"), ColumnType::Json);
-        assert_eq!(ColumnType::from_str_loose("timestamp"), ColumnType::Timestamp);
-        assert_eq!(ColumnType::from_str_loose("datetime"), ColumnType::Timestamp);
+        assert_eq!(
+            ColumnType::from_str_loose("timestamp"),
+            ColumnType::Timestamp
+        );
+        assert_eq!(
+            ColumnType::from_str_loose("datetime"),
+            ColumnType::Timestamp
+        );
         assert_eq!(ColumnType::from_str_loose("unknown"), ColumnType::Text); // fallback
     }
 

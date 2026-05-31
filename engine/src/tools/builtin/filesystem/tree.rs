@@ -26,24 +26,27 @@ fs_tool! {
     ]
 }
 
+#[derive(Clone, Copy)]
+struct TreeOpts {
+    max_depth: usize,
+    show_hidden: bool,
+}
+
 fn build_tree(
     dir: &Path,
     prefix: &str,
     depth: usize,
-    max_depth: usize,
-    show_hidden: bool,
+    opts: TreeOpts,
     lines: &mut Vec<String>,
     file_count: &mut usize,
     dir_count: &mut usize,
 ) {
-    if depth > max_depth {
+    if depth > opts.max_depth {
         return;
     }
 
     let mut entries: Vec<_> = match fs::read_dir(dir) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
-            .collect(),
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
         Err(_) => return,
     };
     entries.sort_by(|a, b| {
@@ -55,7 +58,7 @@ fn build_tree(
     let count = entries.len();
     for (i, entry) in entries.iter().enumerate() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !show_hidden && name.starts_with('.') {
+        if !opts.show_hidden && name.starts_with('.') {
             continue;
         }
         let is_last = i == count - 1;
@@ -76,8 +79,7 @@ fn build_tree(
                 &entry.path(),
                 &child_prefix,
                 depth + 1,
-                max_depth,
-                show_hidden,
+                opts,
                 lines,
                 file_count,
                 dir_count,
@@ -96,13 +98,12 @@ impl Tool for TreeTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let raw_path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let raw_path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "filesystem/tree".into(),
                 message: "missing required input: path".into(),
-            })?;
+            }
+        })?;
         let max_depth = config
             .get("max_depth")
             .and_then(|v| v.as_u64())
@@ -128,7 +129,16 @@ impl Tool for TreeTool {
         let mut file_count: usize = 0;
         let mut dir_count: usize = 0;
         build_tree(
-            &path, "", 0, max_depth, show_hidden, &mut lines, &mut file_count, &mut dir_count,
+            &path,
+            "",
+            0,
+            TreeOpts {
+                max_depth,
+                show_hidden,
+            },
+            &mut lines,
+            &mut file_count,
+            &mut dir_count,
         );
 
         let mut out = HashMap::new();
@@ -138,4 +148,3 @@ impl Tool for TreeTool {
         Ok(out)
     }
 }
-

@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod benchmark;
 pub mod core;
 pub mod db;
@@ -10,11 +11,10 @@ pub mod memory;
 pub mod observability;
 pub mod rag;
 pub mod render;
-pub mod adapters;
-pub mod security;
 pub mod runtime;
 pub mod sandbox;
 pub mod search;
+pub mod security;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod soul;
@@ -29,8 +29,8 @@ pub mod vault;
 // Re-export core types explicitly (no glob).
 pub use crate::core::agent_spec::{
     AgentConfig, AgentEdgeSpec, AgentGraphSpec, AgentHookSpec, AgentMcpServerSpec, AgentMemorySpec,
-    AgentNodeSpec, AgentResourceRef, AgentRetryConfig, AgentScheduleSpec, AgentSpec, AgentSpecError,
-    AgentTriggerSpec, AgentType, CycleErrorMode, MemoryPersistMode,
+    AgentNodeSpec, AgentResourceRef, AgentRetryConfig, AgentScheduleSpec, AgentSpec,
+    AgentSpecError, AgentTriggerSpec, AgentType, CycleErrorMode, MemoryPersistMode,
 };
 pub use crate::core::auth::{AuthError, Permission, PermissionEvaluator, Resource, SingleUserAuth};
 pub use crate::core::context::{
@@ -55,8 +55,8 @@ pub use crate::tools::{
 
 // Re-export memory types.
 pub use crate::memory::{
-    InMemoryBackend, LongTermEntry, LongTermMemory, MemoryBackend, ShortTermEntry,
-    ShortTermMemory, SqliteBackend,
+    InMemoryBackend, LongTermEntry, LongTermMemory, MemoryBackend, ShortTermEntry, ShortTermMemory,
+    SqliteBackend,
 };
 
 // Re-export trigger types.
@@ -75,7 +75,6 @@ pub use crate::runtime::{
 
 // Re-export adapter types (formerly "resources").
 pub use crate::adapters::{
-    AdapterBridgeLLMResource, DefaultExecutionContext, InMemoryDBResource,
-    InMemoryStorageResource, MockLLMResource, OllamaLLMResource,
+    AdapterBridgeLLMResource, DefaultExecutionContext, InMemoryDBResource, InMemoryStorageResource,
+    MockLLMResource, OllamaLLMResource,
 };
-

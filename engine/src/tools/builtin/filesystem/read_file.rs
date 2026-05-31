@@ -35,13 +35,12 @@ impl Tool for ReadFileTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let raw_path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let raw_path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "filesystem/read_file".into(),
                 message: "missing required input: path".into(),
-            })?;
+            }
+        })?;
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
             tool_type: "filesystem/read_file".into(),
@@ -61,14 +60,8 @@ impl Tool for ReadFileTool {
         })?;
         let size = metadata.len();
 
-        let offset = config
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-        let limit = config
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(2000) as usize;
+        let offset = config.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let limit = config.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
 
         let content = fs::read_to_string(&path).map_err(|e| ToolError::ExecutionFailed {
             tool_type: "filesystem/read_file".into(),
@@ -99,4 +92,3 @@ impl Tool for ReadFileTool {
         Ok(out)
     }
 }
-

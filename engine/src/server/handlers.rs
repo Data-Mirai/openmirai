@@ -13,8 +13,11 @@ use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
 use crate::core::runner::{ExecutionStatus, TraceEntry};
 use crate::utils::short_id;
 
-use super::state::{AppState, ErrorResponse, ExecuteRequest, GraphCreateRequest, AgentCreateRequest, SessionListQuery};
 use super::helpers::{persist_memory_after_execution, run_agent_spec, run_agent_spec_streaming};
+use super::state::{
+    AgentCreateRequest, AppState, ErrorResponse, ExecuteRequest, GraphCreateRequest,
+    SessionListQuery,
+};
 pub(crate) async fn health(State(state): State<AppState>) -> Json<Value> {
     let uptime_secs = state.start_time.elapsed().as_secs();
     let agents_count = state.agents.read().await.len();
@@ -57,7 +60,8 @@ pub(crate) async fn create_graph(
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({"error": format!("invalid node at index {}: {}", i, e)})),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
     }
@@ -70,7 +74,8 @@ pub(crate) async fn create_graph(
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({"error": format!("invalid edge at index {}: {}", i, e)})),
-                ).into_response();
+                )
+                    .into_response();
             }
         }
     }
@@ -90,7 +95,8 @@ pub(crate) async fn create_graph(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": format!("failed to serialize graph: {}", e)})),
-            ).into_response();
+            )
+                .into_response();
         }
     };
     state.graphs.write().await.insert(graph_id, graph);
@@ -177,10 +183,7 @@ pub(crate) async fn create_agent(
         resources: Vec::new(),
         metadata: {
             let mut m = HashMap::new();
-            m.insert(
-                "graph_id".to_string(),
-                Value::String(req.graph_id.clone()),
-            );
+            m.insert("graph_id".to_string(), Value::String(req.graph_id.clone()));
             m.insert("agent_id".to_string(), Value::String(agent_id.clone()));
             m
         },
@@ -274,7 +277,14 @@ pub(crate) async fn execute_agent(
                 return Err((
                     StatusCode::UNPROCESSABLE_ENTITY,
                     Json(ErrorResponse {
-                        error: format!("input validation failed: {}", errors.iter().map(|e| e.message.as_str()).collect::<Vec<_>>().join("; ")),
+                        error: format!(
+                            "input validation failed: {}",
+                            errors
+                                .iter()
+                                .map(|e| e.message.as_str())
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        ),
                     }),
                 ));
             }
@@ -295,17 +305,18 @@ pub(crate) async fn execute_agent(
 
     // Run the agent graph with timeout protection.
     let timeout = std::time::Duration::from_secs(state.timeout_secs);
-    let result = match tokio::time::timeout(timeout, run_agent_spec(&spec, &trigger_data, &state)).await {
-        Ok(r) => r,
-        Err(_) => {
-            return Err((
-                StatusCode::GATEWAY_TIMEOUT,
-                Json(ErrorResponse {
-                    error: format!("execution timed out after {}s", state.timeout_secs),
-                }),
-            ));
-        }
-    };
+    let result =
+        match tokio::time::timeout(timeout, run_agent_spec(&spec, &trigger_data, &state)).await {
+            Ok(r) => r,
+            Err(_) => {
+                return Err((
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(ErrorResponse {
+                        error: format!("execution timed out after {}s", state.timeout_secs),
+                    }),
+                ));
+            }
+        };
 
     // PRD-008: persist memory after successful execution
     persist_memory_after_execution(&spec, &id, &result, &state).await;
@@ -391,7 +402,8 @@ pub(crate) async fn stream_agent(
             ("connection", "keep-alive"),
         ],
         body,
-    ).into_response())
+    )
+        .into_response())
 }
 
 /// Create an agent directly from a full AgentSpec (no separate graph needed).
@@ -470,18 +482,28 @@ pub(crate) async fn eval_session(
     let output_text = req.get("output").and_then(|v| v.as_str()).unwrap_or("");
     let context_text = req.get("context").and_then(|v| v.as_str());
     let duration_ms = req.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
-    let judge_model = req.get("judge_model").and_then(|v| v.as_str()).unwrap_or("");
+    let judge_model = req
+        .get("judge_model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-    let eval_types: Vec<crate::eval::EvalType> = req.get("eval_types")
+    let eval_types: Vec<crate::eval::EvalType> = req
+        .get("eval_types")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().and_then(|s| match s {
-            "relevance" => Some(crate::eval::EvalType::Relevance),
-            "faithfulness" => Some(crate::eval::EvalType::Faithfulness),
-            "completeness" => Some(crate::eval::EvalType::Completeness),
-            "format_compliance" => Some(crate::eval::EvalType::FormatCompliance),
-            "latency" => Some(crate::eval::EvalType::Latency),
-            _ => None,
-        })).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    v.as_str().and_then(|s| match s {
+                        "relevance" => Some(crate::eval::EvalType::Relevance),
+                        "faithfulness" => Some(crate::eval::EvalType::Faithfulness),
+                        "completeness" => Some(crate::eval::EvalType::Completeness),
+                        "format_compliance" => Some(crate::eval::EvalType::FormatCompliance),
+                        "latency" => Some(crate::eval::EvalType::Latency),
+                        _ => None,
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     if eval_types.is_empty() {
@@ -492,16 +514,30 @@ pub(crate) async fn eval_session(
 
     let llm = (state.llm_factory)();
     let results = crate::eval::execute_eval(
-        &eval_types, input_text, output_text, context_text,
-        duration_ms, None, &*llm, judge_model,
-    ).await;
+        &eval_types,
+        crate::eval::EvalInput {
+            input: input_text,
+            output: output_text,
+            context: context_text,
+        },
+        duration_ms,
+        None,
+        &*llm,
+        judge_model,
+    )
+    .await;
 
-    let scores: Vec<Value> = results.iter().map(|r| json!({
-        "eval_type": r.eval_type,
-        "score": r.score,
-        "details": r.details,
-        "judge_model": r.judge_model,
-    })).collect();
+    let scores: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            json!({
+                "eval_type": r.eval_type,
+                "score": r.score,
+                "details": r.details,
+                "judge_model": r.judge_model,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({
         "results": scores,
@@ -519,13 +555,24 @@ pub(crate) async fn groupchat(
     let participants = req.get("participants").and_then(|v| v.as_array());
 
     if topic.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "topic is required".into() })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "topic is required".into(),
+            }),
+        ));
     }
     let participants = match participants {
         Some(p) if p.len() >= 2 => p,
-        _ => return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-            error: "participants array required (min 2 agents with name + personality)".into(),
-        }))),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "participants array required (min 2 agents with name + personality)"
+                        .into(),
+                }),
+            ))
+        }
     };
 
     let llm = (state.llm_factory)();
@@ -534,13 +581,27 @@ pub(crate) async fn groupchat(
     for round in 0..max_rounds {
         let speaker_idx = round % participants.len();
         let speaker = &participants[speaker_idx];
-        let name = speaker.get("name").and_then(|v| v.as_str()).unwrap_or("agent");
-        let personality = speaker.get("personality").and_then(|v| v.as_str()).unwrap_or("");
+        let name = speaker
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("agent");
+        let personality = speaker
+            .get("personality")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // Build context: topic + transcript so far.
-        let history: String = transcript.iter().map(|t| {
-            format!("[{}]: {}", t["agent"].as_str().unwrap_or("?"), t["content"].as_str().unwrap_or(""))
-        }).collect::<Vec<_>>().join("\n");
+        let history: String = transcript
+            .iter()
+            .map(|t| {
+                format!(
+                    "[{}]: {}",
+                    t["agent"].as_str().unwrap_or("?"),
+                    t["content"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let prompt = format!(
             "You are {}. {}.\n\nTopic: {}\n\nPrevious discussion:\n{}\n\nGive your perspective in 2-3 sentences.",
@@ -578,12 +639,22 @@ pub(crate) async fn get_metrics(State(state): State<AppState>) -> Json<Value> {
     let sessions = state.sessions.read().await;
 
     let total = sessions.len();
-    let completed = sessions.values().filter(|r| r.status == ExecutionStatus::Completed).count();
-    let failed = sessions.values().filter(|r| r.status == ExecutionStatus::Failed).count();
+    let completed = sessions
+        .values()
+        .filter(|r| r.status == ExecutionStatus::Completed)
+        .count();
+    let failed = sessions
+        .values()
+        .filter(|r| r.status == ExecutionStatus::Failed)
+        .count();
 
     let all_traces: Vec<&TraceEntry> = sessions.values().flat_map(|r| r.trace.iter()).collect();
     let total_duration: u64 = all_traces.iter().map(|t| t.duration_ms).sum();
-    let avg_duration = if all_traces.is_empty() { 0.0 } else { total_duration as f64 / all_traces.len() as f64 };
+    let avg_duration = if all_traces.is_empty() {
+        0.0
+    } else {
+        total_duration as f64 / all_traces.len() as f64
+    };
 
     Json(json!({
         "sessions": {
@@ -610,7 +681,9 @@ pub(crate) async fn universe_message(
     if message.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: "message is required".into() }),
+            Json(ErrorResponse {
+                error: "message is required".into(),
+            }),
         ));
     }
 
@@ -619,11 +692,16 @@ pub(crate) async fn universe_message(
     if agent_configs.is_none() || agent_configs.unwrap().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: "agents array is required".into() }),
+            Json(ErrorResponse {
+                error: "agents array is required".into(),
+            }),
         ));
     }
 
-    let strategy_str = req.get("strategy").and_then(|v| v.as_str()).unwrap_or("keyword_match");
+    let strategy_str = req
+        .get("strategy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("keyword_match");
     let strategy = match strategy_str {
         "explicit" => crate::universe::RouterStrategy::Explicit,
         "round_robin" => crate::universe::RouterStrategy::RoundRobin,
@@ -632,7 +710,11 @@ pub(crate) async fn universe_message(
     };
 
     let universe_config = crate::universe::UniverseConfig {
-        name: req.get("name").and_then(|v| v.as_str()).unwrap_or("universe").to_string(),
+        name: req
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("universe")
+            .to_string(),
         description: String::new(),
         router_strategy: strategy,
         router_prompt: None,
@@ -644,12 +726,23 @@ pub(crate) async fn universe_message(
     // Parse agents: each needs a soul (name + capabilities) and an agent_id.
     let agents_arr = agent_configs.unwrap();
     for agent_val in agents_arr {
-        let name = agent_val.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
-        let capabilities: Vec<String> = agent_val.get("capabilities")
+        let name = agent_val
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unnamed");
+        let capabilities: Vec<String> = agent_val
+            .get("capabilities")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
-        let agent_id = agent_val.get("agent_id").and_then(|v| v.as_str()).unwrap_or(name);
+        let agent_id = agent_val
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(name);
 
         let soul = crate::soul::Soul {
             name: name.to_string(),
@@ -823,7 +916,12 @@ pub(crate) async fn play_agent(
     let spec = match agents.get(&id) {
         Some(s) => s.clone(),
         None => {
-            return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Agent not found".into() })));
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Agent not found".into(),
+                }),
+            ));
         }
     };
     drop(agents);
@@ -832,7 +930,9 @@ pub(crate) async fn play_agent(
     if spec.agent_type != crate::core::agent_spec::AgentType::Live {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(ErrorResponse { error: "only live agents support play/stop".into() }),
+            Json(ErrorResponse {
+                error: "only live agents support play/stop".into(),
+            }),
         ));
     }
 
@@ -842,7 +942,9 @@ pub(crate) async fn play_agent(
         None => {
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ErrorResponse { error: "live agent has no schedule configured".into() }),
+                Json(ErrorResponse {
+                    error: "live agent has no schedule configured".into(),
+                }),
             ));
         }
     };
@@ -851,7 +953,9 @@ pub(crate) async fn play_agent(
     if state.scheduler.is_scheduled(&id).await {
         return Err((
             StatusCode::CONFLICT,
-            Json(ErrorResponse { error: "agent is already playing".into() }),
+            Json(ErrorResponse {
+                error: "agent is already playing".into(),
+            }),
         ));
     }
 
@@ -869,37 +973,44 @@ pub(crate) async fn play_agent(
     let agent_id = id.clone();
     let app_state = state.clone();
     let agent_spec = spec.clone();
-    let callback: crate::runtime::scheduler::CycleCallback = std::sync::Arc::new(move |aid, cycle_num, is_first| {
-        let s = app_state.clone();
-        let sp = agent_spec.clone();
-        Box::pin(async move {
-            let trigger_data = {
-                let mut td = HashMap::new();
-                td.insert("cycle_number".to_string(), serde_json::json!(cycle_num));
-                td.insert("triggered_by".to_string(), serde_json::json!("scheduler"));
-                td
-            };
-            let result = super::helpers::run_agent_spec_with_memory(
-                &sp,
-                &trigger_data,
-                &s,
-                &aid,
-                is_first,
-            ).await;
+    let callback: crate::runtime::scheduler::CycleCallback =
+        std::sync::Arc::new(move |aid, cycle_num, is_first| {
+            let s = app_state.clone();
+            let sp = agent_spec.clone();
+            Box::pin(async move {
+                let trigger_data = {
+                    let mut td = HashMap::new();
+                    td.insert("cycle_number".to_string(), serde_json::json!(cycle_num));
+                    td.insert("triggered_by".to_string(), serde_json::json!("scheduler"));
+                    td
+                };
+                let result = super::helpers::run_agent_spec_with_memory(
+                    &sp,
+                    &trigger_data,
+                    &s,
+                    &aid,
+                    is_first,
+                )
+                .await;
 
-            // Persist memory after execution
-            super::helpers::persist_memory_after_execution(&sp, &aid, &result, &s).await;
+                // Persist memory after execution
+                super::helpers::persist_memory_after_execution(&sp, &aid, &result, &s).await;
 
-            match result.status {
-                ExecutionStatus::Completed => Ok(()),
-                _ => Err(result.error.unwrap_or_else(|| "cycle failed".into())),
-            }
-        })
-    });
+                match result.status {
+                    ExecutionStatus::Completed => Ok(()),
+                    _ => Err(result.error.unwrap_or_else(|| "cycle failed".into())),
+                }
+            })
+        });
 
-    state.scheduler.schedule_agent(&agent_id, interval, max_cycles, on_error, callback).await;
+    state
+        .scheduler
+        .schedule_agent(&agent_id, interval, max_cycles, on_error, callback)
+        .await;
 
-    let memory_keys: Vec<String> = spec.graph.memory
+    let memory_keys: Vec<String> = spec
+        .graph
+        .memory
         .as_ref()
         .map(|m| m.keys.keys().cloned().collect())
         .unwrap_or_default();
@@ -920,7 +1031,9 @@ pub(crate) async fn stop_agent(
     if !state.scheduler.is_scheduled(&id).await {
         return Err((
             StatusCode::CONFLICT,
-            Json(ErrorResponse { error: "agent is not playing".into() }),
+            Json(ErrorResponse {
+                error: "agent is not playing".into(),
+            }),
         ));
     }
 
@@ -940,7 +1053,10 @@ pub(crate) async fn get_agent_cycles(
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
-    let limit: usize = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(50);
+    let limit: usize = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
     let cycles = state.scheduler.get_cycles(&id, limit).await;
     let total = state.scheduler.get_cycle_count(&id).await;
 
@@ -973,7 +1089,9 @@ pub(crate) async fn clear_agent_memory(
     if state.scheduler.is_scheduled(&id).await {
         return Err((
             StatusCode::CONFLICT,
-            Json(ErrorResponse { error: "cannot clear memory while agent is playing".into() }),
+            Json(ErrorResponse {
+                error: "cannot clear memory while agent is playing".into(),
+            }),
         ));
     }
 
@@ -985,7 +1103,10 @@ pub(crate) async fn clear_agent_memory(
         .map(|m| m.keys.clone());
     drop(agents);
 
-    state.memory_store.clear_all_memory(&id, initial_values.as_ref()).await;
+    state
+        .memory_store
+        .clear_all_memory(&id, initial_values.as_ref())
+        .await;
 
     Ok(Json(json!({
         "agent_id": id,
@@ -993,4 +1114,3 @@ pub(crate) async fn clear_agent_memory(
         "reset_to": "initial_values",
     })))
 }
-

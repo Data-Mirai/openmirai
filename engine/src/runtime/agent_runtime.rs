@@ -245,10 +245,7 @@ impl AgentRuntime {
 
         // Emit event.
         let mut data = HashMap::new();
-        data.insert(
-            "agent_id".to_string(),
-            Value::String(id.to_string()),
-        );
+        data.insert("agent_id".to_string(), Value::String(id.to_string()));
         if !trigger_payload.is_empty() {
             data.insert(
                 "trigger_payload".to_string(),

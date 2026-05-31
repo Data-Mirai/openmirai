@@ -45,7 +45,11 @@ impl ModelOption {
     }
 
     pub fn modality_label(&self) -> &str {
-        if self.supports_vision { "multimodal" } else { "text" }
+        if self.supports_vision {
+            "multimodal"
+        } else {
+            "text"
+        }
     }
 }
 
@@ -142,9 +146,7 @@ pub fn select_option(prompt: &str, options: &[(String, String)]) -> Option<Strin
             if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
                 match code {
                     KeyCode::Up | KeyCode::Char('k') => {
-                        if selected > 0 {
-                            selected -= 1;
-                        }
+                        selected = selected.saturating_sub(1);
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
                         if selected < options.len() - 1 {
@@ -155,10 +157,7 @@ pub fn select_option(prompt: &str, options: &[(String, String)]) -> Option<Strin
                         terminal::disable_raw_mode().ok();
                         // Clear the options and show the selected value
                         clear_options(&mut stdout, options.len());
-                        print!(
-                            "  {GREEN}{BOLD}{}{RESET}\n",
-                            options[selected].0
-                        );
+                        println!("  {GREEN}{BOLD}{}{RESET}", options[selected].0);
                         let _ = stdout.flush();
                         return Some(options[selected].1.clone());
                     }
@@ -185,10 +184,7 @@ fn render_options(stdout: &mut io::Stdout, options: &[(String, String)], selecte
                 Print(format!("  {CYAN}{BOLD}  -> {label}{RESET}\r\n"))
             );
         } else {
-            let _ = execute!(
-                stdout,
-                Print(format!("  {DIM}     {label}{RESET}\r\n"))
-            );
+            let _ = execute!(stdout, Print(format!("  {DIM}     {label}{RESET}\r\n")));
         }
     }
     let _ = stdout.flush();
@@ -210,8 +206,17 @@ fn clear_options(stdout: &mut io::Stdout, count: usize) {
 // ---------------------------------------------------------------------------
 
 const VISION_PATTERNS: &[&str] = &[
-    "llava", "vision", "bakllava", "moondream", "minicpm-v", "cogvlm",
-    "gpt-4o", "gpt-4-turbo", "gemini", "claude-3", "pixtral",
+    "llava",
+    "vision",
+    "bakllava",
+    "moondream",
+    "minicpm-v",
+    "cogvlm",
+    "gpt-4o",
+    "gpt-4-turbo",
+    "gemini",
+    "claude-3",
+    "pixtral",
 ];
 
 fn is_vision_model(name: &str) -> bool {
@@ -255,7 +260,11 @@ async fn ollama_health(base_url: &str) -> String {
                         .and_then(|v| v.as_array())
                         .map(|a| a.len())
                         .unwrap_or(0);
-                    if models > 0 { "ok".to_string() } else { "no_models".to_string() }
+                    if models > 0 {
+                        "ok".to_string()
+                    } else {
+                        "no_models".to_string()
+                    }
                 }
                 Err(e) => format!("error:{e}"),
             }
@@ -297,7 +306,11 @@ async fn detect_ollama_models(base_url: &str) -> Vec<ModelOption> {
 
     let mut models = Vec::new();
     for m in models_arr {
-        let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = m
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let details = m.get("details").cloned().unwrap_or(serde_json::json!({}));
         let param_size = details
             .get("parameter_size")
@@ -374,13 +387,11 @@ fn try_start_ollama() -> String {
         std::thread::sleep(Duration::from_millis(500));
         let frame = spinner[i % spinner.len()];
         let secs = ((i + 1) as f64) * 0.5;
-        print!(
-            "\r  {MAGENTA}{frame}{RESET} {DIM}Iniciando Ollama... ({secs:.0}s){RESET}  "
-        );
+        print!("\r  {MAGENTA}{frame}{RESET} {DIM}Iniciando Ollama... ({secs:.0}s){RESET}  ");
         let _ = io::stdout().flush();
 
-        let status = tokio::runtime::Handle::current()
-            .block_on(ollama_health("http://localhost:11434"));
+        let status =
+            tokio::runtime::Handle::current().block_on(ollama_health("http://localhost:11434"));
         if status == "ok" || status == "no_models" {
             print!("\r{}\r", " ".repeat(50));
             let _ = io::stdout().flush();
@@ -418,9 +429,7 @@ fn install_ollama() -> bool {
                 .unwrap_or(false)
         }
         _ => {
-            println!(
-                "\n  {YELLOW}Descarga Ollama desde: https://ollama.com/download{RESET}"
-            );
+            println!("\n  {YELLOW}Descarga Ollama desde: https://ollama.com/download{RESET}");
             false
         }
     }
@@ -441,10 +450,22 @@ fn pull_ollama_model(model_name: &str) -> bool {
 
 fn suggested_models() -> Vec<(String, String)> {
     vec![
-        ("qwen3:8b -- 8B, rapido, recomendado (~5 GB)".to_string(), "qwen3:8b".to_string()),
-        ("llama3.2 -- 3B, ligero (~2 GB)".to_string(), "llama3.2".to_string()),
-        ("gemma4 -- 8B, Google (~5 GB)".to_string(), "gemma4".to_string()),
-        ("deepseek-r1:8b -- 8B, razonamiento (~5 GB)".to_string(), "deepseek-r1:8b".to_string()),
+        (
+            "qwen3:8b -- 8B, rapido, recomendado (~5 GB)".to_string(),
+            "qwen3:8b".to_string(),
+        ),
+        (
+            "llama3.2 -- 3B, ligero (~2 GB)".to_string(),
+            "llama3.2".to_string(),
+        ),
+        (
+            "gemma4 -- 8B, Google (~5 GB)".to_string(),
+            "gemma4".to_string(),
+        ),
+        (
+            "deepseek-r1:8b -- 8B, razonamiento (~5 GB)".to_string(),
+            "deepseek-r1:8b".to_string(),
+        ),
     ]
 }
 
@@ -476,7 +497,10 @@ async fn setup_local_provider() -> Option<ModelOption> {
                 println!("  {DIM}Descarga: https://ollama.com/download{RESET}");
             }
 
-            choices.push(("Reintentar (ya lo instale)".to_string(), "retry".to_string()));
+            choices.push((
+                "Reintentar (ya lo instale)".to_string(),
+                "retry".to_string(),
+            ));
             choices.push(("Cambiar a Cloud".to_string(), "cloud".to_string()));
             choices.push(("Salir".to_string(), "exit".to_string()));
 
@@ -687,16 +711,16 @@ fn setup_cloud_provider() -> Option<ModelOption> {
             println!("  {GREEN}+{RESET} {}", p.label);
             p
         } else {
-            println!("  {GREEN}+{RESET} {} proveedores disponibles", providers.len());
+            println!(
+                "  {GREEN}+{RESET} {} proveedores disponibles",
+                providers.len()
+            );
             let choices: Vec<(String, String)> = providers
                 .iter()
                 .map(|p| (p.label.to_string(), p.provider.to_string()))
                 .collect();
             let key = select_option("Proveedor", &choices)?;
-            providers
-                .iter()
-                .find(|p| p.provider == key)
-                .copied()?
+            providers.iter().find(|p| p.provider == key).copied()?
         };
 
         return Some(ModelOption {
@@ -729,7 +753,10 @@ fn context_window_choices(default_ctx: u32) -> Vec<(String, String)> {
             format!("Default ({} -- capacidad del modelo)", label(default_ctx)),
             default_ctx.to_string(),
         ),
-        ("Small (4K -- ahorra memoria)".to_string(), "4096".to_string()),
+        (
+            "Small (4K -- ahorra memoria)".to_string(),
+            "4096".to_string(),
+        ),
         ("Medium (8K)".to_string(), "8192".to_string()),
         ("Standard (16K)".to_string(), "16384".to_string()),
         ("Large (32K)".to_string(), "32768".to_string()),
@@ -757,9 +784,18 @@ pub async fn run_setup_wizard(
 ) -> Option<SessionConfig> {
     // Quick path
     if skip || (!provider.is_empty() && !model.is_empty() && !autonomy.is_empty()) {
-        let level = get_autonomy(if autonomy.is_empty() { "copilot" } else { autonomy });
+        let level = get_autonomy(if autonomy.is_empty() {
+            "copilot"
+        } else {
+            autonomy
+        });
         return Some(SessionConfig {
-            provider: if provider.is_empty() { "ollama" } else { provider }.to_string(),
+            provider: if provider.is_empty() {
+                "ollama"
+            } else {
+                provider
+            }
+            .to_string(),
             model: if model.is_empty() { "qwen3:8b" } else { model }.to_string(),
             autonomy_level: level.key.to_string(),
             max_tool_rounds: level.max_tool_rounds,
@@ -775,7 +811,10 @@ pub async fn run_setup_wizard(
 
     // --- Step 1: Local or Cloud? ---
     let mode_choices = vec![
-        ("Local (Ollama -- corre en tu maquina)".to_string(), "local".to_string()),
+        (
+            "Local (Ollama -- corre en tu maquina)".to_string(),
+            "local".to_string(),
+        ),
         ("Cloud (necesita API key)".to_string(), "cloud".to_string()),
     ];
     let mode = select_option("Donde correra el modelo?", &mode_choices)?;

@@ -180,13 +180,7 @@ impl SessionStorage {
         );
     }
 
-    pub fn append_tool_call(
-        &self,
-        session_id: &str,
-        tool: &str,
-        args: &Value,
-        round_num: u32,
-    ) {
+    pub fn append_tool_call(&self, session_id: &str, tool: &str, args: &Value, round_num: u32) {
         let mut meta = serde_json::Map::new();
         meta.insert("tool".to_string(), Value::String(tool.to_string()));
         meta.insert("args".to_string(), args.clone());
@@ -202,13 +196,7 @@ impl SessionStorage {
         );
     }
 
-    pub fn append_tool_result(
-        &self,
-        session_id: &str,
-        tool: &str,
-        result: &Value,
-        round_num: u32,
-    ) {
+    pub fn append_tool_result(&self, session_id: &str, tool: &str, result: &Value, round_num: u32) {
         let result_str = serde_json::to_string(result).unwrap_or_default();
         let truncated = if result_str.len() > 5000 {
             format!("{}...(truncated)", &result_str[..5000])
@@ -240,10 +228,7 @@ impl SessionStorage {
         let id = format!("chk_{:06x}", rand_u32() & 0xFFFFFF);
         let ts = now_secs();
         let mut meta = serde_json::Map::new();
-        meta.insert(
-            "checkpoint_id".to_string(),
-            Value::String(id.clone()),
-        );
+        meta.insert("checkpoint_id".to_string(), Value::String(id.clone()));
         meta.insert("label".to_string(), Value::String(label.to_string()));
         meta.insert(
             "message_index".to_string(),
@@ -347,7 +332,11 @@ impl SessionStorage {
                 self.read_manifest(&name)
             })
             .collect();
-        sessions.sort_by(|a, b| b.updated_at.partial_cmp(&a.updated_at).unwrap_or(std::cmp::Ordering::Equal));
+        sessions.sort_by(|a, b| {
+            b.updated_at
+                .partial_cmp(&a.updated_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         sessions.truncate(limit);
         sessions
     }

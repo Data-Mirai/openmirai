@@ -50,15 +50,11 @@ pub enum AgentSpecError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AgentType {
+    #[default]
     Managed,
     Live,
-}
-
-impl Default for AgentType {
-    fn default() -> Self {
-        Self::Managed
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -68,21 +64,17 @@ impl Default for AgentType {
 /// Controls how long agent memory persists between cycles/executions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum MemoryPersistMode {
     /// Each cycle/execution starts with initial values. No carry-over.
     None,
     /// Live: carries between cycles within a play session. Resets on stop→play.
     /// Managed: equivalent to None (each execute is independent).
+    #[default]
     Cycle,
     /// Persists across everything: cycles, stop/play, separate executions.
     /// Only resets with explicit clear_memory.
     Execution,
-}
-
-impl Default for MemoryPersistMode {
-    fn default() -> Self {
-        Self::Cycle
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -131,17 +123,13 @@ pub struct AgentScheduleSpec {
 /// Behavior when a live agent cycle fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CycleErrorMode {
     /// Log the error and continue to the next cycle.
+    #[default]
     Continue,
     /// Stop the agent (transition to Error state).
     Stop,
-}
-
-impl Default for CycleErrorMode {
-    fn default() -> Self {
-        Self::Continue
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -684,7 +672,7 @@ impl AgentSpec {
     pub fn to_graph(&self, graph_id: Option<&str>) -> GraphDef {
         let gid = graph_id
             .map(|s| s.to_string())
-            .unwrap_or_else(|| crate::utils::short_id());
+            .unwrap_or_else(crate::utils::short_id);
 
         let nodes = self
             .graph
@@ -901,7 +889,10 @@ mod tests {
     fn from_file_rejects_json_extension() {
         // Agent specs are YAML-only.
         let result = AgentSpec::from_file("agent.json");
-        assert!(matches!(result, Err(AgentSpecError::UnsupportedExtension(_))));
+        assert!(matches!(
+            result,
+            Err(AgentSpecError::UnsupportedExtension(_))
+        ));
     }
 
     #[test]
@@ -961,8 +952,14 @@ mod tests {
         assert_eq!(config.max_iterations, 50);
         assert_eq!(config.timeout_ms, 60000);
         assert_eq!(config.retry.max_retries, 3);
-        assert_eq!(config.retry.backoff, crate::core::runner::BackoffStrategy::Exponential);
-        assert_eq!(config.retry.on_failure, crate::core::runner::FailureMode::Stop);
+        assert_eq!(
+            config.retry.backoff,
+            crate::core::runner::BackoffStrategy::Exponential
+        );
+        assert_eq!(
+            config.retry.on_failure,
+            crate::core::runner::FailureMode::Stop
+        );
     }
 
     #[test]
@@ -985,7 +982,10 @@ mod tests {
             data_map: None,
         });
         let err = spec.validate().unwrap_err();
-        assert!(matches!(err, AgentSpecError::Graph(_)), "expected Graph error for self-loop, got: {err:?}");
+        assert!(
+            matches!(err, AgentSpecError::Graph(_)),
+            "expected Graph error for self-loop, got: {err:?}"
+        );
     }
 
     #[test]
@@ -1007,7 +1007,10 @@ mod tests {
             metadata: HashMap::new(),
         };
         let err = spec.validate().unwrap_err();
-        assert!(matches!(err, AgentSpecError::Graph(_)), "expected Graph error for empty graph, got: {err:?}");
+        assert!(
+            matches!(err, AgentSpecError::Graph(_)),
+            "expected Graph error for empty graph, got: {err:?}"
+        );
     }
 
     // --- PRD-004: Input/Output Contract tests ---
@@ -1094,18 +1097,24 @@ graph:
     #[test]
     fn validate_inputs_happy_path() {
         let mut schema = HashMap::new();
-        schema.insert("question".to_string(), InputFieldSpec {
-            field_type: InputType::Text,
-            required: true,
-            description: "Pregunta".to_string(),
-            default: None,
-        });
-        schema.insert("context".to_string(), InputFieldSpec {
-            field_type: InputType::Text,
-            required: false,
-            description: "Contexto".to_string(),
-            default: Some(serde_json::json!("default ctx")),
-        });
+        schema.insert(
+            "question".to_string(),
+            InputFieldSpec {
+                field_type: InputType::Text,
+                required: true,
+                description: "Pregunta".to_string(),
+                default: None,
+            },
+        );
+        schema.insert(
+            "context".to_string(),
+            InputFieldSpec {
+                field_type: InputType::Text,
+                required: false,
+                description: "Contexto".to_string(),
+                default: Some(serde_json::json!("default ctx")),
+            },
+        );
 
         let mut payload = HashMap::new();
         payload.insert("question".to_string(), serde_json::json!("hola"));
@@ -1118,12 +1127,15 @@ graph:
     #[test]
     fn validate_inputs_missing_required() {
         let mut schema = HashMap::new();
-        schema.insert("question".to_string(), InputFieldSpec {
-            field_type: InputType::Text,
-            required: true,
-            description: "Pregunta del usuario".to_string(),
-            default: None,
-        });
+        schema.insert(
+            "question".to_string(),
+            InputFieldSpec {
+                field_type: InputType::Text,
+                required: true,
+                description: "Pregunta del usuario".to_string(),
+                default: None,
+            },
+        );
 
         let payload = HashMap::new(); // empty
         let errors = validate_agent_inputs(&payload, &schema).unwrap_err();
@@ -1136,12 +1148,15 @@ graph:
     #[test]
     fn validate_inputs_type_mismatch() {
         let mut schema = HashMap::new();
-        schema.insert("question".to_string(), InputFieldSpec {
-            field_type: InputType::Text,
-            required: true,
-            description: String::new(),
-            default: None,
-        });
+        schema.insert(
+            "question".to_string(),
+            InputFieldSpec {
+                field_type: InputType::Text,
+                required: true,
+                description: String::new(),
+                default: None,
+            },
+        );
 
         let mut payload = HashMap::new();
         payload.insert("question".to_string(), serde_json::json!(42)); // number, not text
@@ -1156,12 +1171,15 @@ graph:
     #[test]
     fn validate_inputs_extra_fields_allowed() {
         let mut schema = HashMap::new();
-        schema.insert("question".to_string(), InputFieldSpec {
-            field_type: InputType::Text,
-            required: true,
-            description: String::new(),
-            default: None,
-        });
+        schema.insert(
+            "question".to_string(),
+            InputFieldSpec {
+                field_type: InputType::Text,
+                required: true,
+                description: String::new(),
+                default: None,
+            },
+        );
 
         let mut payload = HashMap::new();
         payload.insert("question".to_string(), serde_json::json!("hola"));
@@ -1175,18 +1193,24 @@ graph:
     #[test]
     fn validate_inputs_multiple_errors() {
         let mut schema = HashMap::new();
-        schema.insert("question".to_string(), InputFieldSpec {
-            field_type: InputType::Text,
-            required: true,
-            description: String::new(),
-            default: None,
-        });
-        schema.insert("count".to_string(), InputFieldSpec {
-            field_type: InputType::Number,
-            required: true,
-            description: String::new(),
-            default: None,
-        });
+        schema.insert(
+            "question".to_string(),
+            InputFieldSpec {
+                field_type: InputType::Text,
+                required: true,
+                description: String::new(),
+                default: None,
+            },
+        );
+        schema.insert(
+            "count".to_string(),
+            InputFieldSpec {
+                field_type: InputType::Number,
+                required: true,
+                description: String::new(),
+                default: None,
+            },
+        );
 
         let payload = HashMap::new(); // empty — both required missing
         let errors = validate_agent_inputs(&payload, &schema).unwrap_err();
@@ -1245,12 +1269,18 @@ graph:
 
         // Verify to_graph() preserves them
         let graph = spec.to_graph(Some("test"));
-        let cond0 = graph.edges[0].condition.as_ref().expect("edge 0 must have condition");
+        let cond0 = graph.edges[0]
+            .condition
+            .as_ref()
+            .expect("edge 0 must have condition");
         assert_eq!(cond0.field, "priority");
         assert_eq!(cond0.op, ComparisonOp::Eq);
         assert_eq!(cond0.value, json!("high"));
 
-        let cond1 = graph.edges[1].condition.as_ref().expect("edge 1 must have condition");
+        let cond1 = graph.edges[1]
+            .condition
+            .as_ref()
+            .expect("edge 1 must have condition");
         assert_eq!(cond1.value, json!("low"));
     }
 
@@ -1411,8 +1441,14 @@ graph:
 "#;
         let spec = AgentSpec::from_yaml(yaml).unwrap();
         let graph = spec.to_graph(None);
-        assert!(graph.edges[0].condition.is_none(), "unconditional edge must stay None");
-        assert!(graph.edges[1].condition.is_some(), "conditional edge must be preserved");
+        assert!(
+            graph.edges[0].condition.is_none(),
+            "unconditional edge must stay None"
+        );
+        assert!(
+            graph.edges[1].condition.is_some(),
+            "conditional edge must be preserved"
+        );
         let cond = graph.edges[1].condition.as_ref().unwrap();
         assert_eq!(cond.field, "x");
         assert_eq!(cond.op, ComparisonOp::Eq);
@@ -1461,7 +1497,9 @@ graph:
       target: b
 "#;
         let err = AgentSpec::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("live agents require a schedule section"));
+        assert!(err
+            .to_string()
+            .contains("live agents require a schedule section"));
     }
 
     #[test]
@@ -1482,7 +1520,9 @@ graph:
       target: b
 "#;
         let err = AgentSpec::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("schedule is only valid for live agents"));
+        assert!(err
+            .to_string()
+            .contains("schedule is only valid for live agents"));
     }
 
     #[test]

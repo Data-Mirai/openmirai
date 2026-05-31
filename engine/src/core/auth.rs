@@ -66,10 +66,7 @@ static ROLE_PERMISSIONS: LazyLock<PermissionMatrix> = LazyLock::new(|| {
     owner.insert(Vector, HashSet::from([Read, Write, Crud, Schema]));
     owner.insert(Storage, HashSet::from([Read, Write, Crud, Schema]));
     owner.insert(Llm, HashSet::from([Use, Config]));
-    owner.insert(
-        Agents,
-        HashSet::from([View, Edit, Execute, Crud, Deploy]),
-    );
+    owner.insert(Agents, HashSet::from([View, Edit, Execute, Crud, Deploy]));
     m.insert(Role::Owner, owner);
 
     // ADMIN
@@ -78,10 +75,7 @@ static ROLE_PERMISSIONS: LazyLock<PermissionMatrix> = LazyLock::new(|| {
     admin.insert(Vector, HashSet::from([Read, Write, Crud]));
     admin.insert(Storage, HashSet::from([Read, Write, Crud]));
     admin.insert(Llm, HashSet::from([Use, Config]));
-    admin.insert(
-        Agents,
-        HashSet::from([View, Edit, Execute, Crud, Deploy]),
-    );
+    admin.insert(Agents, HashSet::from([View, Edit, Execute, Crud, Deploy]));
     m.insert(Role::Admin, admin);
 
     // EDITOR
@@ -118,7 +112,7 @@ impl PermissionEvaluator {
         ROLE_PERMISSIONS
             .get(&auth.role)
             .and_then(|res_map| res_map.get(&resource))
-            .map_or(false, |perms| perms.contains(&permission))
+            .is_some_and(|perms| perms.contains(&permission))
     }
 
     /// Require a specific permission, returning an error if denied.
@@ -202,14 +196,46 @@ mod tests {
     #[test]
     fn owner_can_do_everything() {
         let ctx = owner_ctx();
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Read));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Write));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Crud));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Schema));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Llm, Permission::Use));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Llm, Permission::Config));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Agents, Permission::Deploy));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Agents, Permission::Execute));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Read
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Write
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Crud
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Schema
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Llm,
+            Permission::Use
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Llm,
+            Permission::Config
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Agents,
+            Permission::Deploy
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Agents,
+            Permission::Execute
+        ));
     }
 
     // --- Viewer tests ---
@@ -217,31 +243,51 @@ mod tests {
     #[test]
     fn viewer_can_read_db() {
         let ctx = viewer_ctx();
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Read));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Read
+        ));
     }
 
     #[test]
     fn viewer_cannot_write_db() {
         let ctx = viewer_ctx();
-        assert!(!PermissionEvaluator::can(&ctx, Resource::Db, Permission::Write));
+        assert!(!PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Write
+        ));
     }
 
     #[test]
     fn viewer_cannot_use_llm() {
         let ctx = viewer_ctx();
-        assert!(!PermissionEvaluator::can(&ctx, Resource::Llm, Permission::Use));
+        assert!(!PermissionEvaluator::can(
+            &ctx,
+            Resource::Llm,
+            Permission::Use
+        ));
     }
 
     #[test]
     fn viewer_can_view_agents() {
         let ctx = viewer_ctx();
-        assert!(PermissionEvaluator::can(&ctx, Resource::Agents, Permission::View));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Agents,
+            Permission::View
+        ));
     }
 
     #[test]
     fn viewer_cannot_execute_agents() {
         let ctx = viewer_ctx();
-        assert!(!PermissionEvaluator::can(&ctx, Resource::Agents, Permission::Execute));
+        assert!(!PermissionEvaluator::can(
+            &ctx,
+            Resource::Agents,
+            Permission::Execute
+        ));
     }
 
     // --- Editor tests ---
@@ -249,27 +295,51 @@ mod tests {
     #[test]
     fn editor_can_read_write_db() {
         let ctx = editor_ctx();
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Read));
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Write));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Read
+        ));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Write
+        ));
     }
 
     #[test]
     fn editor_cannot_crud_db() {
         let ctx = editor_ctx();
-        assert!(!PermissionEvaluator::can(&ctx, Resource::Db, Permission::Crud));
+        assert!(!PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Crud
+        ));
     }
 
     #[test]
     fn editor_can_use_llm_but_not_config() {
         let ctx = editor_ctx();
-        assert!(PermissionEvaluator::can(&ctx, Resource::Llm, Permission::Use));
-        assert!(!PermissionEvaluator::can(&ctx, Resource::Llm, Permission::Config));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Llm,
+            Permission::Use
+        ));
+        assert!(!PermissionEvaluator::can(
+            &ctx,
+            Resource::Llm,
+            Permission::Config
+        ));
     }
 
     #[test]
     fn editor_cannot_deploy_agents() {
         let ctx = editor_ctx();
-        assert!(!PermissionEvaluator::can(&ctx, Resource::Agents, Permission::Deploy));
+        assert!(!PermissionEvaluator::can(
+            &ctx,
+            Resource::Agents,
+            Permission::Deploy
+        ));
     }
 
     // --- Admin tests ---
@@ -277,14 +347,26 @@ mod tests {
     #[test]
     fn admin_can_crud_but_not_schema() {
         let ctx = admin_ctx();
-        assert!(PermissionEvaluator::can(&ctx, Resource::Db, Permission::Crud));
-        assert!(!PermissionEvaluator::can(&ctx, Resource::Db, Permission::Schema));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Crud
+        ));
+        assert!(!PermissionEvaluator::can(
+            &ctx,
+            Resource::Db,
+            Permission::Schema
+        ));
     }
 
     #[test]
     fn admin_can_deploy_agents() {
         let ctx = admin_ctx();
-        assert!(PermissionEvaluator::can(&ctx, Resource::Agents, Permission::Deploy));
+        assert!(PermissionEvaluator::can(
+            &ctx,
+            Resource::Agents,
+            Permission::Deploy
+        ));
     }
 
     // --- require() tests ---

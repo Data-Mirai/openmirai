@@ -9,7 +9,6 @@ use async_trait::async_trait;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
-
 use crate::core::context::{ResourceError, VectorResource, VectorSearchResult};
 
 /// Text-based search resource backed by SQLite FTS5.
@@ -54,9 +53,8 @@ END;
 impl SimpleVectorResource {
     /// Open (or create) a vector store backed by SQLite at `path`.
     pub fn new(path: &str) -> Result<Self, ResourceError> {
-        let conn = Connection::open(path).map_err(|e| {
-            ResourceError::Other(format!("failed to open vector store: {e}"))
-        })?;
+        let conn = Connection::open(path)
+            .map_err(|e| ResourceError::Other(format!("failed to open vector store: {e}")))?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL;")
             .map_err(|e| ResourceError::Other(format!("PRAGMA failed: {e}")))?;
@@ -90,12 +88,7 @@ impl SimpleVectorResource {
 
 #[async_trait]
 impl VectorResource for SimpleVectorResource {
-    async fn upsert(
-        &self,
-        id: &str,
-        text: &str,
-        metadata: Value,
-    ) -> Result<(), ResourceError> {
+    async fn upsert(&self, id: &str, text: &str, metadata: Value) -> Result<(), ResourceError> {
         let conn = Arc::clone(&self.conn);
         let id = id.to_string();
         let text = text.to_string();
@@ -153,19 +146,20 @@ impl VectorResource for SimpleVectorResource {
                     let id: String = row.get(0).unwrap_or_default();
                     let metadata_json: String = row.get(1).unwrap_or_else(|_| "{}".into());
                     let rank: f64 = row.get(2).unwrap_or(0.0);
-                    let metadata: Value =
-                        serde_json::from_str(&metadata_json).unwrap_or(json!({}));
+                    let metadata: Value = serde_json::from_str(&metadata_json).unwrap_or(json!({}));
                     // FTS5 rank is negative (lower = better). Normalize to 0..1 range.
                     let score = (-rank).max(0.0);
-                    Ok(VectorSearchResult { id, score, metadata })
+                    Ok(VectorSearchResult {
+                        id,
+                        score,
+                        metadata,
+                    })
                 })
                 .map_err(|e| ResourceError::Other(format!("query failed: {e}")))?;
 
             let mut results = Vec::new();
             for row in rows {
-                results.push(
-                    row.map_err(|e| ResourceError::Other(format!("row read: {e}")))?,
-                );
+                results.push(row.map_err(|e| ResourceError::Other(format!("row read: {e}")))?);
             }
             Ok(results)
         })
@@ -201,15 +195,27 @@ mod tests {
         let store = SimpleVectorResource::new_in_memory().unwrap();
 
         store
-            .upsert("doc-1", "Rust is a systems programming language", json!({"source": "wiki"}))
+            .upsert(
+                "doc-1",
+                "Rust is a systems programming language",
+                json!({"source": "wiki"}),
+            )
             .await
             .unwrap();
         store
-            .upsert("doc-2", "Python is great for data science", json!({"source": "blog"}))
+            .upsert(
+                "doc-2",
+                "Python is great for data science",
+                json!({"source": "blog"}),
+            )
             .await
             .unwrap();
         store
-            .upsert("doc-3", "Rust and Python can work together via PyO3", json!({}))
+            .upsert(
+                "doc-3",
+                "Rust and Python can work together via PyO3",
+                json!({}),
+            )
             .await
             .unwrap();
 
@@ -270,7 +276,11 @@ mod tests {
         let store = SimpleVectorResource::new_in_memory().unwrap();
         for i in 0..10 {
             store
-                .upsert(&format!("doc-{i}"), &format!("keyword content {i}"), json!({}))
+                .upsert(
+                    &format!("doc-{i}"),
+                    &format!("keyword content {i}"),
+                    json!({}),
+                )
                 .await
                 .unwrap();
         }

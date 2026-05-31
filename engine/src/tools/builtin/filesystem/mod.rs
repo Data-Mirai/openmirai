@@ -51,6 +51,12 @@ macro_rules! fs_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -62,33 +68,32 @@ macro_rules! fs_tool {
     };
 }
 
-
-pub mod read_file;
-pub mod write_file;
-pub mod list_dir;
+pub mod copy;
+pub mod delete;
+pub mod edit_file;
+pub mod file_info;
 pub mod glob_files;
 pub mod grep_files;
-pub mod edit_file;
-pub mod copy;
-pub mod move_file;
-pub mod delete;
+pub mod list_dir;
 pub mod mkdir;
+pub mod move_file;
+pub mod read_file;
 pub mod tree;
-pub mod file_info;
+pub mod write_file;
 
 // Re-export tool structs for tests and backward compat.
-pub use read_file::*;
-pub use write_file::*;
-pub use list_dir::*;
+pub use copy::*;
+pub use delete::*;
+pub use edit_file::*;
+pub use file_info::*;
 pub use glob_files::*;
 pub use grep_files::*;
-pub use edit_file::*;
-pub use copy::*;
-pub use move_file::*;
-pub use delete::*;
+pub use list_dir::*;
 pub use mkdir::*;
+pub use move_file::*;
+pub use read_file::*;
 pub use tree::*;
-pub use file_info::*;
+pub use write_file::*;
 
 pub fn register_filesystem_tools(registry: &mut ToolRegistry) {
     // Canonical names (match Python: filesystem/*)
@@ -146,10 +151,7 @@ mod tests {
 
         let tool = ReadFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         let config = HashMap::new();
         let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
@@ -172,10 +174,7 @@ mod tests {
 
         let tool = ReadFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         let mut config = HashMap::new();
         config.insert("offset".to_string(), json!(2));
         config.insert("limit".to_string(), json!(3));
@@ -205,10 +204,7 @@ mod tests {
 
         let tool = WriteFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         inputs.insert("content".to_string(), json!("hello world"));
         let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
@@ -224,10 +220,7 @@ mod tests {
 
         let tool = WriteFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         inputs.insert("content".to_string(), json!("deep"));
         let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
@@ -247,16 +240,16 @@ mod tests {
 
         let tool = ListDirTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(dir.path().display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(dir.path().display().to_string()));
         let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         // Hidden excluded by default
         assert_eq!(result["count"], json!(3));
         let entries = result["entries"].as_array().unwrap();
-        let names: Vec<&str> = entries.iter().map(|e| e["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = entries
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
         assert!(names.contains(&"a.txt"));
         assert!(names.contains(&"subdir"));
         assert!(!names.contains(&".hidden"));
@@ -270,10 +263,7 @@ mod tests {
 
         let tool = ListDirTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(dir.path().display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(dir.path().display().to_string()));
         let mut config = HashMap::new();
         config.insert("show_hidden".to_string(), json!(true));
         let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
@@ -294,10 +284,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("pattern".to_string(), json!("*.rs"));
         let mut config = HashMap::new();
-        config.insert(
-            "path".to_string(),
-            json!(dir.path().display().to_string()),
-        );
+        config.insert("path".to_string(), json!(dir.path().display().to_string()));
         let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["count"], json!(2));
@@ -313,16 +300,10 @@ mod tests {
 
         let tool = EditFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         inputs.insert("old_string".to_string(), json!("hello"));
         inputs.insert("new_string".to_string(), json!("goodbye"));
-        let result = tool
-            .execute(inputs, &HashMap::new(), &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["replacements"], json!(1));
         assert_eq!(fs::read_to_string(&file_path).unwrap(), "goodbye world");
@@ -336,10 +317,7 @@ mod tests {
 
         let tool = EditFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         inputs.insert("old_string".to_string(), json!("aaa"));
         inputs.insert("new_string".to_string(), json!("ccc"));
         let mut config = HashMap::new();
@@ -358,10 +336,7 @@ mod tests {
 
         let tool = EditFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         inputs.insert("old_string".to_string(), json!("aaa"));
         inputs.insert("new_string".to_string(), json!("ccc"));
         let result = tool.execute(inputs, &HashMap::new(), &ctx()).await;
@@ -376,10 +351,7 @@ mod tests {
 
         let tool = EditFileTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "path".to_string(),
-            json!(file_path.display().to_string()),
-        );
+        inputs.insert("path".to_string(), json!(file_path.display().to_string()));
         inputs.insert("old_string".to_string(), json!("xyz"));
         inputs.insert("new_string".to_string(), json!("abc"));
         let result = tool.execute(inputs, &HashMap::new(), &ctx()).await;
@@ -391,17 +363,18 @@ mod tests {
     #[tokio::test]
     async fn grep_files_basic() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("a.txt"), "hello world\nfoo bar\nhello again").unwrap();
+        fs::write(
+            dir.path().join("a.txt"),
+            "hello world\nfoo bar\nhello again",
+        )
+        .unwrap();
         fs::write(dir.path().join("b.txt"), "nothing here").unwrap();
 
         let tool = GrepFilesTool;
         let mut inputs = HashMap::new();
         inputs.insert("pattern".to_string(), json!("hello"));
         let mut config = HashMap::new();
-        config.insert(
-            "path".to_string(),
-            json!(dir.path().display().to_string()),
-        );
+        config.insert("path".to_string(), json!(dir.path().display().to_string()));
         let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 
         assert_eq!(result["count"], json!(2));
@@ -418,10 +391,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("pattern".to_string(), json!("HELLO"));
         let mut config = HashMap::new();
-        config.insert(
-            "path".to_string(),
-            json!(dir.path().display().to_string()),
-        );
+        config.insert("path".to_string(), json!(dir.path().display().to_string()));
         config.insert("case_insensitive".to_string(), json!(true));
         let result = tool.execute(inputs, &config, &ctx()).await.unwrap();
 

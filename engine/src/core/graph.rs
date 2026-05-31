@@ -72,9 +72,20 @@ impl<'de> serde::Deserialize<'de> for ComparisonOp {
             other => Err(serde::de::Error::unknown_variant(
                 other,
                 &[
-                    "equals", "not_equals", "greater_than", "less_than",
-                    "greater_or_equal", "less_or_equal", "in", "contains",
-                    "eq", "neq", "gt", "lt", "gte", "lte",
+                    "equals",
+                    "not_equals",
+                    "greater_than",
+                    "less_than",
+                    "greater_or_equal",
+                    "less_or_equal",
+                    "in",
+                    "contains",
+                    "eq",
+                    "neq",
+                    "gt",
+                    "lt",
+                    "gte",
+                    "lte",
                 ],
             )),
         }
@@ -154,6 +165,7 @@ impl GraphDef {
     /// - No duplicate edge IDs
     /// - All edge sources/targets reference existing nodes
     /// - No self-loops
+    ///
     /// Auto-generate IDs for edges that have empty `id` fields (FEAT-034 / API-02).
     /// Format: `{source}__{target}` or `{source}__{target}__{n}` for duplicates.
     pub fn auto_generate_edge_ids(&mut self) {
@@ -228,10 +240,7 @@ impl GraphDef {
 
     /// Return all edges whose source matches `node_id`.
     pub fn outgoing_edges(&self, node_id: &str) -> Vec<&EdgeDef> {
-        self.edges
-            .iter()
-            .filter(|e| e.source == node_id)
-            .collect()
+        self.edges.iter().filter(|e| e.source == node_id).collect()
     }
 }
 
@@ -370,10 +379,7 @@ mod tests {
             id: "g".into(),
             name: "auto".into(),
             version: "1.0.0".into(),
-            nodes: vec![
-                make_node("a", "x"),
-                make_node("b", "y"),
-            ],
+            nodes: vec![make_node("a", "x"), make_node("b", "y")],
             edges: vec![EdgeDef {
                 id: String::new(), // empty = auto-gen
                 source: "a".into(),
@@ -393,10 +399,7 @@ mod tests {
             id: "g".into(),
             name: "collision".into(),
             version: "1.0.0".into(),
-            nodes: vec![
-                make_node("a", "x"),
-                make_node("b", "y"),
-            ],
+            nodes: vec![make_node("a", "x"), make_node("b", "y")],
             edges: vec![
                 EdgeDef {
                     id: String::new(),

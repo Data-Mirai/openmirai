@@ -63,10 +63,12 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     }
 }
 
+/// (id, embedding, content, metadata) for one stored document.
+type VectorDocument = (String, Vec<f64>, String, HashMap<String, Value>);
+
 /// In-memory vector search using brute-force cosine similarity.
 pub struct InMemoryVectorProvider {
-    /// (id, embedding, content, metadata)
-    documents: Vec<(String, Vec<f64>, String, HashMap<String, Value>)>,
+    documents: Vec<VectorDocument>,
 }
 
 impl InMemoryVectorProvider {
@@ -119,7 +121,11 @@ impl VectorSearchProvider for InMemoryVectorProvider {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored.truncate(limit);
 
         if scored.is_empty() {

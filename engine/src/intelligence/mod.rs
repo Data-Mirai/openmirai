@@ -13,4 +13,4 @@ pub use memory_flusher::MemoryFlusher;
 pub use playbook::{Playbook, PlaybookRule};
 pub use reflector::{Reflection, Reflector};
 pub use suggester::{Suggester, Suggestion, SuggestionType};
-pub use tracer::{ExecutionTracer, TokenUsage, TraceSummary, TraceRecord};
+pub use tracer::{ExecutionTracer, TokenUsage, TraceRecord, TraceSummary};

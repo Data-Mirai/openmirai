@@ -35,8 +35,7 @@ impl OpenAICompatAdapter {
     /// Build a new adapter.
     ///
     /// * `api_key`        – Bearer token for the provider.
-    /// * `base_url`       – Root URL **including** the `/v1` prefix for providers
-    ///                      that need it (e.g. `https://api.groq.com/openai/v1`).
+    /// * `base_url`       – Root URL **including** the `/v1` prefix for providers that need it (e.g. `https://api.groq.com/openai/v1`).
     /// * `provider`       – Logical name (`"openai"`, `"groq"`, ...).
     /// * `default_model`  – Fallback model if caller does not specify one.
     /// * `extra_headers`  – Additional per-request headers (e.g. OpenRouter referrer).
@@ -87,10 +86,9 @@ impl OpenAICompatAdapter {
         map.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         for (k, v) in &self.extra_headers {
-            if let (Ok(name), Ok(val)) = (
-                HeaderName::try_from(k.as_str()),
-                HeaderValue::from_str(v),
-            ) {
+            if let (Ok(name), Ok(val)) =
+                (HeaderName::try_from(k.as_str()), HeaderValue::from_str(v))
+            {
                 map.insert(name, val);
             }
         }
@@ -150,7 +148,6 @@ impl OpenAICompatAdapter {
             })
             .collect()
     }
-
 }
 
 // ---------------------------------------------------------------------------

@@ -76,8 +76,10 @@ impl Tool for MoveTool {
 
         let mut out = HashMap::new();
         out.insert("source".to_string(), json!(src_path.display().to_string()));
-        out.insert("destination".to_string(), json!(abs_dest.display().to_string()));
+        out.insert(
+            "destination".to_string(),
+            json!(abs_dest.display().to_string()),
+        );
         Ok(out)
     }
 }
-

@@ -49,6 +49,12 @@ macro_rules! system_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -245,10 +251,7 @@ impl Tool for BashTool {
                     None => continue,
                 };
                 // Sanitize name for output key: "result.png" → "file_result_png"
-                let key = format!(
-                    "file_{}",
-                    file_name.replace('.', "_").replace('/', "_").replace(' ', "_")
-                );
+                let key = format!("file_{}", file_name.replace(['.', '/', ' '], "_"));
 
                 // Search for the file in cwd and scratch dir.
                 let mut found = false;
@@ -305,10 +308,7 @@ impl Tool for ProcessListTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let filter = config
-            .get("filter")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let filter = config.get("filter").and_then(|v| v.as_str()).unwrap_or("");
 
         let output = Command::new("ps")
             .args(["aux"])
@@ -397,13 +397,12 @@ impl Tool for SandboxExecTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let code = inputs
-            .get("code")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let code = inputs.get("code").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "system/sandbox_exec".into(),
                 message: "input 'code' is required".into(),
-            })?;
+            }
+        })?;
 
         let lang_str = inputs
             .get("language")
@@ -417,15 +416,26 @@ impl Tool for SandboxExecTool {
             other => {
                 return Err(ToolError::ExecutionFailed {
                     tool_type: "system/sandbox_exec".into(),
-                    message: format!("Unsupported language: '{other}'. Use: python, javascript, bash"),
+                    message: format!(
+                        "Unsupported language: '{other}'. Use: python, javascript, bash"
+                    ),
                 })
             }
         };
 
         let sandbox_config = crate::sandbox::SandboxConfig {
-            max_time_ms: config.get("max_time_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
-            max_memory_mb: config.get("max_memory_mb").and_then(|v| v.as_u64()).unwrap_or(256),
-            network_access: config.get("network_access").and_then(|v| v.as_bool()).unwrap_or(false),
+            max_time_ms: config
+                .get("max_time_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30_000),
+            max_memory_mb: config
+                .get("max_memory_mb")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(256),
+            network_access: config
+                .get("network_access")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             ..Default::default()
         };
 
@@ -529,10 +539,7 @@ mod tests {
     async fn bash_stderr() {
         let tool = BashTool;
         let mut inputs = HashMap::new();
-        inputs.insert(
-            "command".to_string(),
-            json!("echo err >&2 && exit 1"),
-        );
+        inputs.insert("command".to_string(), json!("echo err >&2 && exit 1"));
         let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
 
         assert_eq!(result["exit_code"], json!(1));

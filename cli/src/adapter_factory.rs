@@ -7,11 +7,7 @@ use openmirai_engine::llm::{LLMAdapter, OllamaAdapter, OpenAICompatAdapter};
 /// Create the right adapter for the given provider string.
 ///
 /// Returns a boxed trait object that the terminal can use for any provider.
-pub fn create_adapter(
-    provider: &str,
-    api_key: &str,
-    base_url: &str,
-) -> Box<dyn LLMAdapter> {
+pub fn create_adapter(provider: &str, api_key: &str, base_url: &str) -> Box<dyn LLMAdapter> {
     match provider {
         "ollama" => {
             let url = if base_url.is_empty() {

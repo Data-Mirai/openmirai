@@ -47,6 +47,12 @@ macro_rules! logic_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -412,10 +418,7 @@ impl Tool for DeadlineTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let hours = config
-            .get("hours")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(48.0);
+        let hours = config.get("hours").and_then(|v| v.as_f64()).unwrap_or(48.0);
 
         // Determine reference time: input > config > now
         let ref_time_str = inputs
@@ -441,7 +444,8 @@ impl Tool for DeadlineTool {
             None => now,
         };
 
-        let deadline_at = ref_time + chrono::Duration::milliseconds((hours * 3600.0 * 1000.0) as i64);
+        let deadline_at =
+            ref_time + chrono::Duration::milliseconds((hours * 3600.0 * 1000.0) as i64);
         let remaining_secs = (deadline_at - now).num_milliseconds() as f64 / 1000.0;
         let remaining_hours = remaining_secs / 3600.0;
         let expired = remaining_hours <= 0.0;
@@ -452,10 +456,7 @@ impl Tool for DeadlineTool {
             "remaining_hours".to_string(),
             json!((remaining_hours * 100.0).round() / 100.0),
         );
-        out.insert(
-            "deadline_at".to_string(),
-            json!(deadline_at.to_rfc3339()),
-        );
+        out.insert("deadline_at".to_string(), json!(deadline_at.to_rfc3339()));
         Ok(out)
     }
 }
@@ -535,17 +536,21 @@ mod tests {
             "in",
             &json!(["a", "b", "c"])
         ));
-        assert!(!evaluate_condition(
-            &json!("z"),
-            "in",
-            &json!(["a", "b"])
-        ));
+        assert!(!evaluate_condition(&json!("z"), "in", &json!(["a", "b"])));
     }
 
     #[test]
     fn condition_contains_string() {
-        assert!(evaluate_condition(&json!("hello world"), "contains", &json!("world")));
-        assert!(!evaluate_condition(&json!("hello"), "contains", &json!("xyz")));
+        assert!(evaluate_condition(
+            &json!("hello world"),
+            "contains",
+            &json!("world")
+        ));
+        assert!(!evaluate_condition(
+            &json!("hello"),
+            "contains",
+            &json!("xyz")
+        ));
     }
 
     #[test]

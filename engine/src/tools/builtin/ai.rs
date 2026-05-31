@@ -48,6 +48,12 @@ macro_rules! ai_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -226,10 +232,7 @@ impl Tool for LlmCallTool {
         };
 
         // --- Prepare LLM call params ---
-        let model = config
-            .get("model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let model = config.get("model").and_then(|v| v.as_str()).unwrap_or("");
         let temperature = config
             .get("temperature")
             .and_then(|v| v.as_f64())
@@ -255,10 +258,12 @@ impl Tool for LlmCallTool {
         };
         if !media_path.is_empty() {
             let provider_name = context.llm().provider_name();
-            let media = crate::llm::media::read_media_file(&media_path, &provider_name)
-                .map_err(|e| ToolError::ExecutionFailed {
-                    tool_type: "ai/llm_call".into(),
-                    message: e,
+            let media =
+                crate::llm::media::read_media_file(&media_path, provider_name).map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/llm_call".into(),
+                        message: e,
+                    }
                 })?;
             info!(
                 media_path = %media_path,
@@ -278,7 +283,13 @@ impl Tool for LlmCallTool {
         for attempt in 0..=max_retries {
             let result = context
                 .llm()
-                .call(model, &current_prompt, &context_messages, temperature, max_tokens)
+                .call(
+                    model,
+                    &current_prompt,
+                    &context_messages,
+                    temperature,
+                    max_tokens,
+                )
                 .await
                 .map_err(|e| ToolError::ExecutionFailed {
                     tool_type: "ai/llm_call".into(),
@@ -306,15 +317,17 @@ impl Tool for LlmCallTool {
             let schema = output_schema.as_ref().unwrap();
             let (parsed, errors) = validate_response(&last_response, schema);
 
-            if parsed.is_some() && errors.is_empty() {
-                let mut out = HashMap::new();
-                out.insert("response".to_string(), json!(last_response));
-                out.insert("model".to_string(), json!(used_model));
-                out.insert("tokens_input".to_string(), json!(last_tokens_input));
-                out.insert("tokens_output".to_string(), json!(last_tokens_output));
-                out.insert("structured_output".to_string(), parsed.unwrap());
-                out.insert("schema_valid".to_string(), json!(true));
-                return Ok(out);
+            if let Some(parsed_value) = &parsed {
+                if errors.is_empty() {
+                    let mut out = HashMap::new();
+                    out.insert("response".to_string(), json!(last_response));
+                    out.insert("model".to_string(), json!(used_model));
+                    out.insert("tokens_input".to_string(), json!(last_tokens_input));
+                    out.insert("tokens_output".to_string(), json!(last_tokens_output));
+                    out.insert("structured_output".to_string(), parsed_value.clone());
+                    out.insert("schema_valid".to_string(), json!(true));
+                    return Ok(out);
+                }
             }
 
             // --- Retry with error feedback ---
@@ -325,8 +338,7 @@ impl Tool for LlmCallTool {
                     errors = ?errors,
                     "output_schema validation failed, retrying"
                 );
-                current_prompt =
-                    build_retry_prompt(&effective_prompt, &last_response, &errors);
+                current_prompt = build_retry_prompt(&effective_prompt, &last_response, &errors);
             }
         }
 
@@ -396,27 +408,27 @@ impl Tool for EmbeddingsTool {
         config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let text = inputs
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let text = inputs.get("text").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "ai/embeddings".into(),
                 message: "input 'text' is required".into(),
-            })?;
+            }
+        })?;
 
         let model = config
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
 
-        let embedding = context
-            .llm()
-            .embed(text, model)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                tool_type: "ai/embeddings".into(),
-                message: e.to_string(),
-            })?;
+        let embedding =
+            context
+                .llm()
+                .embed(text, model)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/embeddings".into(),
+                    message: e.to_string(),
+                })?;
 
         let dimensions = embedding.len();
 
@@ -473,8 +485,12 @@ fn format_session_context(data: &HashMap<String, Value>, max_length: usize) -> S
                             to = cap,
                             "truncating session context key"
                         );
-                        let truncated =
-                            format!("{}\n[... truncated {} -> {} chars]", &value[..cap], value.len(), cap);
+                        let truncated = format!(
+                            "{}\n[... truncated {} -> {} chars]",
+                            &value[..cap],
+                            value.len(),
+                            cap
+                        );
                         (key, truncated)
                     } else {
                         (key, value)
@@ -524,8 +540,7 @@ fn parse_output_schema(raw: Option<&Value>) -> Option<Value> {
 
 /// Prepend/append JSON schema instructions to the prompt.
 fn enrich_prompt_with_schema(prompt: &str, schema: &Value) -> String {
-    let schema_str =
-        serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
+    let schema_str = serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string());
     format!(
         "{}\n\n\
          === OUTPUT FORMAT (MANDATORY) ===\n\
@@ -597,7 +612,10 @@ fn validate_response(response: &str, schema: &Value) -> (Option<Value>, Vec<Stri
             Value::Null => "null",
             _ => "unknown",
         };
-        return (Some(parsed), vec![format!("Expected JSON object, got {}", type_name)]);
+        return (
+            Some(parsed),
+            vec![format!("Expected JSON object, got {}", type_name)],
+        );
     }
 
     let obj = parsed.as_object().unwrap();
@@ -663,7 +681,11 @@ use crate::core::value_type::value_type_label as json_type_name;
 
 /// Build a retry prompt with error feedback.
 fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[String]) -> String {
-    let error_list: String = errors.iter().map(|e| format!("- {}", e)).collect::<Vec<_>>().join("\n");
+    let error_list: String = errors
+        .iter()
+        .map(|e| format!("- {}", e))
+        .collect::<Vec<_>>()
+        .join("\n");
     let truncated_response = if bad_response.len() > 500 {
         &bad_response[..500]
     } else {
@@ -710,12 +732,13 @@ impl Tool for TranscribeTool {
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         // PRD-010: resolve file_path — accepts both String paths and FileRef objects.
-        let file_path_value = inputs
-            .get("file_path")
-            .ok_or_else(|| ToolError::ExecutionFailed {
-                tool_type: "ai/transcribe".into(),
-                message: "input 'file_path' is required".into(),
-            })?;
+        let file_path_value =
+            inputs
+                .get("file_path")
+                .ok_or_else(|| ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: "input 'file_path' is required".into(),
+                })?;
         let file_path = crate::llm::media::resolve_file_input(file_path_value);
         if file_path.is_empty() {
             return Err(ToolError::ExecutionFailed {
@@ -731,11 +754,12 @@ impl Tool for TranscribeTool {
 
         // PRD-009: Read the audio file and send as multimodal content.
         let provider_name = context.llm().provider_name();
-        let media = crate::llm::media::read_media_file(&file_path, &provider_name)
-            .map_err(|e| ToolError::ExecutionFailed {
+        let media = crate::llm::media::read_media_file(&file_path, provider_name).map_err(|e| {
+            ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),
                 message: e,
-            })?;
+            }
+        })?;
 
         info!(
             file_path = %file_path,
@@ -810,7 +834,8 @@ impl Tool for ClaudeCodeTool {
         use std::time::Instant;
         use tokio::process::Command;
 
-        let prompt = inputs.get("prompt")
+        let prompt = inputs
+            .get("prompt")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -822,28 +847,32 @@ impl Tool for ClaudeCodeTool {
             });
         }
 
-        let context = inputs.get("context")
+        let context = inputs
+            .get("context")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        let system_prompt = config.get("system_prompt")
+        let system_prompt = config
+            .get("system_prompt")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        let timeout_ms = config.get("timeout_ms")
+        let timeout_ms = config
+            .get("timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(60_000);
 
-        let max_tokens = config.get("max_tokens")
-            .and_then(|v| v.as_u64());
+        let max_tokens = config.get("max_tokens").and_then(|v| v.as_u64());
 
-        let model = config.get("model")
+        let model = config
+            .get("model")
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let cli_path = config.get("cli_path")
+        let cli_path = config
+            .get("cli_path")
             .and_then(|v| v.as_str())
             .map(String::from);
 
@@ -924,7 +953,11 @@ impl Tool for ClaudeCodeTool {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(ToolError::ExecutionFailed {
                 tool_type: "ai/claude_code".into(),
-                message: format!("claude CLI exited with {}: {}", output.status, stderr.trim()),
+                message: format!(
+                    "claude CLI exited with {}: {}",
+                    output.status,
+                    stderr.trim()
+                ),
             });
         }
 
@@ -936,7 +969,10 @@ impl Tool for ClaudeCodeTool {
 
         let mut out = HashMap::new();
         out.insert("response".to_string(), json!(response));
-        out.insert("model".to_string(), json!(model.unwrap_or_else(|| "claude-cli-default".into())));
+        out.insert(
+            "model".to_string(),
+            json!(model.unwrap_or_else(|| "claude-cli-default".into())),
+        );
         out.insert("duration_ms".to_string(), json!(elapsed_ms));
         out.insert("tokens_input".to_string(), json!(tokens_in));
         out.insert("tokens_output".to_string(), json!(tokens_out));
@@ -956,7 +992,11 @@ impl Tool for ClaudeCodeTool {
 /// Detect the Claude Code CLI binary in $PATH.
 fn detect_claude_cli() -> Result<String, String> {
     // Check common locations.
-    for candidate in &["claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"] {
+    for candidate in &[
+        "claude",
+        "/opt/homebrew/bin/claude",
+        "/usr/local/bin/claude",
+    ] {
         if let Ok(output) = std::process::Command::new(candidate)
             .arg("--version")
             .output()

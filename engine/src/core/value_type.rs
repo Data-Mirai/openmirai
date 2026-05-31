@@ -55,7 +55,10 @@ impl<'de> Deserialize<'de> for ValueType {
             "file" => Ok(ValueType::File),
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["text", "string", "number", "integer", "boolean", "array", "object", "json", "file"],
+                &[
+                    "text", "string", "number", "integer", "boolean", "array", "object", "json",
+                    "file",
+                ],
             )),
         }
     }
@@ -215,7 +218,12 @@ mod tests {
 
         let schema = vec![
             ("name".to_string(), ValueType::Text, true, None),
-            ("count".to_string(), ValueType::Number, false, Some(json!(10))),
+            (
+                "count".to_string(),
+                ValueType::Number,
+                false,
+                Some(json!(10)),
+            ),
         ];
 
         let result = validate_inputs(&inputs, &schema, "test").unwrap();

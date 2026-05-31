@@ -108,6 +108,15 @@ pub struct EnergyRecorder<S: RateStore> {
     balance_store: Option<Box<dyn BalanceStore>>,
 }
 
+/// Optional provenance for a recorded energy event.
+#[derive(Default, Clone, Copy)]
+pub struct RecordContext<'a> {
+    pub provider: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub session_id: Option<&'a str>,
+    pub node_id: Option<&'a str>,
+}
+
 impl<S: RateStore> EnergyRecorder<S> {
     pub fn new(calculator: EnergyCalculator<S>, event_store: Box<dyn EventStore>) -> Self {
         Self {
@@ -134,14 +143,17 @@ impl<S: RateStore> EnergyRecorder<S> {
         energy_type: EnergyType,
         quantity: f64,
         unit: QuantityUnit,
-        provider: Option<&str>,
-        model: Option<&str>,
-        session_id: Option<&str>,
-        node_id: Option<&str>,
+        ctx: RecordContext<'_>,
         metadata: HashMap<String, serde_json::Value>,
     ) -> Result<EnergyEvent, RecorderError> {
-        let total_cost = self.calculator.calculate(energy_type, quantity, unit, provider, model);
-        let rate_per_unit = if quantity > 0.0 { total_cost / quantity } else { 0.0 };
+        let total_cost =
+            self.calculator
+                .calculate(energy_type, quantity, unit, ctx.provider, ctx.model);
+        let rate_per_unit = if quantity > 0.0 {
+            total_cost / quantity
+        } else {
+            0.0
+        };
 
         let event = EnergyEvent {
             id: uuid::Uuid::new_v4().to_string(),
@@ -151,19 +163,19 @@ impl<S: RateStore> EnergyRecorder<S> {
             rate_per_unit,
             total_cost,
             cost_category: infer_cost_category(energy_type),
-            provider: provider.map(String::from),
-            model: model.map(String::from),
+            provider: ctx.provider.map(String::from),
+            model: ctx.model.map(String::from),
             metadata,
             timestamp: chrono::Utc::now().to_rfc3339(),
-            session_id: session_id.map(String::from),
-            node_id: node_id.map(String::from),
+            session_id: ctx.session_id.map(String::from),
+            node_id: ctx.node_id.map(String::from),
         };
 
         // Persist.
         self.event_store.save(&event).await?;
 
         // Deduct balance if a store is configured.
-        if let (Some(balance_store), Some(sid)) = (&self.balance_store, session_id) {
+        if let (Some(balance_store), Some(sid)) = (&self.balance_store, ctx.session_id) {
             if total_cost > 0.0 {
                 match balance_store.deduct(total_cost, sid).await {
                     Ok(_) => {}
@@ -182,9 +194,10 @@ impl<S: RateStore> EnergyRecorder<S> {
 fn infer_cost_category(energy_type: EnergyType) -> CostCategory {
     match energy_type {
         EnergyType::LlmCall | EnergyType::McpCall => CostCategory::ExternalService,
-        EnergyType::ToolExec | EnergyType::ComputeTime | EnergyType::StorageOp | EnergyType::DbOp => {
-            CostCategory::InternalInfra
-        }
+        EnergyType::ToolExec
+        | EnergyType::ComputeTime
+        | EnergyType::StorageOp
+        | EnergyType::DbOp => CostCategory::InternalInfra,
     }
 }
 
@@ -234,10 +247,12 @@ mod tests {
                 EnergyType::LlmCall,
                 1000.0,
                 QuantityUnit::TokensIn,
-                Some("openai"),
-                Some("gpt-4"),
-                Some("sess-1"),
-                Some("node-1"),
+                RecordContext {
+                    provider: Some("openai"),
+                    model: Some("gpt-4"),
+                    session_id: Some("sess-1"),
+                    node_id: Some("node-1"),
+                },
                 HashMap::new(),
             )
             .await
@@ -266,10 +281,7 @@ mod tests {
                 EnergyType::DbOp,
                 50.0,
                 QuantityUnit::Invocations,
-                None,
-                None,
-                None,
-                None,
+                RecordContext::default(),
                 HashMap::new(),
             )
             .await
@@ -314,10 +326,10 @@ mod tests {
                 EnergyType::LlmCall,
                 2000.0,
                 QuantityUnit::TokensIn,
-                None,
-                None,
-                Some("sess-42"),
-                None,
+                RecordContext {
+                    session_id: Some("sess-42"),
+                    ..Default::default()
+                },
                 HashMap::new(),
             )
             .await
@@ -354,10 +366,10 @@ mod tests {
                 EnergyType::StorageOp,
                 100.0,
                 QuantityUnit::Bytes,
-                None,
-                None,
-                Some("sess"),
-                None,
+                RecordContext {
+                    session_id: Some("sess"),
+                    ..Default::default()
+                },
                 HashMap::new(),
             )
             .await
@@ -368,12 +380,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_infer_cost_category() {
-        assert_eq!(infer_cost_category(EnergyType::LlmCall), CostCategory::ExternalService);
-        assert_eq!(infer_cost_category(EnergyType::McpCall), CostCategory::ExternalService);
-        assert_eq!(infer_cost_category(EnergyType::ToolExec), CostCategory::InternalInfra);
-        assert_eq!(infer_cost_category(EnergyType::ComputeTime), CostCategory::InternalInfra);
-        assert_eq!(infer_cost_category(EnergyType::StorageOp), CostCategory::InternalInfra);
-        assert_eq!(infer_cost_category(EnergyType::DbOp), CostCategory::InternalInfra);
+        assert_eq!(
+            infer_cost_category(EnergyType::LlmCall),
+            CostCategory::ExternalService
+        );
+        assert_eq!(
+            infer_cost_category(EnergyType::McpCall),
+            CostCategory::ExternalService
+        );
+        assert_eq!(
+            infer_cost_category(EnergyType::ToolExec),
+            CostCategory::InternalInfra
+        );
+        assert_eq!(
+            infer_cost_category(EnergyType::ComputeTime),
+            CostCategory::InternalInfra
+        );
+        assert_eq!(
+            infer_cost_category(EnergyType::StorageOp),
+            CostCategory::InternalInfra
+        );
+        assert_eq!(
+            infer_cost_category(EnergyType::DbOp),
+            CostCategory::InternalInfra
+        );
     }
 
     #[tokio::test]

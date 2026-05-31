@@ -9,7 +9,7 @@ use crate::core::context::ExecutionContext;
 use crate::core::graph::{GraphDef, NodeDef};
 use crate::core::state::SharedState;
 
-use super::types::{HookResult, ToolError, RunnerError, Checkpoint};
+use super::types::{Checkpoint, HookResult, RunnerError, ToolError};
 /// Seven interception points during graph execution.
 ///
 /// All methods have default implementations that return [`HookResult::Continue`],
@@ -38,11 +38,7 @@ use super::types::{HookResult, ToolError, RunnerError, Checkpoint};
 /// ```
 #[async_trait]
 pub trait HookHandler: Send + Sync {
-    async fn on_graph_start(
-        &self,
-        _graph: &GraphDef,
-        _ctx: &dyn ExecutionContext,
-    ) -> HookResult {
+    async fn on_graph_start(&self, _graph: &GraphDef, _ctx: &dyn ExecutionContext) -> HookResult {
         HookResult::Continue
     }
 
@@ -73,11 +69,7 @@ pub trait HookHandler: Send + Sync {
         HookResult::Continue
     }
 
-    async fn pre_llm_call(
-        &self,
-        _node: &NodeDef,
-        _ctx: &dyn ExecutionContext,
-    ) -> HookResult {
+    async fn pre_llm_call(&self, _node: &NodeDef, _ctx: &dyn ExecutionContext) -> HookResult {
         HookResult::Continue
     }
 

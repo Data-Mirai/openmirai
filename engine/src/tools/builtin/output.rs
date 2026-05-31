@@ -46,6 +46,12 @@ macro_rules! output_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -98,10 +104,7 @@ impl Tool for ResponseTool {
             .get("format")
             .and_then(|v| v.as_str())
             .unwrap_or("markdown");
-        let title = config
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let title = config.get("title").and_then(|v| v.as_str()).unwrap_or("");
 
         let result = if !template.is_empty() {
             apply_template(template, &raw_data)

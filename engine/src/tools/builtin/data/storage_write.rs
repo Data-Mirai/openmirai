@@ -30,18 +30,19 @@ impl Tool for StorageWriteTool {
         _config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let storage = context.storage().ok_or_else(|| ToolError::ExecutionFailed {
-            tool_type: "data/storage_write".into(),
-            message: "no storage resource configured".into(),
-        })?;
-
-        let path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
+        let storage = context
+            .storage()
             .ok_or_else(|| ToolError::ExecutionFailed {
                 tool_type: "data/storage_write".into(),
-                message: "input 'path' is required".into(),
+                message: "no storage resource configured".into(),
             })?;
+
+        let path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
+                tool_type: "data/storage_write".into(),
+                message: "input 'path' is required".into(),
+            }
+        })?;
 
         let content = inputs
             .get("content")
@@ -68,4 +69,3 @@ impl Tool for StorageWriteTool {
         Ok(out)
     }
 }
-

@@ -22,17 +22,11 @@ pub enum StreamEvent {
 
     /// A node started executing.
     #[serde(rename = "node.started")]
-    NodeStarted {
-        node_id: String,
-        tool_type: String,
-    },
+    NodeStarted { node_id: String, tool_type: String },
 
     /// A token from LLM streaming (partial text).
     #[serde(rename = "node.token")]
-    NodeToken {
-        node_id: String,
-        token: String,
-    },
+    NodeToken { node_id: String, token: String },
 
     /// A node completed successfully.
     #[serde(rename = "node.completed")]
@@ -60,10 +54,7 @@ pub enum StreamEvent {
 
     /// Fan-out completed.
     #[serde(rename = "fanout.completed")]
-    FanoutCompleted {
-        succeeded: usize,
-        failed: usize,
-    },
+    FanoutCompleted { succeeded: usize, failed: usize },
 
     /// Graph execution completed.
     #[serde(rename = "graph.completed")]
@@ -75,24 +66,49 @@ pub enum StreamEvent {
 
     /// Graph execution failed.
     #[serde(rename = "graph.error")]
-    GraphError {
-        error: String,
-    },
+    GraphError { error: String },
 }
 
 impl StreamEvent {
     /// Format as SSE text line: `event: <type>\ndata: <json>\n\n`
     pub fn to_sse(&self) -> String {
         let (event_name, data) = match self {
-            Self::GraphStarted { .. } => ("graph.started", serde_json::to_string(self).unwrap_or_default()),
-            Self::NodeStarted { .. } => ("node.started", serde_json::to_string(self).unwrap_or_default()),
-            Self::NodeToken { .. } => ("node.token", serde_json::to_string(self).unwrap_or_default()),
-            Self::NodeCompleted { .. } => ("node.completed", serde_json::to_string(self).unwrap_or_default()),
-            Self::NodeError { .. } => ("node.error", serde_json::to_string(self).unwrap_or_default()),
-            Self::FanoutStarted { .. } => ("fanout.started", serde_json::to_string(self).unwrap_or_default()),
-            Self::FanoutCompleted { .. } => ("fanout.completed", serde_json::to_string(self).unwrap_or_default()),
-            Self::GraphCompleted { .. } => ("graph.completed", serde_json::to_string(self).unwrap_or_default()),
-            Self::GraphError { .. } => ("graph.error", serde_json::to_string(self).unwrap_or_default()),
+            Self::GraphStarted { .. } => (
+                "graph.started",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::NodeStarted { .. } => (
+                "node.started",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::NodeToken { .. } => (
+                "node.token",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::NodeCompleted { .. } => (
+                "node.completed",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::NodeError { .. } => (
+                "node.error",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::FanoutStarted { .. } => (
+                "fanout.started",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::FanoutCompleted { .. } => (
+                "fanout.completed",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::GraphCompleted { .. } => (
+                "graph.completed",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
+            Self::GraphError { .. } => (
+                "graph.error",
+                serde_json::to_string(self).unwrap_or_default(),
+            ),
         };
         format!("event: {event_name}\ndata: {data}\n\n")
     }
@@ -219,15 +235,45 @@ mod tests {
     #[test]
     fn all_event_variants_serialize() {
         let events = vec![
-            StreamEvent::GraphStarted { graph_name: "g".into(), node_count: 1 },
-            StreamEvent::NodeStarted { node_id: "n".into(), tool_type: "t".into() },
-            StreamEvent::NodeToken { node_id: "n".into(), token: "hi".into() },
-            StreamEvent::NodeCompleted { node_id: "n".into(), tool_type: "t".into(), duration_ms: 10, output_keys: vec![] },
-            StreamEvent::NodeError { node_id: "n".into(), tool_type: "t".into(), error: "e".into() },
-            StreamEvent::FanoutStarted { source_node: "a".into(), parallel_nodes: vec!["b".into()] },
-            StreamEvent::FanoutCompleted { succeeded: 1, failed: 0 },
-            StreamEvent::GraphCompleted { status: "ok".into(), total_duration_ms: 100, nodes_executed: 2 },
-            StreamEvent::GraphError { error: "fail".into() },
+            StreamEvent::GraphStarted {
+                graph_name: "g".into(),
+                node_count: 1,
+            },
+            StreamEvent::NodeStarted {
+                node_id: "n".into(),
+                tool_type: "t".into(),
+            },
+            StreamEvent::NodeToken {
+                node_id: "n".into(),
+                token: "hi".into(),
+            },
+            StreamEvent::NodeCompleted {
+                node_id: "n".into(),
+                tool_type: "t".into(),
+                duration_ms: 10,
+                output_keys: vec![],
+            },
+            StreamEvent::NodeError {
+                node_id: "n".into(),
+                tool_type: "t".into(),
+                error: "e".into(),
+            },
+            StreamEvent::FanoutStarted {
+                source_node: "a".into(),
+                parallel_nodes: vec!["b".into()],
+            },
+            StreamEvent::FanoutCompleted {
+                succeeded: 1,
+                failed: 0,
+            },
+            StreamEvent::GraphCompleted {
+                status: "ok".into(),
+                total_duration_ms: 100,
+                nodes_executed: 2,
+            },
+            StreamEvent::GraphError {
+                error: "fail".into(),
+            },
         ];
         for event in events {
             let sse = event.to_sse();

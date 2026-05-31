@@ -91,8 +91,8 @@ impl GeminiAdapter {
 
                     if let Some(ref tool_calls) = msg.tool_calls {
                         for tc in tool_calls {
-                            let args: Value = serde_json::from_str(&tc.function.arguments)
-                                .unwrap_or(json!({}));
+                            let args: Value =
+                                serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
                             parts.push(json!({
                                 "functionCall": {
                                     "name": tc.function.name,
@@ -116,9 +116,9 @@ impl GeminiAdapter {
                         .content
                         .as_deref()
                         .and_then(|s| serde_json::from_str(s).ok())
-                        .unwrap_or_else(|| {
-                            json!({ "result": msg.content.as_deref().unwrap_or("") })
-                        });
+                        .unwrap_or_else(
+                            || json!({ "result": msg.content.as_deref().unwrap_or("") }),
+                        );
                     contents.push(json!({
                         "role": "function",
                         "parts": [{
@@ -215,7 +215,6 @@ impl GeminiAdapter {
             })
             .collect()
     }
-
 }
 
 // ---------------------------------------------------------------------------

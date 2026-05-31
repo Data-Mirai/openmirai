@@ -23,8 +23,16 @@ use super::agent_runtime::{CycleRecord, CycleStatus};
 ///
 /// Receives (agent_id, cycle_number, is_first_cycle_of_session).
 /// Returns Ok(()) on success, Err(error_message) on failure.
-pub type CycleCallback =
-    Arc<dyn Fn(String, u64, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> + Send + Sync>;
+pub type CycleCallback = Arc<
+    dyn Fn(
+            String,
+            u64,
+            bool,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 // ---------------------------------------------------------------------------
 // ScheduledEntry (internal bookkeeping)
@@ -190,7 +198,6 @@ impl Scheduler {
                     error!(agent_id = %aid, "on_cycle_error=stop — stopping agent");
                     break;
                 }
-
             }
         });
 
@@ -272,11 +279,11 @@ mod tests {
         let sched = Scheduler::new();
         sched.start();
 
-        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| {
-            Box::pin(async { Ok(()) })
-        });
+        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| Box::pin(async { Ok(()) }));
 
-        sched.schedule_agent("a1", 60, None, "continue", cb.clone()).await;
+        sched
+            .schedule_agent("a1", 60, None, "continue", cb.clone())
+            .await;
         sched.schedule_agent("a2", 120, None, "continue", cb).await;
 
         let list = sched.list_scheduled().await;
@@ -292,9 +299,7 @@ mod tests {
         let sched = Scheduler::new();
         sched.start();
 
-        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| {
-            Box::pin(async { Ok(()) })
-        });
+        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| Box::pin(async { Ok(()) }));
 
         sched.schedule_agent("a1", 60, None, "continue", cb).await;
         assert_eq!(sched.list_scheduled().await.len(), 1);
@@ -310,11 +315,11 @@ mod tests {
         let sched = Scheduler::new();
         sched.start();
 
-        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| {
-            Box::pin(async { Ok(()) })
-        });
+        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| Box::pin(async { Ok(()) }));
 
-        sched.schedule_agent("a1", 60, None, "continue", cb.clone()).await;
+        sched
+            .schedule_agent("a1", 60, None, "continue", cb.clone())
+            .await;
         sched.schedule_agent("a1", 120, None, "continue", cb).await;
 
         let list = sched.list_scheduled().await;
@@ -335,9 +340,7 @@ mod tests {
         let sched = Scheduler::new();
         sched.start();
 
-        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| {
-            Box::pin(async { Ok(()) })
-        });
+        let cb: CycleCallback = Arc::new(|_aid, _cycle, _first| Box::pin(async { Ok(()) }));
 
         assert!(!sched.is_scheduled("a1").await);
         sched.schedule_agent("a1", 60, None, "continue", cb).await;

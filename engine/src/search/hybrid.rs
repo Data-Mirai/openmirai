@@ -149,7 +149,11 @@ impl HybridSearch {
             })
             .collect();
 
-        merged.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        merged.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         merged.truncate(limit);
         Ok(merged)
     }
@@ -173,7 +177,7 @@ fn normalize_scores(scores: &HashMap<String, f64>) -> HashMap<String, f64> {
 
     if range == 0.0 {
         // All scores are equal -- map to 1.0
-        scores.iter().map(|(k, _)| (k.clone(), 1.0)).collect()
+        scores.keys().map(|k| (k.clone(), 1.0)).collect()
     } else {
         scores
             .iter()
@@ -251,8 +255,18 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_combined() {
         let mut vec_provider = InMemoryVectorProvider::new();
-        vec_provider.add_document("shared".into(), vec![1.0, 0.0], "shared doc".into(), HashMap::new());
-        vec_provider.add_document("vec_only".into(), vec![0.8, 0.2], "vector doc".into(), HashMap::new());
+        vec_provider.add_document(
+            "shared".into(),
+            vec![1.0, 0.0],
+            "shared doc".into(),
+            HashMap::new(),
+        );
+        vec_provider.add_document(
+            "vec_only".into(),
+            vec![0.8, 0.2],
+            "vector doc".into(),
+            HashMap::new(),
+        );
 
         let fts = StubFTS {
             results: vec![

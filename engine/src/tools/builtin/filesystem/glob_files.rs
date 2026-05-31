@@ -41,10 +41,7 @@ impl Tool for GlobFilesTool {
                 message: "missing required input: pattern".into(),
             })?;
 
-        let base = config
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".");
+        let base = config.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let max_results = config
             .get("max_results")
             .and_then(|v| v.as_u64())
@@ -98,4 +95,3 @@ impl Tool for GlobFilesTool {
         Ok(out)
     }
 }
-

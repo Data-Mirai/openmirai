@@ -47,6 +47,12 @@ macro_rules! trigger_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -94,14 +100,8 @@ impl Tool for WebhookTriggerTool {
             .or_else(|| config.get("mock_payload"))
             .cloned()
             .unwrap_or(json!({}));
-        let headers = config
-            .get("headers")
-            .cloned()
-            .unwrap_or(json!({}));
-        let query_params = config
-            .get("query_params")
-            .cloned()
-            .unwrap_or(json!({}));
+        let headers = config.get("headers").cloned().unwrap_or(json!({}));
+        let query_params = config.get("query_params").cloned().unwrap_or(json!({}));
 
         let mut out = HashMap::new();
         out.insert("payload".to_string(), payload.clone());
@@ -154,8 +154,7 @@ impl Tool for ManualTriggerTool {
             .unwrap_or("manual");
 
         let now = Utc::now();
-        let timestamp = now.timestamp() as f64
-            + now.timestamp_subsec_millis() as f64 / 1000.0;
+        let timestamp = now.timestamp() as f64 + now.timestamp_subsec_millis() as f64 / 1000.0;
 
         let mut out = HashMap::new();
         out.insert("payload".to_string(), payload.clone());
@@ -194,8 +193,7 @@ impl Tool for ScheduleTriggerTool {
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
         let now = Utc::now();
-        let triggered_at = now.timestamp() as f64
-            + now.timestamp_subsec_millis() as f64 / 1000.0;
+        let triggered_at = now.timestamp() as f64 + now.timestamp_subsec_millis() as f64 / 1000.0;
         let run_count = config
             .get("run_count")
             .and_then(|v| v.as_u64())
@@ -237,18 +235,12 @@ impl Tool for EventTriggerTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let source = config
-            .get("source")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let source = config.get("source").and_then(|v| v.as_str()).unwrap_or("");
         let event_type = config
             .get("event_type")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let event_data = config
-            .get("event_data")
-            .cloned()
-            .unwrap_or(json!({}));
+        let event_data = config.get("event_data").cloned().unwrap_or(json!({}));
 
         let mut out = HashMap::new();
         out.insert("source".to_string(), json!(source));
@@ -316,7 +308,10 @@ impl Tool for HeartbeatTriggerTool {
                 // Safe evaluation: only support simple boolean expressions
                 // with comparison operators on numeric literals
                 let result = evaluate_simple_expression(condition_config);
-                (result, json!({"type": "custom_expression", "expression": condition_config, "result": result}))
+                (
+                    result,
+                    json!({"type": "custom_expression", "expression": condition_config, "result": result}),
+                )
             }
             other => {
                 return Err(ToolError::ExecutionFailed {
@@ -377,7 +372,10 @@ pub fn register_trigger_tools(registry: &mut ToolRegistry) {
     registry.register("trigger/manual", Box::new(ManualTriggerFactory::new()));
     registry.register("trigger/schedule", Box::new(ScheduleTriggerFactory::new()));
     registry.register("trigger/event", Box::new(EventTriggerFactory::new()));
-    registry.register("trigger/heartbeat", Box::new(HeartbeatTriggerFactory::new()));
+    registry.register(
+        "trigger/heartbeat",
+        Box::new(HeartbeatTriggerFactory::new()),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -398,10 +396,7 @@ mod tests {
         let tool = WebhookTriggerTool;
         let mut config = HashMap::new();
         config.insert("body".to_string(), json!({"key": "value"}));
-        let result = tool
-            .execute(HashMap::new(), &config, &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await.unwrap();
         assert_eq!(result["body"]["key"], json!("value"));
         assert!(result["headers"].is_object());
     }
@@ -422,10 +417,7 @@ mod tests {
         let tool = ScheduleTriggerTool;
         let mut config = HashMap::new();
         config.insert("run_count".to_string(), json!(5));
-        let result = tool
-            .execute(HashMap::new(), &config, &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await.unwrap();
         assert_eq!(result["run_count"], json!(5));
         assert!(result["triggered_at"].as_f64().unwrap() > 0.0);
     }
@@ -436,10 +428,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("source".to_string(), json!("db"));
         config.insert("event_type".to_string(), json!("insert"));
-        let result = tool
-            .execute(HashMap::new(), &config, &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await.unwrap();
         assert_eq!(result["source"], json!("db"));
         assert_eq!(result["event_type"], json!("insert"));
     }
@@ -461,10 +450,7 @@ mod tests {
         let tool = HeartbeatTriggerTool;
         let mut config = HashMap::new();
         config.insert("condition_type".to_string(), json!("always_false"));
-        let result = tool
-            .execute(HashMap::new(), &config, &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await.unwrap();
         assert_eq!(result["triggered"], json!(false));
     }
 
@@ -474,10 +460,7 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("condition_type".to_string(), json!("custom_expression"));
         config.insert("condition_config".to_string(), json!("5 > 3"));
-        let result = tool
-            .execute(HashMap::new(), &config, &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await.unwrap();
         assert_eq!(result["triggered"], json!(true));
 
         let mut config2 = HashMap::new();

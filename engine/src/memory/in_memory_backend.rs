@@ -60,7 +60,11 @@ impl MemoryBackend for InMemoryBackend {
             .collect();
 
         // Newest first.
-        matches.sort_by(|a, b| b.created_at.partial_cmp(&a.created_at).unwrap_or(std::cmp::Ordering::Equal));
+        matches.sort_by(|a, b| {
+            b.created_at
+                .partial_cmp(&a.created_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         matches.truncate(limit);
         Ok(matches)
     }
@@ -81,7 +85,11 @@ impl MemoryBackend for InMemoryBackend {
         let mut all: Vec<LongTermEntry> = guard.clone();
 
         // Newest first.
-        all.sort_by(|a, b| b.created_at.partial_cmp(&a.created_at).unwrap_or(std::cmp::Ordering::Equal));
+        all.sort_by(|a, b| {
+            b.created_at
+                .partial_cmp(&a.created_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all.truncate(limit);
         Ok(all)
     }
@@ -137,10 +145,7 @@ mod tests {
     async fn search_respects_limit() {
         let backend = InMemoryBackend::new();
         for i in 0..5 {
-            backend
-                .save(&entry(&format!("entry {i}")))
-                .await
-                .unwrap();
+            backend.save(&entry(&format!("entry {i}"))).await.unwrap();
         }
 
         let results = backend.search("entry", 2).await.unwrap();
@@ -164,10 +169,7 @@ mod tests {
     async fn list_recent_respects_limit() {
         let backend = InMemoryBackend::new();
         for i in 0..5 {
-            backend
-                .save(&entry(&format!("entry {i}")))
-                .await
-                .unwrap();
+            backend.save(&entry(&format!("entry {i}"))).await.unwrap();
         }
 
         let recent = backend.list_recent(3).await.unwrap();

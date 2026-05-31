@@ -32,13 +32,12 @@ impl Tool for ListDirTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let raw_path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let raw_path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "filesystem/list_dir".into(),
                 message: "missing required input: path".into(),
-            })?;
+            }
+        })?;
         let show_hidden = config
             .get("show_hidden")
             .and_then(|v| v.as_bool())
@@ -76,11 +75,7 @@ impl Tool for ListDirTool {
             let meta = entry.metadata();
             let (ftype, size, modified) = match meta {
                 Ok(m) => {
-                    let ftype = if m.is_dir() {
-                        "directory"
-                    } else {
-                        "file"
-                    };
+                    let ftype = if m.is_dir() { "directory" } else { "file" };
                     let modified = m
                         .modified()
                         .ok()
@@ -114,4 +109,3 @@ impl Tool for ListDirTool {
         Ok(out)
     }
 }
-

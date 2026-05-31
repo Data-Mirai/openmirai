@@ -35,13 +35,12 @@ impl Tool for EditFileTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let raw_path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let raw_path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "filesystem/edit_file".into(),
                 message: "missing required input: path".into(),
-            })?;
+            }
+        })?;
         let old_string = inputs
             .get("old_string")
             .and_then(|v| v.as_str())
@@ -116,8 +115,16 @@ impl Tool for EditFileTool {
         })?;
 
         // Build diff preview (truncate long strings)
-        let old_preview: String = old_string.chars().take(80).collect::<String>().replace('\n', "\\n");
-        let new_preview: String = new_string.chars().take(80).collect::<String>().replace('\n', "\\n");
+        let old_preview: String = old_string
+            .chars()
+            .take(80)
+            .collect::<String>()
+            .replace('\n', "\\n");
+        let new_preview: String = new_string
+            .chars()
+            .take(80)
+            .collect::<String>()
+            .replace('\n', "\\n");
         let diff = format!(
             "-  {}\n+  {}\n({} replacement(s))",
             old_preview, new_preview, replacements
@@ -130,4 +137,3 @@ impl Tool for EditFileTool {
         Ok(out)
     }
 }
-

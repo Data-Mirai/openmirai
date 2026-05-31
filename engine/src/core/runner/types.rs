@@ -115,30 +115,22 @@ pub struct TranscriptEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum BackoffStrategy {
+    #[default]
     None,
     Linear,
     Exponential,
 }
 
-impl Default for BackoffStrategy {
-    fn default() -> Self {
-        BackoffStrategy::None
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum FailureMode {
+    #[default]
     Stop,
     Skip,
     RouteToError,
-}
-
-impl Default for FailureMode {
-    fn default() -> Self {
-        FailureMode::Stop
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

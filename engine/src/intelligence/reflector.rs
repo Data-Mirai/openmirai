@@ -71,11 +71,9 @@ impl Reflector {
         }
 
         let batch = Self::build_batch(trace);
-        let prompt = Self::build_prompt(&batch);
+        let prompt = Self::build_prompt(batch);
 
-        let response = llm
-            .call("default", &prompt, &[], 0.3, 2048)
-            .await?;
+        let response = llm.call("default", &prompt, &[], 0.3, 2048).await?;
 
         Ok(Self::parse_response(&response.response))
     }
@@ -157,10 +155,7 @@ Rules:
             let mut anomalies = Vec::new();
 
             for item in &parsed {
-                let entry_type = item
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let entry_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 let insight = item
                     .get("insight")
                     .and_then(|v| v.as_str())
@@ -217,12 +212,12 @@ fn strip_code_fences(text: &str) -> String {
         return trimmed.to_string();
     }
     let lines: Vec<&str> = trimmed.lines().collect();
-    let start = if lines.first().map_or(false, |l| l.starts_with("```")) {
+    let start = if lines.first().is_some_and(|l| l.starts_with("```")) {
         1
     } else {
         0
     };
-    let end = if lines.last().map_or(false, |l| l.trim() == "```") {
+    let end = if lines.last().is_some_and(|l| l.trim() == "```") {
         lines.len() - 1
     } else {
         lines.len()
@@ -276,7 +271,9 @@ mod tests {
 
     #[test]
     fn build_batch_under_limit() {
-        let traces: Vec<TraceRecord> = (0..5).map(|i| make_trace(&format!("n{}", i), TraceStatus::Ok, 100)).collect();
+        let traces: Vec<TraceRecord> = (0..5)
+            .map(|i| make_trace(&format!("n{}", i), TraceStatus::Ok, 100))
+            .collect();
         let batch = Reflector::build_batch(&traces);
         assert_eq!(batch.len(), 5);
     }

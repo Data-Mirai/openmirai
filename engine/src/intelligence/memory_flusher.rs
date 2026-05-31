@@ -97,7 +97,10 @@ impl MemoryFlusher {
         let mut entries = Vec::new();
 
         // Collect error nodes for error_resolution entries
-        for record in trace.iter().filter(|r| r.status == crate::core::runner::TraceStatus::Error) {
+        for record in trace
+            .iter()
+            .filter(|r| r.status == crate::core::runner::TraceStatus::Error)
+        {
             let content = format!(
                 "Node '{}' (type: {}) failed: {}",
                 record.node_id,
@@ -117,7 +120,10 @@ impl MemoryFlusher {
 
         // Summarize overall execution as a learning
         let total = trace.len();
-        let errors = trace.iter().filter(|r| r.status == crate::core::runner::TraceStatus::Error).count();
+        let errors = trace
+            .iter()
+            .filter(|r| r.status == crate::core::runner::TraceStatus::Error)
+            .count();
         let total_ms: u64 = trace.iter().map(|r| r.duration_ms).sum();
 
         if total > 0 {

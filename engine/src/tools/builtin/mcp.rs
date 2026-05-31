@@ -49,6 +49,12 @@ macro_rules! mcp_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -234,10 +240,7 @@ mod tests {
         config.insert("server_name".to_string(), json!("my-server"));
         config.insert("tool_name".to_string(), json!("my-tool"));
         // No __mcp_servers → should return helpful error
-        let result = tool
-            .execute(HashMap::new(), &config, &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await.unwrap();
         assert_eq!(result["success"], json!(false));
         assert_eq!(result["server_name"], json!("my-server"));
         assert_eq!(result["tool_name"], json!("my-tool"));
@@ -262,12 +265,12 @@ mod tests {
         let mut config = HashMap::new();
         config.insert("server_name".to_string(), json!("wrong-name"));
         config.insert("tool_name".to_string(), json!("tool"));
-        config.insert("__mcp_servers".to_string(), serde_json::to_value(&servers).unwrap());
+        config.insert(
+            "__mcp_servers".to_string(),
+            serde_json::to_value(&servers).unwrap(),
+        );
 
-        let result = tool
-            .execute(HashMap::new(), &config, &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(HashMap::new(), &config, &ctx()).await.unwrap();
         assert_eq!(result["success"], json!(false));
         assert!(result["error"]
             .as_str()

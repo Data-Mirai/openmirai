@@ -71,16 +71,19 @@ impl Tool for CopyTool {
             }
         }
 
-        let bytes_copied = fs::copy(&src_path, &abs_dest).map_err(|e| ToolError::ExecutionFailed {
-            tool_type: "filesystem/copy".into(),
-            message: format!("Copy failed: {e}"),
-        })?;
+        let bytes_copied =
+            fs::copy(&src_path, &abs_dest).map_err(|e| ToolError::ExecutionFailed {
+                tool_type: "filesystem/copy".into(),
+                message: format!("Copy failed: {e}"),
+            })?;
 
         let mut out = HashMap::new();
         out.insert("source".to_string(), json!(src_path.display().to_string()));
-        out.insert("destination".to_string(), json!(abs_dest.display().to_string()));
+        out.insert(
+            "destination".to_string(),
+            json!(abs_dest.display().to_string()),
+        );
         out.insert("bytes_copied".to_string(), json!(bytes_copied));
         Ok(out)
     }
 }
-

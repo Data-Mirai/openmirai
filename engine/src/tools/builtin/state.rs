@@ -30,6 +30,12 @@ pub struct MemoryToolFactory {
     spec: ToolSpec,
 }
 
+impl Default for MemoryToolFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryToolFactory {
     pub fn new() -> Self {
         Self {

@@ -154,7 +154,13 @@ mod tests {
     #[test]
     fn test_no_rates_returns_zero() {
         let calc = EnergyCalculator::new(make_store(vec![]));
-        let cost = calc.calculate(EnergyType::LlmCall, 1000.0, QuantityUnit::TokensIn, None, None);
+        let cost = calc.calculate(
+            EnergyType::LlmCall,
+            1000.0,
+            QuantityUnit::TokensIn,
+            None,
+            None,
+        );
         assert_eq!(cost, 0.0);
     }
 
@@ -170,7 +176,13 @@ mod tests {
         }];
 
         let calc = EnergyCalculator::new(make_store(rates));
-        let cost = calc.calculate(EnergyType::LlmCall, 1000.0, QuantityUnit::TokensIn, None, None);
+        let cost = calc.calculate(
+            EnergyType::LlmCall,
+            1000.0,
+            QuantityUnit::TokensIn,
+            None,
+            None,
+        );
         assert!((cost - 0.01).abs() < 1e-10);
     }
 
@@ -208,7 +220,13 @@ mod tests {
         assert!((cost - 0.2).abs() < 1e-10);
 
         // Without provider: falls back to generic rate (0.001).
-        let cost = calc.calculate(EnergyType::LlmCall, 100.0, QuantityUnit::TokensIn, None, None);
+        let cost = calc.calculate(
+            EnergyType::LlmCall,
+            100.0,
+            QuantityUnit::TokensIn,
+            None,
+            None,
+        );
         assert!((cost - 0.1).abs() < 1e-10);
     }
 
@@ -304,7 +322,13 @@ mod tests {
         let calc = EnergyCalculator::new(make_store(rates));
 
         // Asking for TokensIn but rate is for TokensOut -- no match.
-        let cost = calc.calculate(EnergyType::LlmCall, 100.0, QuantityUnit::TokensIn, None, None);
+        let cost = calc.calculate(
+            EnergyType::LlmCall,
+            100.0,
+            QuantityUnit::TokensIn,
+            None,
+            None,
+        );
         assert_eq!(cost, 0.0);
     }
 
@@ -342,7 +366,13 @@ mod tests {
         }];
 
         let calc = EnergyCalculator::new(make_store(rates));
-        let cost = calc.calculate(EnergyType::LlmCall, 1.0, QuantityUnit::Invocations, None, None);
+        let cost = calc.calculate(
+            EnergyType::LlmCall,
+            1.0,
+            QuantityUnit::Invocations,
+            None,
+            None,
+        );
         assert_eq!(cost, 0.0);
     }
 }

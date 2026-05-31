@@ -40,16 +40,17 @@ impl Tool for EntityUpsertTool {
             .get("entity_type")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
-        let data = inputs
-            .get("data")
-            .cloned()
-            .unwrap_or(json!({}));
+        let data = inputs.get("data").cloned().unwrap_or(json!({}));
         let existing_id = inputs
             .get("id")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty());
 
-        let action = if existing_id.is_some() { "updated" } else { "created" };
+        let action = if existing_id.is_some() {
+            "updated"
+        } else {
+            "created"
+        };
 
         let id = existing_id
             .map(|s| s.to_string())
@@ -69,4 +70,3 @@ impl Tool for EntityUpsertTool {
         Ok(out)
     }
 }
-

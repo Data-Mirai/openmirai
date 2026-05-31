@@ -47,6 +47,12 @@ macro_rules! git_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -137,7 +143,7 @@ impl Tool for GitStatusTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let cwd = resolve_cwd(&inputs, &config);
+        let cwd = resolve_cwd(&inputs, config);
 
         // Get branch
         let branch_out = run_git_ok(&["branch", "--show-current"], &cwd, "git/status").await?;
@@ -221,19 +227,13 @@ impl Tool for GitDiffTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let cwd = resolve_cwd(&inputs, &config);
+        let cwd = resolve_cwd(&inputs, config);
         let staged = config
             .get("staged")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let git_ref = config
-            .get("ref")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let file_filter = config
-            .get("file")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let git_ref = config.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+        let file_filter = config.get("file").and_then(|v| v.as_str()).unwrap_or("");
 
         // Build diff command args
         let mut args: Vec<&str> = vec!["diff"];
@@ -336,28 +336,15 @@ impl Tool for GitLogTool {
         config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let cwd = resolve_cwd(&inputs, &config);
-        let limit = config
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(20);
-        let author = config
-            .get("author")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let file_filter = config
-            .get("file")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let cwd = resolve_cwd(&inputs, config);
+        let limit = config.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
+        let author = config.get("author").and_then(|v| v.as_str()).unwrap_or("");
+        let file_filter = config.get("file").and_then(|v| v.as_str()).unwrap_or("");
 
         let fmt = format!("%H{COMMIT_SEP}%an{COMMIT_SEP}%ai{COMMIT_SEP}%s");
         let limit_arg = format!("-{}", limit);
 
-        let mut args: Vec<String> = vec![
-            "log".into(),
-            limit_arg,
-            format!("--format={}", fmt),
-        ];
+        let mut args: Vec<String> = vec!["log".into(), limit_arg, format!("--format={}", fmt)];
         if !author.is_empty() {
             args.push(format!("--author={}", author));
         }
@@ -466,12 +453,8 @@ impl Tool for GitCommitTool {
         }
 
         // Check there's something staged
-        let staged_out = run_git_ok(
-            &["diff", "--cached", "--name-only"],
-            cwd,
-            "git/commit",
-        )
-        .await?;
+        let staged_out =
+            run_git_ok(&["diff", "--cached", "--name-only"], cwd, "git/commit").await?;
         let staged_files: Vec<&str> = staged_out
             .trim()
             .lines()
@@ -543,10 +526,7 @@ mod tests {
         let line = "M  src/main.rs";
         let bytes = line.as_bytes();
         let index = bytes[0] as char;
-        assert!(
-            "MADRC".contains(index),
-            "Expected staged file with index=M"
-        );
+        assert!("MADRC".contains(index), "Expected staged file with index=M");
     }
 
     #[test]
@@ -571,9 +551,8 @@ mod tests {
 
     #[test]
     fn parse_log_line() {
-        let line = format!(
-            "abc123{COMMIT_SEP}Author{COMMIT_SEP}2025-01-01{COMMIT_SEP}Initial commit"
-        );
+        let line =
+            format!("abc123{COMMIT_SEP}Author{COMMIT_SEP}2025-01-01{COMMIT_SEP}Initial commit");
         let parts: Vec<&str> = line.splitn(4, COMMIT_SEP).collect();
         assert_eq!(parts.len(), 4);
         assert_eq!(parts[0], "abc123");

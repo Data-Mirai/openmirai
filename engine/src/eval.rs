@@ -143,8 +143,12 @@ pub fn build_judge_prompt(
 ) -> String {
     let criteria = match eval_type {
         EvalType::Relevance => "Is the response relevant to the input question? Score 0-10.",
-        EvalType::Faithfulness => "Is the response grounded in the provided context? Does it hallucinate? Score 0-10.",
-        EvalType::Completeness => "Does the response cover all key points from the input? Score 0-10.",
+        EvalType::Faithfulness => {
+            "Is the response grounded in the provided context? Does it hallucinate? Score 0-10."
+        }
+        EvalType::Completeness => {
+            "Does the response cover all key points from the input? Score 0-10."
+        }
         _ => return String::new(),
     };
 
@@ -164,7 +168,8 @@ pub fn build_judge_prompt(
 /// Parse a judge response (expects `{"score": N, "reason": "..."}`)
 pub fn parse_judge_response(response: &str) -> Option<EvalResult> {
     // Try direct parse first, then extract from markdown code blocks.
-    let json_str = serde_json::from_str::<Value>(response).ok()
+    let json_str = serde_json::from_str::<Value>(response)
+        .ok()
         .map(|_| response.to_string())
         .or_else(|| {
             // Extract from ```json ... ``` blocks
@@ -176,9 +181,15 @@ pub fn parse_judge_response(response: &str) -> Option<EvalResult> {
             let start = response.find('{')?;
             let mut depth = 0i32;
             for (i, c) in response[start..].char_indices() {
-                if c == '{' { depth += 1; }
-                if c == '}' { depth -= 1; }
-                if depth == 0 { return Some(response[start..start+i+1].to_string()); }
+                if c == '{' {
+                    depth += 1;
+                }
+                if c == '}' {
+                    depth -= 1;
+                }
+                if depth == 0 {
+                    return Some(response[start..start + i + 1].to_string());
+                }
             }
             None
         })?;
@@ -201,15 +212,21 @@ pub fn parse_judge_response(response: &str) -> Option<EvalResult> {
 // Integrated eval — calls REAL LLM for judge evals
 // ---------------------------------------------------------------------------
 
+/// The text under evaluation: the agent's input, its output, and optional context.
+#[derive(Clone, Copy)]
+pub struct EvalInput<'a> {
+    pub input: &'a str,
+    pub output: &'a str,
+    pub context: Option<&'a str>,
+}
+
 /// Execute a full eval run against a completed session.
 ///
 /// - Programmatic types (format_compliance, latency) run without LLM.
 /// - LLM-as-judge types (relevance, faithfulness, completeness) call the real LLM.
 pub async fn execute_eval(
     eval_types: &[EvalType],
-    input_text: &str,
-    output_text: &str,
-    context_text: Option<&str>,
+    io: EvalInput<'_>,
     duration_ms: u64,
     output_schema: Option<&Value>,
     llm: &dyn crate::core::context::LLMResource,
@@ -220,13 +237,13 @@ pub async fn execute_eval(
     for eval_type in eval_types {
         match eval_type {
             EvalType::FormatCompliance => {
-                results.push(eval_format_compliance(output_text, output_schema));
+                results.push(eval_format_compliance(io.output, output_schema));
             }
             EvalType::Latency => {
                 results.push(eval_latency(duration_ms, 5000));
             }
             EvalType::Relevance | EvalType::Faithfulness | EvalType::Completeness => {
-                let prompt = build_judge_prompt(eval_type, input_text, output_text, context_text);
+                let prompt = build_judge_prompt(eval_type, io.input, io.output, io.context);
                 if prompt.is_empty() {
                     continue;
                 }
@@ -242,7 +259,10 @@ pub async fn execute_eval(
                             results.push(EvalResult {
                                 eval_type: eval_type.clone(),
                                 score: 0.5,
-                                details: Some(format!("LLM responded but could not parse score: {}", &response.response[..100.min(response.response.len())])),
+                                details: Some(format!(
+                                    "LLM responded but could not parse score: {}",
+                                    &response.response[..100.min(response.response.len())]
+                                )),
                                 judge_model: Some(response.model),
                             });
                         }

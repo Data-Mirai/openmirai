@@ -43,10 +43,7 @@ impl Tool for DbReadTool {
             .and_then(|v| v.as_str())
             .unwrap_or("SELECT");
 
-        let mode = config
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("all");
+        let mode = config.get("mode").and_then(|v| v.as_str()).unwrap_or("all");
 
         // Build params from query_params input
         let params: Vec<Value> = match inputs.get("query_params") {
@@ -57,25 +54,25 @@ impl Tool for DbReadTool {
         let mut out = HashMap::new();
 
         if mode == "one" {
-            let row = db
-                .fetch_one(query, &params)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    tool_type: "data/db_read".into(),
-                    message: e.to_string(),
-                })?;
+            let row =
+                db.fetch_one(query, &params)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "data/db_read".into(),
+                        message: e.to_string(),
+                    })?;
 
             let count = if row.is_some() { 1 } else { 0 };
             out.insert("row".to_string(), row.unwrap_or(Value::Null));
             out.insert("count".to_string(), json!(count));
         } else {
-            let rows = db
-                .fetch_all(query, &params)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    tool_type: "data/db_read".into(),
-                    message: e.to_string(),
-                })?;
+            let rows =
+                db.fetch_all(query, &params)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "data/db_read".into(),
+                        message: e.to_string(),
+                    })?;
 
             let count = rows.len();
             out.insert("rows".to_string(), json!(rows));
@@ -85,4 +82,3 @@ impl Tool for DbReadTool {
         Ok(out)
     }
 }
-

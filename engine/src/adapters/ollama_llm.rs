@@ -60,10 +60,7 @@ impl LLMResource for OllamaLLMResource {
         };
 
         // Build messages array
-        let mut messages: Vec<Value> = context
-            .iter()
-            .cloned()
-            .collect();
+        let mut messages: Vec<Value> = context.to_vec();
         messages.push(json!({
             "role": "user",
             "content": prompt,
@@ -91,9 +88,7 @@ impl LLMResource for OllamaLLMResource {
         if !response.status().is_success() {
             let status = response.status();
             let body_text = response.text().await.unwrap_or_default();
-            return Err(Self::ollama_error(&format!(
-                "HTTP {status}: {body_text}"
-            )));
+            return Err(Self::ollama_error(&format!("HTTP {status}: {body_text}")));
         }
 
         let resp_json: Value = response
@@ -120,11 +115,7 @@ impl LLMResource for OllamaLLMResource {
         })
     }
 
-    async fn embed(
-        &self,
-        text: &str,
-        model: &str,
-    ) -> Result<Vec<f64>, ResourceError> {
+    async fn embed(&self, text: &str, model: &str) -> Result<Vec<f64>, ResourceError> {
         let model = if model.is_empty() {
             &self.default_model
         } else {
@@ -148,9 +139,7 @@ impl LLMResource for OllamaLLMResource {
         if !response.status().is_success() {
             let status = response.status();
             let body_text = response.text().await.unwrap_or_default();
-            return Err(Self::ollama_error(&format!(
-                "HTTP {status}: {body_text}"
-            )));
+            return Err(Self::ollama_error(&format!("HTTP {status}: {body_text}")));
         }
 
         let resp_json: Value = response
@@ -165,10 +154,7 @@ impl LLMResource for OllamaLLMResource {
             .and_then(|v| v.as_array())
             .ok_or_else(|| Self::ollama_error("missing embeddings in response"))?;
 
-        let vec: Vec<f64> = embeddings
-            .iter()
-            .filter_map(|v| v.as_f64())
-            .collect();
+        let vec: Vec<f64> = embeddings.iter().filter_map(|v| v.as_f64()).collect();
 
         if vec.is_empty() {
             return Err(Self::ollama_error("empty embedding vector"));

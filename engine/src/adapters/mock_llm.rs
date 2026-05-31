@@ -90,11 +90,7 @@ impl LLMResource for MockLLMResource {
         })
     }
 
-    async fn embed(
-        &self,
-        text: &str,
-        _model: &str,
-    ) -> Result<Vec<f64>, ResourceError> {
+    async fn embed(&self, text: &str, _model: &str) -> Result<Vec<f64>, ResourceError> {
         let hash = Sha256::digest(text.as_bytes());
         let vec: Vec<f64> = hash
             .iter()

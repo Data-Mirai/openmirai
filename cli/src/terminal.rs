@@ -10,9 +10,9 @@ use std::time::Instant;
 use openmirai_engine::llm::{
     FunctionCall, LLMAdapter, Message, NormalizedResponse, ToolCallRequest,
 };
+use openmirai_engine::tools::base::ToolSpec;
 use openmirai_engine::tools::builtin::register_all_builtin_tools;
 use openmirai_engine::tools::registry::ToolRegistry;
-use openmirai_engine::tools::base::ToolSpec;
 
 use serde_json::{json, Value};
 
@@ -112,7 +112,7 @@ fn needs_confirmation(autonomy: &AutonomyConfig, tool_type: &str) -> bool {
     if !autonomy.confirm_writes {
         return false;
     }
-    WRITE_TOOLS.iter().any(|t| *t == tool_type)
+    WRITE_TOOLS.contains(&tool_type)
 }
 
 fn ask_confirmation(tool_type: &str, args: &Value) -> bool {
@@ -312,26 +312,34 @@ fn build_system_prompt(cwd: &str, autonomy_level: &str) -> String {
     let platform = format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH);
 
     let autonomy_section = match autonomy_level {
-        "assisted" => "\
+        "assisted" => {
+            "\
 # Autonomy: ASSISTED (L1)
 - Execute ONE tool call per turn. Then STOP and report.
 - ALWAYS explain what you'll do BEFORE doing it.
-- After each action, ask the user what to do next.",
-        "autopilot" => "\
+- After each action, ask the user what to do next."
+        }
+        "autopilot" => {
+            "\
 # Autonomy: AUTOPILOT (L3)
 - Work autonomously toward the objective until done or stuck.
 - Make decisions independently. Debug failures yourself.
-- Report progress every 5-10 tool calls.",
-        "self_driving" => "\
+- Report progress every 5-10 tool calls."
+        }
+        "self_driving" => {
+            "\
 # Autonomy: SELF-DRIVING (L4)
 - Pursue business goals independently. Decompose into sub-tasks.
 - NEVER ask for input unless critical ambiguity.
-- Commit after each sub-task.",
-        _ => "\
+- Commit after each sub-task."
+        }
+        _ => {
+            "\
 # Autonomy: COPILOT (L2)
 - Execute multiple tool calls to complete the request in one turn.
 - Read files before modifying them. Verify changes after.
-- Do NOT ask 'should I proceed?' -- the user already told you to do it.",
+- Do NOT ask 'should I proceed?' -- the user already told you to do it."
+        }
     };
 
     format!(
@@ -398,7 +406,13 @@ fn format_args_preview(args: &Value) -> String {
 fn summarize_result(result: &Value) -> String {
     let mut parts = Vec::new();
     for key in &[
-        "path", "count", "lines", "files_changed", "exit_code", "branch", "hash",
+        "path",
+        "count",
+        "lines",
+        "files_changed",
+        "exit_code",
+        "branch",
+        "hash",
     ] {
         if let Some(v) = result.get(key) {
             let val = v.to_string();
@@ -456,9 +470,8 @@ fn compact_messages(messages: &mut Vec<Value>, max_tokens: u32) {
             if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
                 if content.len() > 500 {
                     let truncated = format!("{}... (compacted)", &content[..200]);
-                    msg.as_object_mut().map(|o| {
-                        o.insert("content".to_string(), Value::String(truncated))
-                    });
+                    msg.as_object_mut()
+                        .map(|o| o.insert("content".to_string(), Value::String(truncated)));
                 }
             }
         }
@@ -489,39 +502,57 @@ fn compact_messages(messages: &mut Vec<Value>, max_tokens: u32) {
 // ---------------------------------------------------------------------------
 
 const SPINNER: &[&str] = &[
-    "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}",
-    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280F}",
+    "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}", "\u{2827}",
+    "\u{2807}", "\u{280F}",
 ];
 
 // ---------------------------------------------------------------------------
 // The agentic loop
 // ---------------------------------------------------------------------------
 
-async fn agentic_loop(
-    adapter: &dyn LLMAdapter,
-    model: &str,
-    messages: &mut Vec<Value>,
-    tools: &[Value],
-    name_map: &HashMap<String, String>,
-    registry: &ToolRegistry,
-    cwd: &str,
-    tracker: &mut TokenTracker,
-    autonomy: &AutonomyConfig,
+/// LLM invocation settings for one agentic turn.
+struct LlmTurn<'a> {
+    adapter: &'a dyn LLMAdapter,
+    model: &'a str,
+    tools: &'a [Value],
     temperature: f32,
     max_tokens: u32,
-    _context_window: Option<u32>,
+}
+
+/// Tool-execution context: name resolution, registry, and working directory.
+struct ToolCtx<'a> {
+    name_map: &'a HashMap<String, String>,
+    registry: &'a ToolRegistry,
+    cwd: &'a str,
+}
+
+async fn agentic_loop(
+    llm: LlmTurn<'_>,
+    messages: &mut Vec<Value>,
+    tools_ctx: ToolCtx<'_>,
+    tracker: &mut TokenTracker,
+    autonomy: &AutonomyConfig,
     storage: &SessionStorage,
     session_id: &str,
 ) -> Result<(String, bool), String> {
+    let LlmTurn {
+        adapter,
+        model,
+        tools,
+        temperature,
+        max_tokens,
+    } = llm;
+    let ToolCtx {
+        name_map,
+        registry,
+        cwd,
+    } = tools_ctx;
     let max_rounds = autonomy.max_tool_rounds;
     let mut was_streamed = false;
 
     for round_num in 0..max_rounds {
         // Convert Value messages to engine Message structs
-        let engine_messages: Vec<Message> = messages
-            .iter()
-            .map(|v| value_to_message(v))
-            .collect();
+        let engine_messages: Vec<Message> = messages.iter().map(value_to_message).collect();
 
         let tool_defs = if tools.is_empty() {
             None
@@ -530,7 +561,7 @@ async fn agentic_loop(
         };
 
         if round_num > 0 {
-            print!("  {DIM}(round {}){RESET}\n", round_num + 1);
+            println!("  {DIM}(round {}){RESET}", round_num + 1);
         }
 
         // Show spinner while waiting
@@ -634,33 +665,31 @@ async fn agentic_loop(
 
             let args: Value = serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
 
-            print!(
-                "  {CYAN}\u{25B6} {tool_type}{RESET} {DIM}{}{RESET}\n",
+            println!(
+                "  {CYAN}\u{25B6} {tool_type}{RESET} {DIM}{}{RESET}",
                 format_args_preview(&args)
             );
 
             // Check autonomy confirmation
-            if needs_confirmation(autonomy, &tool_type) {
-                if !ask_confirmation(&tool_type, &args) {
-                    println!("    {YELLOW}\u{23ED} Skipped by user{RESET}");
-                    messages.push(json!({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": r#"{"error": "User declined this action"}"#,
-                    }));
-                    continue;
-                }
+            if needs_confirmation(autonomy, &tool_type) && !ask_confirmation(&tool_type, &args) {
+                println!("    {YELLOW}\u{23ED} Skipped by user{RESET}");
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": r#"{"error": "User declined this action"}"#,
+                }));
+                continue;
             }
 
             // Log tool call
-            storage.append_tool_call(session_id, &tool_type, &args, round_num as u32);
+            storage.append_tool_call(session_id, &tool_type, &args, round_num);
 
             let start = Instant::now();
             let result = execute_tool(registry, &tool_type, &args, cwd).await;
             let elapsed = start.elapsed().as_secs_f64();
 
             // Log tool result
-            storage.append_tool_result(session_id, &tool_type, &result, round_num as u32);
+            storage.append_tool_result(session_id, &tool_type, &result, round_num);
 
             if result.get("error").is_some() {
                 let err_msg = result["error"].as_str().unwrap_or("unknown error");
@@ -672,9 +701,7 @@ async fn agentic_loop(
                 println!("    {RED}\u{2717} {truncated}{RESET} {DIM}({elapsed:.1}s){RESET}");
             } else {
                 let summary = summarize_result(&result);
-                println!(
-                    "    {GREEN}\u{2713}{RESET} {DIM}{summary} ({elapsed:.1}s){RESET}"
-                );
+                println!("    {GREEN}\u{2713}{RESET} {DIM}{summary} ({elapsed:.1}s){RESET}");
             }
 
             // Truncate large results
@@ -787,7 +814,10 @@ fn handle_slash(
         "/tokens" => {
             let est = estimate_tokens(messages);
             println!("{DIM}Session: {}{RESET}", tracker.summary());
-            println!("{DIM}Context: ~{est} tokens in {} messages{RESET}", messages.len());
+            println!(
+                "{DIM}Context: ~{est} tokens in {} messages{RESET}",
+                messages.len()
+            );
         }
         "/tools" => {
             let mut cats: HashMap<String, Vec<String>> = HashMap::new();
@@ -811,7 +841,10 @@ fn handle_slash(
         "/session" => {
             println!("  {DIM}ID: {session_id}{RESET}");
             if let Some(m) = storage.read_manifest(session_id) {
-                println!("  {DIM}Messages: {} | Checkpoints: {}{RESET}", m.message_count, m.checkpoint_count);
+                println!(
+                    "  {DIM}Messages: {} | Checkpoints: {}{RESET}",
+                    m.message_count, m.checkpoint_count
+                );
             }
         }
         "/sessions" => {
@@ -820,8 +853,16 @@ fn handle_slash(
                 println!("  {DIM}No saved sessions{RESET}");
             } else {
                 for s in &sessions {
-                    let icon = if s.status == "active" { "\u{25CF}" } else { "\u{25CB}" };
-                    let current = if s.id == session_id { " <- current" } else { "" };
+                    let icon = if s.status == "active" {
+                        "\u{25CF}"
+                    } else {
+                        "\u{25CB}"
+                    };
+                    let current = if s.id == session_id {
+                        " <- current"
+                    } else {
+                        ""
+                    };
                     println!(
                         "  {icon} {BOLD}{}{RESET} {DIM}{}/{} | {} msgs{current}{RESET}",
                         s.id, s.provider, s.model, s.message_count
@@ -830,9 +871,16 @@ fn handle_slash(
             }
         }
         "/checkpoint" => {
-            let label = if parts.len() > 1 { parts[1].trim() } else { "manual" };
+            let label = if parts.len() > 1 {
+                parts[1].trim()
+            } else {
+                "manual"
+            };
             let cp = storage.create_checkpoint(session_id, messages.len(), label);
-            println!("  {GREEN}Checkpoint created: {} ({label}) at message {}{RESET}", cp.id, cp.message_index);
+            println!(
+                "  {GREEN}Checkpoint created: {} ({label}) at message {}{RESET}",
+                cp.id, cp.message_index
+            );
         }
         "/help" => {
             println!(
@@ -907,10 +955,7 @@ pub async fn run_interactive_session(config: SessionConfig) {
     let storage = SessionStorage::new();
     let autonomy = get_autonomy(&config.autonomy_level);
 
-    println!(
-        "  {DIM}Tools loaded: {} {RESET}",
-        tool_schemas.len()
-    );
+    println!("  {DIM}Tools loaded: {} {RESET}", tool_schemas.len());
     println!(
         "  {DIM}Autonomy: {BOLD}{}{RESET} {DIM}(max {} rounds/turn){RESET}",
         autonomy.level, autonomy.max_tool_rounds
@@ -997,18 +1042,21 @@ pub async fn run_interactive_session(config: SessionConfig) {
 
         // Run agentic loop
         match agentic_loop(
-            adapter.as_ref(),
-            &config.model,
+            LlmTurn {
+                adapter: adapter.as_ref(),
+                model: &config.model,
+                tools: &tool_schemas,
+                temperature: config.temperature,
+                max_tokens: config.max_tokens,
+            },
             &mut messages,
-            &tool_schemas,
-            &name_map,
-            &registry,
-            &cwd,
+            ToolCtx {
+                name_map: &name_map,
+                registry: &registry,
+                cwd: &cwd,
+            },
             &mut tracker,
             &autonomy,
-            config.temperature,
-            config.max_tokens,
-            config.context_window,
             &storage,
             &session_id,
         )
@@ -1034,9 +1082,7 @@ pub async fn run_interactive_session(config: SessionConfig) {
                         "\n{RED}Error: Model timed out. Try a smaller model or reduce context window.{RESET}"
                     );
                 } else if e.contains("connect") || e.contains("refused") {
-                    println!(
-                        "\n{RED}Error: Cannot connect to provider. Is it running?{RESET}"
-                    );
+                    println!("\n{RED}Error: Cannot connect to provider. Is it running?{RESET}");
                 } else {
                     println!("\n{RED}Error: {e}{RESET}");
                 }

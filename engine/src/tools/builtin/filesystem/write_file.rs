@@ -32,13 +32,12 @@ impl Tool for WriteFileTool {
         _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let raw_path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let raw_path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "filesystem/write_file".into(),
                 message: "missing required input: path".into(),
-            })?;
+            }
+        })?;
         let content = inputs
             .get("content")
             .and_then(|v| v.as_str())
@@ -74,13 +73,9 @@ impl Tool for WriteFileTool {
         })?;
 
         let mut out = HashMap::new();
-        out.insert(
-            "path".to_string(),
-            json!(abs_path.display().to_string()),
-        );
+        out.insert("path".to_string(), json!(abs_path.display().to_string()));
         out.insert("bytes_written".to_string(), json!(bytes.len()));
         out.insert("created".to_string(), json!(created));
         Ok(out)
     }
 }
-

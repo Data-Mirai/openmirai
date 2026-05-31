@@ -66,9 +66,7 @@ impl ContextCompiler {
     }
 
     pub fn with_max_length(max_context_length: usize) -> Self {
-        Self {
-            max_context_length,
-        }
+        Self { max_context_length }
     }
 
     /// Compile context from all available sources.
@@ -140,21 +138,18 @@ impl ContextCompiler {
         }
 
         // System prompt
-        let system_prompt = agent_spec
-            .system_prompt
-            .clone()
-            .unwrap_or_default();
+        let system_prompt = agent_spec.system_prompt.clone().unwrap_or_default();
 
         // Phase 5: Compression
-        let total_chars: usize = system_prompt.len()
-            + sections.iter().map(|s| s.content.len()).sum::<usize>();
+        let total_chars: usize =
+            system_prompt.len() + sections.iter().map(|s| s.content.len()).sum::<usize>();
 
         if total_chars > self.max_context_length {
             self.compress(&mut sections, total_chars);
         }
 
-        let final_chars = system_prompt.len()
-            + sections.iter().map(|s| s.content.len()).sum::<usize>();
+        let final_chars =
+            system_prompt.len() + sections.iter().map(|s| s.content.len()).sum::<usize>();
 
         CompiledContext {
             system_prompt,
@@ -164,7 +159,7 @@ impl ContextCompiler {
     }
 
     /// Compress sections by truncating lowest priority first (highest number).
-    fn compress(&self, sections: &mut Vec<ContextSection>, total_chars: usize) {
+    fn compress(&self, sections: &mut [ContextSection], total_chars: usize) {
         let excess = total_chars.saturating_sub(self.max_context_length);
         if excess == 0 {
             return;
@@ -304,10 +299,7 @@ mod tests {
         let ctx = compiler.compile(&spec, "session", &memory, &[]);
 
         // Memory (priority 4) should be compressed before identity (priority 1)
-        let mem_section = ctx
-            .context_sections
-            .iter()
-            .find(|s| s.name == "Memory");
+        let mem_section = ctx.context_sections.iter().find(|s| s.name == "Memory");
         if let Some(ms) = mem_section {
             // Either compressed or fully removed
             assert!(ms.content.len() < 100 || ms.content.contains("compressed"));
@@ -318,13 +310,11 @@ mod tests {
     fn to_prompt_string() {
         let ctx = CompiledContext {
             system_prompt: "You are helpful.".to_string(),
-            context_sections: vec![
-                ContextSection {
-                    name: "Session Context".to_string(),
-                    content: "User asked about X".to_string(),
-                    priority: 3,
-                },
-            ],
+            context_sections: vec![ContextSection {
+                name: "Session Context".to_string(),
+                content: "User asked about X".to_string(),
+                priority: 3,
+            }],
             total_chars: 50,
         };
         let prompt = ctx.to_prompt_string();

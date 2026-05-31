@@ -49,7 +49,7 @@ pub fn parse_frontmatter(text: &str) -> (NoteMetadata, &str) {
     // yaml_block sits between the opening --- and closing ---
     let yaml_block = &after_open[1..end_idx]; // skip leading \n
     let rest = &after_open[end_idx + 4..]; // skip \n---
-    // Strip leading newlines from body (there can be one or two)
+                                           // Strip leading newlines from body (there can be one or two)
     let body = rest.trim_start_matches('\n');
 
     match serde_yaml::from_str::<NoteMetadata>(yaml_block) {

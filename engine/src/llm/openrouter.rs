@@ -17,7 +17,10 @@ const DEFAULT_MODEL: &str = "meta-llama/llama-3.3-70b-instruct";
 /// attribution. These are included automatically.
 pub fn new(api_key: &str) -> OpenAICompatAdapter {
     let mut extra_headers = HashMap::new();
-    extra_headers.insert("HTTP-Referer".to_string(), "https://datamirai.com".to_string());
+    extra_headers.insert(
+        "HTTP-Referer".to_string(),
+        "https://datamirai.com".to_string(),
+    );
     extra_headers.insert("X-Title".to_string(), "OpenMirai".to_string());
 
     OpenAICompatAdapter::new(

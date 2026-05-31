@@ -46,6 +46,12 @@ macro_rules! agent_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -188,10 +194,7 @@ mod tests {
         let tool = RunAgentTool;
         let mut inputs = HashMap::new();
         inputs.insert("agent_id".to_string(), json!("agent-123"));
-        let result = tool
-            .execute(inputs, &HashMap::new(), &ctx())
-            .await
-            .unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await.unwrap();
         assert_eq!(result["agent_id"], json!("agent-123"));
         assert_eq!(result["status"], json!("placeholder"));
     }
@@ -199,9 +202,7 @@ mod tests {
     #[tokio::test]
     async fn run_agent_missing_id_fails() {
         let tool = RunAgentTool;
-        let result = tool
-            .execute(HashMap::new(), &HashMap::new(), &ctx())
-            .await;
+        let result = tool.execute(HashMap::new(), &HashMap::new(), &ctx()).await;
         assert!(result.is_err());
     }
 
@@ -214,9 +215,7 @@ mod tests {
             "__agent_call_chain__".to_string(),
             json!(["agent-a", "agent-b", "agent-c"]),
         );
-        let result = tool
-            .execute(inputs, &HashMap::new(), &ctx())
-            .await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("nesting depth exceeded"));
@@ -231,9 +230,7 @@ mod tests {
             "__agent_call_chain__".to_string(),
             json!(["agent-a", "agent-b"]),
         );
-        let result = tool
-            .execute(inputs, &HashMap::new(), &ctx())
-            .await;
+        let result = tool.execute(inputs, &HashMap::new(), &ctx()).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("Circular agent reference"));

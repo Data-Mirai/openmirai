@@ -30,10 +30,7 @@ impl LocalStorageResource {
 
         // Canonicalize so we have a stable base for traversal checks
         let base_path = std::fs::canonicalize(&base_path).map_err(|e| {
-            ResourceError::Storage(format!(
-                "cannot canonicalize {}: {e}",
-                base_path.display()
-            ))
+            ResourceError::Storage(format!("cannot canonicalize {}: {e}", base_path.display()))
         })?;
 
         Ok(Self { base_path })
@@ -45,9 +42,8 @@ impl LocalStorageResource {
 
         // For existing paths, canonicalize and check prefix
         if joined.exists() {
-            let canonical = std::fs::canonicalize(&joined).map_err(|e| {
-                ResourceError::Storage(format!("path resolution failed: {e}"))
-            })?;
+            let canonical = std::fs::canonicalize(&joined)
+                .map_err(|e| ResourceError::Storage(format!("path resolution failed: {e}")))?;
             if !canonical.starts_with(&self.base_path) {
                 return Err(ResourceError::Storage(
                     "path traversal blocked: resolved path is outside base_path".into(),
@@ -77,9 +73,8 @@ impl StorageResource for LocalStorageResource {
         let resolved_clone = resolved.clone();
 
         tokio::task::spawn_blocking(move || {
-            std::fs::read(&resolved_clone).map_err(|e| {
-                ResourceError::NotFound(format!("{}: {e}", resolved_clone.display()))
-            })
+            std::fs::read(&resolved_clone)
+                .map_err(|e| ResourceError::NotFound(format!("{}: {e}", resolved_clone.display())))
         })
         .await
         .map_err(|e| ResourceError::Storage(format!("spawn_blocking join: {e}")))?

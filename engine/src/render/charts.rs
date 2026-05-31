@@ -51,7 +51,10 @@ pub fn bar_chart(title: &str, labels: &[String], values: &[f64], color: &str) ->
     s.push_str(&format!("  <canvas id=\"{}\"></canvas>\n", cid));
     s.push_str("</div>\n");
     s.push_str("<script>\n");
-    s.push_str(&format!("new Chart(document.getElementById(\"{}\"), {{\n", cid));
+    s.push_str(&format!(
+        "new Chart(document.getElementById(\"{}\"), {{\n",
+        cid
+    ));
     s.push_str("  type: \"bar\",\n");
     s.push_str(&format!("  data: {{\n    labels: {},\n", labels_js));
     s.push_str(&format!(
@@ -68,12 +71,8 @@ pub fn bar_chart(title: &str, labels: &[String], values: &[f64], color: &str) ->
         show_title, title_esc
     ));
     s.push_str("    scales: {\n");
-    s.push_str(
-        "      x: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } },\n",
-    );
-    s.push_str(
-        "      y: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } }\n",
-    );
+    s.push_str("      x: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } },\n");
+    s.push_str("      y: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } }\n");
     s.push_str("    }\n  }\n});\n</script>");
     s
 }
@@ -110,7 +109,10 @@ pub fn line_chart(
     s.push_str(&format!("  <canvas id=\"{}\"></canvas>\n", cid));
     s.push_str("</div>\n");
     s.push_str("<script>\n");
-    s.push_str(&format!("new Chart(document.getElementById(\"{}\"), {{\n", cid));
+    s.push_str(&format!(
+        "new Chart(document.getElementById(\"{}\"), {{\n",
+        cid
+    ));
     s.push_str("  type: \"line\",\n");
     s.push_str(&format!("  data: {{\n    labels: {},\n", labels_js));
     s.push_str(&format!("    datasets: [{}]\n", datasets_js.join(",")));
@@ -120,12 +122,8 @@ pub fn line_chart(
         show_title, title_esc
     ));
     s.push_str("    scales: {\n");
-    s.push_str(
-        "      x: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } },\n",
-    );
-    s.push_str(
-        "      y: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } }\n",
-    );
+    s.push_str("      x: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } },\n");
+    s.push_str("      y: { ticks: { color: \"#94a3b8\" }, grid: { color: \"#1e293b\" } }\n");
     s.push_str("    }\n  }\n});\n</script>");
     s
 }
@@ -155,7 +153,10 @@ pub fn pie_chart(title: &str, labels: &[String], values: &[f64], colors: &[Strin
     s.push_str(&format!("  <canvas id=\"{}\"></canvas>\n", cid));
     s.push_str("</div>\n");
     s.push_str("<script>\n");
-    s.push_str(&format!("new Chart(document.getElementById(\"{}\"), {{\n", cid));
+    s.push_str(&format!(
+        "new Chart(document.getElementById(\"{}\"), {{\n",
+        cid
+    ));
     s.push_str("  type: \"doughnut\",\n");
     s.push_str(&format!("  data: {{\n    labels: {},\n", labels_js));
     s.push_str(&format!(

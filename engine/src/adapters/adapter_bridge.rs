@@ -145,9 +145,7 @@ impl LLMResource for AdapterBridgeLLMResource {
             if !response.status().is_success() {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                return Err(ResourceError::Llm(format!(
-                    "Embed HTTP {status}: {text}"
-                )));
+                return Err(ResourceError::Llm(format!("Embed HTTP {status}: {text}")));
             }
 
             let resp: Value = response
@@ -250,7 +248,10 @@ mod tests {
                 .unwrap_or("no content");
             Ok(NormalizedResponse {
                 response: format!("echo: {last_msg}"),
-                tokens_used: TokenUsage { input: 5, output: 3 },
+                tokens_used: TokenUsage {
+                    input: 5,
+                    output: 3,
+                },
                 model: model.to_string(),
                 provider: "fake".to_string(),
                 tool_calls: vec![],
@@ -266,7 +267,10 @@ mod tests {
     async fn bridge_call_forwards_to_adapter() {
         let bridge = AdapterBridgeLLMResource::new(Box::new(FakeAdapter), "test-model");
         let context = vec![json!({"role": "system", "content": "You are helpful."})];
-        let result = bridge.call("test-model", "hello", &context, 0.7, 100).await.unwrap();
+        let result = bridge
+            .call("test-model", "hello", &context, 0.7, 100)
+            .await
+            .unwrap();
         assert_eq!(result.response, "echo: hello");
         assert_eq!(result.provider, "fake");
         assert_eq!(result.model, "test-model");

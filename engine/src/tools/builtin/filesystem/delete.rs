@@ -30,13 +30,12 @@ impl Tool for DeleteTool {
         _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let raw_path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let raw_path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "filesystem/delete".into(),
                 message: "missing required input: path".into(),
-            })?;
+            }
+        })?;
 
         let path = fs::canonicalize(raw_path).map_err(|e| ToolError::ExecutionFailed {
             tool_type: "filesystem/delete".into(),
@@ -61,4 +60,3 @@ impl Tool for DeleteTool {
         Ok(out)
     }
 }
-

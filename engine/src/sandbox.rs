@@ -83,11 +83,7 @@ pub struct SandboxResult {
 // ---------------------------------------------------------------------------
 
 /// Execute code in an isolated sandbox.
-pub async fn execute(
-    code: &str,
-    language: &Language,
-    config: &SandboxConfig,
-) -> SandboxResult {
+pub async fn execute(code: &str, language: &Language, config: &SandboxConfig) -> SandboxResult {
     let start = std::time::Instant::now();
 
     // Create temp directory for isolation.
@@ -252,24 +248,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_nonzero_exit() {
-        let result = execute(
-            "exit 42",
-            &Language::Bash,
-            &SandboxConfig::default(),
-        )
-        .await;
+        let result = execute("exit 42", &Language::Bash, &SandboxConfig::default()).await;
         assert_eq!(result.exit_code, 42);
         assert!(!result.timed_out);
     }
 
     #[tokio::test]
     async fn execute_stderr() {
-        let result = execute(
-            "echo 'err' >&2",
-            &Language::Bash,
-            &SandboxConfig::default(),
-        )
-        .await;
+        let result = execute("echo 'err' >&2", &Language::Bash, &SandboxConfig::default()).await;
         assert!(result.stderr.contains("err"));
     }
 

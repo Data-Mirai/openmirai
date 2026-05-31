@@ -58,9 +58,7 @@ impl Suggester {
 
         let prompt = Self::build_prompt(graph, trace);
 
-        let response = llm
-            .call("default", &prompt, &[], 0.4, 2048)
-            .await?;
+        let response = llm.call("default", &prompt, &[], 0.4, 2048).await?;
 
         Ok(Self::parse_suggestions(&response.response))
     }
@@ -208,7 +206,11 @@ Rules:
             .collect();
 
         // Sort by confidence descending, keep max 5
-        suggestions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        suggestions.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         suggestions.truncate(5);
         suggestions
     }
@@ -231,12 +233,12 @@ fn strip_code_fences(text: &str) -> String {
         return trimmed.to_string();
     }
     let lines: Vec<&str> = trimmed.lines().collect();
-    let start = if lines.first().map_or(false, |l| l.starts_with("```")) {
+    let start = if lines.first().is_some_and(|l| l.starts_with("```")) {
         1
     } else {
         0
     };
-    let end = if lines.last().map_or(false, |l| l.trim() == "```") {
+    let end = if lines.last().is_some_and(|l| l.trim() == "```") {
         lines.len() - 1
     } else {
         lines.len()

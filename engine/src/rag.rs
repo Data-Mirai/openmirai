@@ -23,17 +23,13 @@ pub enum SourceType {
 /// Chunking strategy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ChunkingStrategy {
     FixedSize,
     Sentence,
+    #[default]
     Paragraph,
     Semantic,
-}
-
-impl Default for ChunkingStrategy {
-    fn default() -> Self {
-        Self::Paragraph
-    }
 }
 
 /// RAG pipeline configuration.
@@ -86,7 +82,9 @@ pub struct RAGSearchResult {
 /// Split text into chunks based on the configured strategy.
 pub fn chunk_text(text: &str, config: &RAGPipelineConfig) -> Vec<String> {
     match config.chunking_strategy {
-        ChunkingStrategy::FixedSize => chunk_fixed_size(text, config.chunk_size, config.chunk_overlap),
+        ChunkingStrategy::FixedSize => {
+            chunk_fixed_size(text, config.chunk_size, config.chunk_overlap)
+        }
         ChunkingStrategy::Sentence => chunk_by_sentence(text, config.chunk_size),
         ChunkingStrategy::Paragraph => chunk_by_paragraph(text, config.chunk_size),
         ChunkingStrategy::Semantic => {
@@ -121,7 +119,7 @@ fn chunk_by_sentence(text: &str, max_chars: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
 
-    for sentence in text.split_inclusive(|c: char| c == '.' || c == '!' || c == '?') {
+    for sentence in text.split_inclusive(['.', '!', '?']) {
         if current.len() + sentence.len() > max_chars && !current.is_empty() {
             chunks.push(current.trim().to_string());
             current = String::new();
@@ -173,7 +171,10 @@ pub fn read_file_for_rag(path: &str) -> Result<String, String> {
         .unwrap_or_default();
 
     if !supported_formats().contains(&ext.as_str()) {
-        return Err(format!("Unsupported format: {ext}. Supported: {:?}", supported_formats()));
+        return Err(format!(
+            "Unsupported format: {ext}. Supported: {:?}",
+            supported_formats()
+        ));
     }
 
     std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))

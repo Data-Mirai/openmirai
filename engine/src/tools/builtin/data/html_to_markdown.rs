@@ -127,13 +127,12 @@ impl Tool for HtmlToMarkdownTool {
         _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let html = inputs
-            .get("html")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let html = inputs.get("html").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "data/html_to_markdown".into(),
                 message: "input 'html' is required".into(),
-            })?;
+            }
+        })?;
 
         let markdown = convert_html_to_md(html);
         let length = markdown.len();

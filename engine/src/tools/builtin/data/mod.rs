@@ -49,6 +49,12 @@ macro_rules! data_tool {
             }
         }
 
+        impl Default for $factory {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl ToolFactory for $factory {
             fn create(&self) -> Arc<dyn Tool> {
                 Arc::new($tool)
@@ -60,31 +66,30 @@ macro_rules! data_tool {
     };
 }
 
-
 pub mod db_read;
 pub mod db_write;
+pub mod entity_query;
+pub mod entity_upsert;
+pub mod html_to_markdown;
+pub mod rag_search;
 pub mod storage_read;
 pub mod storage_write;
 pub mod vault_read;
 pub mod vault_write;
-pub mod entity_query;
-pub mod entity_upsert;
 pub mod web_scrape;
-pub mod html_to_markdown;
-pub mod rag_search;
 
 // Re-export tool structs for tests and backward compat.
 pub use db_read::*;
 pub use db_write::*;
+pub use entity_query::*;
+pub use entity_upsert::*;
+pub use html_to_markdown::*;
+pub use rag_search::*;
 pub use storage_read::*;
 pub use storage_write::*;
 pub use vault_read::*;
 pub use vault_write::*;
-pub use entity_query::*;
-pub use entity_upsert::*;
 pub use web_scrape::*;
-pub use html_to_markdown::*;
-pub use rag_search::*;
 
 pub fn register_data_tools(registry: &mut ToolRegistry) {
     registry.register("data/db_read", Box::new(DbReadFactory::new()));
@@ -96,7 +101,10 @@ pub fn register_data_tools(registry: &mut ToolRegistry) {
     registry.register("data/entity_query", Box::new(EntityQueryFactory::new()));
     registry.register("data/entity_upsert", Box::new(EntityUpsertFactory::new()));
     registry.register("data/web_scrape", Box::new(WebScrapeFactory::new()));
-    registry.register("data/html_to_markdown", Box::new(HtmlToMarkdownFactory::new()));
+    registry.register(
+        "data/html_to_markdown",
+        Box::new(HtmlToMarkdownFactory::new()),
+    );
     registry.register("data/rag_search", Box::new(RagSearchFactory::new()));
 }
 
@@ -122,11 +130,7 @@ mod tests {
 
     #[async_trait]
     impl DBResource for StubDB {
-        async fn execute(
-            &self,
-            _query: &str,
-            _params: &[Value],
-        ) -> Result<Value, ResourceError> {
+        async fn execute(&self, _query: &str, _params: &[Value]) -> Result<Value, ResourceError> {
             Ok(json!({"id": "row-1"}))
         }
 
@@ -154,10 +158,7 @@ mod tests {
     impl StubStorage {
         fn new() -> Self {
             let mut data = HashMap::new();
-            data.insert(
-                "test/file.txt".to_string(),
-                b"hello world".to_vec(),
-            );
+            data.insert("test/file.txt".to_string(), b"hello world".to_vec());
             Self { data }
         }
     }
@@ -195,7 +196,10 @@ mod tests {
         ) -> Result<LLMResponse, ResourceError> {
             Ok(LLMResponse {
                 response: "stub".into(),
-                tokens_used: TokenUsage { input: 0, output: 0 },
+                tokens_used: TokenUsage {
+                    input: 0,
+                    output: 0,
+                },
                 model: "stub".into(),
                 provider: "stub".into(),
             })
@@ -311,7 +315,10 @@ mod tests {
         let tool = DbReadTool;
         let inputs = HashMap::new();
         let mut config = HashMap::new();
-        config.insert("query".to_string(), json!("SELECT * FROM users WHERE id = 1"));
+        config.insert(
+            "query".to_string(),
+            json!("SELECT * FROM users WHERE id = 1"),
+        );
         config.insert("mode".to_string(), json!("one"));
 
         let result = tool.execute(inputs, &config, &ctx).await.unwrap();
@@ -326,7 +333,10 @@ mod tests {
         let tool = DbReadTool;
         let inputs = HashMap::new();
         let mut config = HashMap::new();
-        config.insert("query".to_string(), json!("SELECT * FROM users WHERE id = 999"));
+        config.insert(
+            "query".to_string(),
+            json!("SELECT * FROM users WHERE id = 999"),
+        );
         config.insert("mode".to_string(), json!("one"));
 
         let result = tool.execute(inputs, &config, &ctx).await.unwrap();
@@ -338,9 +348,7 @@ mod tests {
     async fn db_read_no_db_fails() {
         let ctx = TestContext::empty();
         let tool = DbReadTool;
-        let result = tool
-            .execute(HashMap::new(), &HashMap::new(), &ctx)
-            .await;
+        let result = tool.execute(HashMap::new(), &HashMap::new(), &ctx).await;
         assert!(result.is_err());
     }
 
@@ -397,9 +405,7 @@ mod tests {
     async fn db_write_no_db_fails() {
         let ctx = TestContext::empty();
         let tool = DbWriteTool;
-        let result = tool
-            .execute(HashMap::new(), &HashMap::new(), &ctx)
-            .await;
+        let result = tool.execute(HashMap::new(), &HashMap::new(), &ctx).await;
         assert!(result.is_err());
     }
 
@@ -452,9 +458,7 @@ mod tests {
     async fn storage_read_no_path_fails() {
         let ctx = TestContext::with_storage();
         let tool = StorageReadTool;
-        let result = tool
-            .execute(HashMap::new(), &HashMap::new(), &ctx)
-            .await;
+        let result = tool.execute(HashMap::new(), &HashMap::new(), &ctx).await;
         assert!(result.is_err());
     }
 
@@ -539,10 +543,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("path".to_string(), json!("vault/test.md"));
         inputs.insert("content".to_string(), json!("hello"));
-        let result = tool
-            .execute(inputs, &HashMap::new(), &ctx)
-            .await
-            .unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx).await.unwrap();
         assert_eq!(result["path"], json!("vault/test.md"));
         assert_eq!(result["written"], json!(true));
     }
@@ -558,10 +559,7 @@ mod tests {
             "html".to_string(),
             json!("<h1>Title</h1><p>Hello <strong>world</strong></p>"),
         );
-        let result = tool
-            .execute(inputs, &HashMap::new(), &ctx)
-            .await
-            .unwrap();
+        let result = tool.execute(inputs, &HashMap::new(), &ctx).await.unwrap();
         let md = result["markdown"].as_str().unwrap();
         assert!(md.contains("# Title"));
         assert!(md.contains("**world**"));
@@ -570,7 +568,9 @@ mod tests {
 
     #[test]
     fn html_to_markdown_strips_script() {
-        let md = super::html_to_markdown::convert_html_to_md("<p>hello</p><script>evil()</script><p>world</p>");
+        let md = super::html_to_markdown::convert_html_to_md(
+            "<p>hello</p><script>evil()</script><p>world</p>",
+        );
         assert!(!md.contains("evil"));
         assert!(md.contains("hello"));
         assert!(md.contains("world"));
@@ -578,7 +578,9 @@ mod tests {
 
     #[test]
     fn html_to_markdown_converts_links() {
-        let md = super::html_to_markdown::convert_html_to_md(r#"<a href="https://example.com">Click here</a>"#);
+        let md = super::html_to_markdown::convert_html_to_md(
+            r#"<a href="https://example.com">Click here</a>"#,
+        );
         assert!(md.contains("[Click here](https://example.com)"));
     }
 
@@ -697,7 +699,7 @@ mod tests {
             let jittered = super::apply_jitter(base);
             let ms = jittered.as_millis();
             assert!(
-                ms >= 700 && ms <= 1300,
+                (700..=1300).contains(&ms),
                 "Jitter {ms}ms is outside [700, 1300] range"
             );
         }

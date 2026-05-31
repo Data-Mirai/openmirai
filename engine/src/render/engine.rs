@@ -14,7 +14,8 @@ static RE_UL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[-*+]\s+").unw
 static RE_OL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*\d+\.\s+").unwrap());
 static RE_SLUG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
 static RE_INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
-static RE_IMAGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap());
+static RE_IMAGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap());
 static RE_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
 static RE_WIKILINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]").unwrap());
@@ -24,8 +25,9 @@ static RE_ITALIC_STAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*(.+?)\*
 // Note: Rust regex crate does not support lookbehinds. We use a capturing group
 // approach instead: match a non-word char (or start) before _text_ and a non-word
 // char (or end) after it, and rebuild the replacement preserving the boundary chars.
-static RE_ITALIC_UNDER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|(?P<pre>[^a-zA-Z0-9]))_(?P<inner>.+?)_(?:(?P<post>[^a-zA-Z0-9])|$)").unwrap());
+static RE_ITALIC_UNDER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|(?P<pre>[^a-zA-Z0-9]))_(?P<inner>.+?)_(?:(?P<post>[^a-zA-Z0-9])|$)").unwrap()
+});
 
 /// Custom Markdown-to-HTML render engine with embedded CSS themes.
 pub struct RenderEngine {
@@ -63,8 +65,8 @@ impl RenderEngine {
             let stripped = line.trim();
 
             // Fenced code blocks
-            if stripped.starts_with("```") {
-                let lang = stripped[3..].trim();
+            if let Some(rest) = stripped.strip_prefix("```") {
+                let lang = rest.trim();
                 let mut code_lines: Vec<&str> = Vec::new();
                 i += 1;
                 while i < lines.len() && !lines[i].trim().starts_with("```") {
@@ -78,7 +80,10 @@ impl RenderEngine {
                 } else {
                     String::new()
                 };
-                output.push(format!("<pre><code{}>{}</code></pre>", lang_attr, code_content));
+                output.push(format!(
+                    "<pre><code{}>{}</code></pre>",
+                    lang_attr, code_content
+                ));
                 continue;
             }
 
@@ -141,8 +146,7 @@ impl RenderEngine {
 
             // Paragraph -- collect contiguous non-empty, non-block-start lines
             let mut para_lines: Vec<&str> = Vec::new();
-            while i < lines.len() && !lines[i].trim().is_empty() && !self.is_block_start(lines[i])
-            {
+            while i < lines.len() && !lines[i].trim().is_empty() && !self.is_block_start(lines[i]) {
                 para_lines.push(lines[i]);
                 i += 1;
             }
@@ -202,10 +206,7 @@ impl RenderEngine {
         // Wiki-links
         let text = RE_WIKILINK.replace_all(&text, |caps: &regex::Captures| {
             let reference = caps.get(1).map_or("", |m| m.as_str()).trim();
-            let display = caps
-                .get(2)
-                .map_or(reference, |m| m.as_str())
-                .trim();
+            let display = caps.get(2).map_or(reference, |m| m.as_str()).trim();
             format!(
                 "<a class=\"wiki-link\" href=\"{ref_}\">{display}</a>",
                 ref_ = reference,

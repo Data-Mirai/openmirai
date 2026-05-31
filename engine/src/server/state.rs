@@ -53,7 +53,11 @@ pub struct AppState {
 
 impl AppState {
     /// Create app state with a real LLM factory. NO MOCKS.
-    pub fn new(tool_registry: ToolRegistry, llm_factory: LLMFactory, api_key: Option<String>) -> Self {
+    pub fn new(
+        tool_registry: ToolRegistry,
+        llm_factory: LLMFactory,
+        api_key: Option<String>,
+    ) -> Self {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
         let runner = GraphRunner::new(Box::new(executor));
@@ -135,4 +139,3 @@ pub struct SessionListQuery {
 pub struct ErrorResponse {
     pub error: String,
 }
-

@@ -18,11 +18,11 @@ mod terminal;
 use std::process;
 use std::sync::Arc;
 
-use openmirai_engine::{
-    AdapterBridgeLLMResource, AgentSpec, ExecutionContext, ExecutionStatus, GraphRunner,
-    RegistryExecutor, DefaultExecutionContext, ToolRegistry,
-};
 use openmirai_engine::tools::builtin::register_all_builtin_tools;
+use openmirai_engine::{
+    AdapterBridgeLLMResource, AgentSpec, DefaultExecutionContext, ExecutionContext,
+    ExecutionStatus, GraphRunner, RegistryExecutor, ToolRegistry,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -104,7 +104,12 @@ fn detect_provider_from_model(model: &str) -> Option<&'static str> {
         Some("claude")
     } else if m.starts_with("gemini") || m.starts_with("gemma") {
         Some("gemini")
-    } else if m.contains("llama") || m.contains("mistral") || m.contains("qwen") || m.contains("phi") || m.contains("deepseek") {
+    } else if m.contains("llama")
+        || m.contains("mistral")
+        || m.contains("qwen")
+        || m.contains("phi")
+        || m.contains("deepseek")
+    {
         // Common open models → likely Ollama
         Some("ollama")
     } else {
@@ -211,7 +216,9 @@ async fn run_agent(args: &[String]) {
 
     // Benchmark setup
     let benchmark_enabled = has_flag(args, "--benchmark")
-        || std::env::var("MIRAI_BENCHMARK").map(|v| v == "1").unwrap_or(false);
+        || std::env::var("MIRAI_BENCHMARK")
+            .map(|v| v == "1")
+            .unwrap_or(false);
     if benchmark_enabled {
         let bench_path = std::env::var("MIRAI_BENCHMARK_FILE")
             .unwrap_or_else(|_| "benchmarks.jsonl".to_string());
@@ -223,7 +230,11 @@ async fn run_agent(args: &[String]) {
     eprintln!(
         "{}LLM: {provider}/{model}{}{}",
         colors::DIM,
-        if benchmark_enabled { " [benchmark]" } else { "" },
+        if benchmark_enabled {
+            " [benchmark]"
+        } else {
+            ""
+        },
         colors::RESET
     );
 
@@ -278,7 +289,13 @@ async fn run_agent(args: &[String]) {
                 Some(soul.to_system_prompt())
             }
             Err(e) => {
-                eprintln!("{}Warning: failed to load soul '{}': {}{}", colors::YELLOW, soul_path, e, colors::RESET);
+                eprintln!(
+                    "{}Warning: failed to load soul '{}': {}{}",
+                    colors::YELLOW,
+                    soul_path,
+                    e,
+                    colors::RESET
+                );
                 spec.system_prompt.clone()
             }
         }
@@ -310,10 +327,18 @@ async fn run_agent(args: &[String]) {
 
             // Validate against spec.inputs if defined (PRD-004 Capa 1)
             let validated_payload = if let Some(ref inputs_schema) = spec.inputs {
-                match openmirai_engine::core::agent_spec::validate_agent_inputs(&payload, inputs_schema) {
+                match openmirai_engine::core::agent_spec::validate_agent_inputs(
+                    &payload,
+                    inputs_schema,
+                ) {
                     Ok(enriched) => enriched,
                     Err(errors) => {
-                        eprintln!("{}Error: input validation failed for agent '{}':{}", colors::RED, spec.name, colors::RESET);
+                        eprintln!(
+                            "{}Error: input validation failed for agent '{}':{}",
+                            colors::RED,
+                            spec.name,
+                            colors::RESET
+                        );
                         for err in &errors {
                             eprintln!("  - {}", err);
                         }
@@ -325,8 +350,13 @@ async fn run_agent(args: &[String]) {
             };
 
             // Inject validated payload into trigger node
-            if let Some(entry) = graph.nodes.iter_mut().find(|n| n.tool_type.starts_with("trigger/")) {
-                let payload_value = serde_json::to_value(&validated_payload).unwrap_or(serde_json::json!({}));
+            if let Some(entry) = graph
+                .nodes
+                .iter_mut()
+                .find(|n| n.tool_type.starts_with("trigger/"))
+            {
+                let payload_value =
+                    serde_json::to_value(&validated_payload).unwrap_or(serde_json::json!({}));
                 entry.config.insert("payload".to_string(), payload_value);
             }
         }
@@ -346,7 +376,8 @@ async fn run_agent(args: &[String]) {
         let mcp_servers_val = serde_json::to_value(&spec.config.mcp_servers).unwrap_or_default();
         for node in &mut graph.nodes {
             if node.tool_type == "mcp/call" {
-                node.config.insert("__mcp_servers".to_string(), mcp_servers_val.clone());
+                node.config
+                    .insert("__mcp_servers".to_string(), mcp_servers_val.clone());
             }
         }
     }
@@ -451,11 +482,7 @@ fn validate_agent(args: &[String]) {
             );
         }
         Err(e) => {
-            eprintln!(
-                "{}✗ Invalid agent spec: {e}{}",
-                colors::RED,
-                colors::RESET
-            );
+            eprintln!("{}✗ Invalid agent spec: {e}{}", colors::RED, colors::RESET);
             process::exit(1);
         }
     }
@@ -485,7 +512,9 @@ async fn run_serve(args: &[String]) {
     );
 
     // Build a factory that creates REAL LLM resources for each request.
-    let llm_factory: std::sync::Arc<dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync> = {
+    let llm_factory: std::sync::Arc<
+        dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync,
+    > = {
         let provider = provider.clone();
         let model = model.clone();
         let api_key = api_key.clone();
@@ -502,15 +531,12 @@ async fn run_serve(args: &[String]) {
     };
 
     // Read API key from env or flag.
-    let server_api_key = parse_flag(args, "--api-key")
-        .or_else(|| std::env::var("MIRAI_API_KEY").ok());
+    let server_api_key =
+        parse_flag(args, "--api-key").or_else(|| std::env::var("MIRAI_API_KEY").ok());
 
-    if let Err(e) = openmirai_engine::server::serve(&host, port, llm_factory, server_api_key).await {
-        eprintln!(
-            "{}Server error: {e}{}",
-            colors::RED,
-            colors::RESET
-        );
+    if let Err(e) = openmirai_engine::server::serve(&host, port, llm_factory, server_api_key).await
+    {
+        eprintln!("{}Server error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);
     }
 }
@@ -531,17 +557,31 @@ fn cmd_tools(args: &[String]) {
             let spec = match specs.iter().find(|s| s.tool_type == tool_type) {
                 Some(s) => s,
                 None => {
-                    eprintln!("{}Tool not found: {tool_type}{}", colors::RED, colors::RESET);
+                    eprintln!(
+                        "{}Tool not found: {tool_type}{}",
+                        colors::RED,
+                        colors::RESET
+                    );
                     eprintln!("Run `mirai tools` to see all available tools.");
                     process::exit(1);
                 }
             };
 
-            println!("\n{}{}  —  {}{}", colors::BOLD, spec.tool_type, spec.name, colors::RESET);
+            println!(
+                "\n{}{}  —  {}{}",
+                colors::BOLD,
+                spec.tool_type,
+                spec.name,
+                colors::RESET
+            );
             println!("{}", spec.description);
 
             if !spec.inputs.is_empty() {
-                println!("\n{}INPUTS (what this node receives via data_map):{}", colors::GREEN, colors::RESET);
+                println!(
+                    "\n{}INPUTS (what this node receives via data_map):{}",
+                    colors::GREEN,
+                    colors::RESET
+                );
                 for f in &spec.inputs {
                     let req = if f.required { "required" } else { "optional" };
                     let desc = f.description.as_deref().unwrap_or("");
@@ -550,7 +590,11 @@ fn cmd_tools(args: &[String]) {
             }
 
             if !spec.outputs.is_empty() {
-                println!("\n{}OUTPUTS (what this node produces — use in data_map of next edge):{}", colors::CYAN, colors::RESET);
+                println!(
+                    "\n{}OUTPUTS (what this node produces — use in data_map of next edge):{}",
+                    colors::CYAN,
+                    colors::RESET
+                );
                 for f in &spec.outputs {
                     let desc = f.description.as_deref().unwrap_or("");
                     println!("  {:<20} {:<10} {}", f.name, f.field_type, desc);
@@ -558,14 +602,23 @@ fn cmd_tools(args: &[String]) {
             }
 
             if !spec.config_fields.is_empty() {
-                println!("\n{}CONFIG (set in the node's config section):{}", colors::DIM, colors::RESET);
+                println!(
+                    "\n{}CONFIG (set in the node's config section):{}",
+                    colors::DIM,
+                    colors::RESET
+                );
                 for f in &spec.config_fields {
                     let req = if f.required { "required" } else { "optional" };
                     let desc = f.description.as_deref().unwrap_or("");
-                    let default = f.default.as_ref()
+                    let default = f
+                        .default
+                        .as_ref()
                         .map(|d| format!(" (default: {})", d))
                         .unwrap_or_default();
-                    println!("  {:<20} {:<10} {:<10} {}{}", f.name, f.field_type, req, desc, default);
+                    println!(
+                        "  {:<20} {:<10} {:<10} {}{}",
+                        f.name, f.field_type, req, desc, default
+                    );
                 }
             }
 
@@ -574,23 +627,41 @@ fn cmd_tools(args: &[String]) {
         // List view: mirai tools
         None => {
             // Group by category.
-            let mut by_category: std::collections::BTreeMap<String, Vec<&openmirai_engine::ToolSpec>> =
-                std::collections::BTreeMap::new();
+            let mut by_category: std::collections::BTreeMap<
+                String,
+                Vec<&openmirai_engine::ToolSpec>,
+            > = std::collections::BTreeMap::new();
             for spec in &specs {
-                by_category.entry(spec.category.clone()).or_default().push(spec);
+                by_category
+                    .entry(spec.category.clone())
+                    .or_default()
+                    .push(spec);
             }
 
-            println!("\n{}Available tools ({}):{}\n", colors::BOLD, specs.len(), colors::RESET);
+            println!(
+                "\n{}Available tools ({}):{}\n",
+                colors::BOLD,
+                specs.len(),
+                colors::RESET
+            );
 
             for (category, tools) in &by_category {
                 println!("{}{}:{}", colors::GREEN, category, colors::RESET);
                 for tool in tools {
-                    println!("  {:<30} {}", tool.tool_type, tool.description.chars().take(60).collect::<String>());
+                    println!(
+                        "  {:<30} {}",
+                        tool.tool_type,
+                        tool.description.chars().take(60).collect::<String>()
+                    );
                 }
                 println!();
             }
 
-            println!("{}Tip:{} run `mirai tools <tool_type>` to see inputs, outputs, and config.", colors::DIM, colors::RESET);
+            println!(
+                "{}Tip:{} run `mirai tools <tool_type>` to see inputs, outputs, and config.",
+                colors::DIM,
+                colors::RESET
+            );
             println!("     Example: mirai tools ai/claude_code\n");
         }
     }
@@ -601,7 +672,11 @@ fn cmd_describe(args: &[String]) {
     let path = match args.first() {
         Some(p) => p,
         None => {
-            eprintln!("{}Usage: mirai describe <agent.yaml>{}", colors::RED, colors::RESET);
+            eprintln!(
+                "{}Usage: mirai describe <agent.yaml>{}",
+                colors::RED,
+                colors::RESET
+            );
             process::exit(1);
         }
     };
@@ -614,7 +689,13 @@ fn cmd_describe(args: &[String]) {
         }
     };
 
-    println!("\n{}Agent:{} {} ({})", colors::BOLD, colors::RESET, spec.name, spec.version);
+    println!(
+        "\n{}Agent:{} {} ({})",
+        colors::BOLD,
+        colors::RESET,
+        spec.name,
+        spec.version
+    );
     if !spec.description.is_empty() {
         println!("{}", spec.description);
     }
@@ -622,22 +703,42 @@ fn cmd_describe(args: &[String]) {
     if let Some(ref inputs) = spec.inputs {
         println!("\n{}Inputs:{}", colors::BOLD, colors::RESET);
         for (name, field) in inputs {
-            let req = if field.required { "required" } else { "optional" };
-            let desc = if field.description.is_empty() { String::new() } else { format!("  {}", field.description) };
+            let req = if field.required {
+                "required"
+            } else {
+                "optional"
+            };
+            let desc = if field.description.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", field.description)
+            };
             println!("  {}  {}  {}{}", name, field.field_type, req, desc);
         }
     } else {
-        println!("\n{}Inputs:{} (none declared — accepts any payload)", colors::BOLD, colors::RESET);
+        println!(
+            "\n{}Inputs:{} (none declared — accepts any payload)",
+            colors::BOLD,
+            colors::RESET
+        );
     }
 
     if let Some(ref outputs) = spec.outputs {
         println!("\n{}Outputs:{}", colors::BOLD, colors::RESET);
         for (name, field) in outputs {
-            let desc = if field.description.is_empty() { String::new() } else { format!("  {}", field.description) };
+            let desc = if field.description.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", field.description)
+            };
             println!("  {}  {}{}", name, field.field_type, desc);
         }
     } else {
-        println!("\n{}Outputs:{} (none declared)", colors::BOLD, colors::RESET);
+        println!(
+            "\n{}Outputs:{} (none declared)",
+            colors::BOLD,
+            colors::RESET
+        );
     }
     println!();
 }
@@ -714,9 +815,8 @@ fn cmd_new(args: &[String]) {
 
     // Write to file.
     let filename = format!("{name}.yaml");
-    let yaml = serde_yaml::to_string(&spec).unwrap_or_else(|_| {
-        serde_json::to_string_pretty(&spec).unwrap()
-    });
+    let yaml = serde_yaml::to_string(&spec)
+        .unwrap_or_else(|_| serde_json::to_string_pretty(&spec).unwrap());
 
     match std::fs::write(&filename, &yaml) {
         Ok(_) => {
@@ -750,7 +850,8 @@ fn cmd_new(args: &[String]) {
 async fn cmd_eval(args: &[String]) {
     let input = parse_flag(args, "--input").unwrap_or_default();
     let output = parse_flag(args, "--output").unwrap_or_default();
-    let types_str = parse_flag(args, "--types").unwrap_or_else(|| "format_compliance,latency".to_string());
+    let types_str =
+        parse_flag(args, "--types").unwrap_or_else(|| "format_compliance,latency".to_string());
 
     if output.is_empty() {
         eprintln!(
@@ -760,21 +861,34 @@ async fn cmd_eval(args: &[String]) {
         process::exit(1);
     }
 
-    let eval_types: Vec<openmirai_engine::eval::EvalType> = types_str.split(',').filter_map(|s| match s.trim() {
-        "relevance" => Some(openmirai_engine::eval::EvalType::Relevance),
-        "faithfulness" => Some(openmirai_engine::eval::EvalType::Faithfulness),
-        "completeness" => Some(openmirai_engine::eval::EvalType::Completeness),
-        "format_compliance" => Some(openmirai_engine::eval::EvalType::FormatCompliance),
-        "latency" => Some(openmirai_engine::eval::EvalType::Latency),
-        _ => None,
-    }).collect();
+    let eval_types: Vec<openmirai_engine::eval::EvalType> = types_str
+        .split(',')
+        .filter_map(|s| match s.trim() {
+            "relevance" => Some(openmirai_engine::eval::EvalType::Relevance),
+            "faithfulness" => Some(openmirai_engine::eval::EvalType::Faithfulness),
+            "completeness" => Some(openmirai_engine::eval::EvalType::Completeness),
+            "format_compliance" => Some(openmirai_engine::eval::EvalType::FormatCompliance),
+            "latency" => Some(openmirai_engine::eval::EvalType::Latency),
+            _ => None,
+        })
+        .collect();
 
     let (provider, model, api_key, base_url) = resolve_provider(args);
     let context = build_context(&provider, &model, &api_key, &base_url, None);
 
     let results = openmirai_engine::eval::execute_eval(
-        &eval_types, &input, &output, None, 0, None, context.llm(), "",
-    ).await;
+        &eval_types,
+        openmirai_engine::eval::EvalInput {
+            input: &input,
+            output: &output,
+            context: None,
+        },
+        0,
+        None,
+        context.llm(),
+        "",
+    )
+    .await;
 
     println!("{}Eval Results:{}", colors::BOLD, colors::RESET);
     for r in &results {
@@ -796,7 +910,9 @@ async fn cmd_rag(args: &[String]) {
         Some("search") => {
             let query = parse_flag(args, "--query").unwrap_or_default();
             let docs_str = parse_flag(args, "--documents").unwrap_or_default();
-            let top_k: usize = parse_flag(args, "--top-k").and_then(|v| v.parse().ok()).unwrap_or(3);
+            let top_k: usize = parse_flag(args, "--top-k")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3);
 
             if query.is_empty() || docs_str.is_empty() {
                 eprintln!(
@@ -812,7 +928,13 @@ async fn cmd_rag(args: &[String]) {
                 let path = path.trim();
                 match std::fs::read_to_string(path) {
                     Ok(content) => documents.push(content),
-                    Err(e) => eprintln!("{}Warning: could not read {}: {}{}", colors::YELLOW, path, e, colors::RESET),
+                    Err(e) => eprintln!(
+                        "{}Warning: could not read {}: {}{}",
+                        colors::YELLOW,
+                        path,
+                        e,
+                        colors::RESET
+                    ),
                 }
             }
 
@@ -839,7 +961,12 @@ async fn cmd_rag(args: &[String]) {
                 all_chunks.extend(openmirai_engine::rag::chunk_text(doc, &rag_config));
             }
 
-            eprintln!("{}Chunks: {} | Embedding...{}", colors::DIM, all_chunks.len(), colors::RESET);
+            eprintln!(
+                "{}Chunks: {} | Embedding...{}",
+                colors::DIM,
+                all_chunks.len(),
+                colors::RESET
+            );
 
             let query_emb = match context.llm().embed(&query, "").await {
                 Ok(e) => e,
@@ -855,7 +982,11 @@ async fn cmd_rag(args: &[String]) {
                     let dot: f64 = query_emb.iter().zip(emb.iter()).map(|(a, b)| a * b).sum();
                     let mag_a: f64 = query_emb.iter().map(|x| x * x).sum::<f64>().sqrt();
                     let mag_b: f64 = emb.iter().map(|x| x * x).sum::<f64>().sqrt();
-                    let sim = if mag_a > 0.0 && mag_b > 0.0 { dot / (mag_a * mag_b) } else { 0.0 };
+                    let sim = if mag_a > 0.0 && mag_b > 0.0 {
+                        dot / (mag_a * mag_b)
+                    } else {
+                        0.0
+                    };
                     scored.push((i, sim));
                 }
             }
@@ -863,11 +994,19 @@ async fn cmd_rag(args: &[String]) {
 
             println!("{}Results (top {}):{}", colors::BOLD, top_k, colors::RESET);
             for (i, score) in scored.iter().take(top_k) {
-                println!("  [{:.4}] {}...", score, &all_chunks[*i][..80.min(all_chunks[*i].len())]);
+                println!(
+                    "  [{:.4}] {}...",
+                    score,
+                    &all_chunks[*i][..80.min(all_chunks[*i].len())]
+                );
             }
         }
         _ => {
-            eprintln!("{}Usage: mirai rag search --query <text> --documents <paths>{}", colors::YELLOW, colors::RESET);
+            eprintln!(
+                "{}Usage: mirai rag search --query <text> --documents <paths>{}",
+                colors::YELLOW,
+                colors::RESET
+            );
             process::exit(1);
         }
     }

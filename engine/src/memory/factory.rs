@@ -25,7 +25,7 @@ impl MemoryFactory {
     }
 
     /// Convenience: always returns an in-memory backend.
-    pub fn default() -> Box<dyn MemoryBackend> {
+    pub fn in_memory() -> Box<dyn MemoryBackend> {
         Box::new(InMemoryBackend::new())
     }
 }
@@ -49,8 +49,8 @@ mod tests {
     }
 
     #[test]
-    fn default_returns_in_memory() {
-        let _backend = MemoryFactory::default();
+    fn in_memory_returns_backend() {
+        let _backend = MemoryFactory::in_memory();
         // If it doesn't panic, it works.
     }
 

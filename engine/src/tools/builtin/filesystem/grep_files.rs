@@ -30,18 +30,24 @@ fs_tool! {
 }
 
 const BINARY_EXT: &[&str] = &[
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
-    ".woff", ".woff2", ".ttf", ".eot",
-    ".zip", ".gz", ".tar", ".bz2", ".7z", ".rar",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".pyc", ".pyo", ".so", ".dylib", ".dll", ".exe",
-    ".db", ".sqlite", ".sqlite3",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".eot",
+    ".zip", ".gz", ".tar", ".bz2", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".pyc",
+    ".pyo", ".so", ".dylib", ".dll", ".exe", ".db", ".sqlite", ".sqlite3", ".mp3", ".mp4", ".wav",
+    ".avi", ".mov",
 ];
 
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", ".git", "__pycache__", ".venv", "venv",
-    "dist", "build", ".next", ".cache", ".tox", "egg-info",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    ".cache",
+    ".tox",
+    "egg-info",
 ];
 
 fn has_binary_ext(p: &Path) -> bool {
@@ -125,14 +131,8 @@ impl Tool for GrepFilesTool {
                 message: "missing required input: pattern".into(),
             })?;
 
-        let base = config
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".");
-        let glob_filter = config
-            .get("glob")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let base = config.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let glob_filter = config.get("glob").and_then(|v| v.as_str()).unwrap_or("");
         let max_results = config
             .get("max_results")
             .and_then(|v| v.as_u64())
@@ -191,10 +191,8 @@ impl Tool for GrepFilesTool {
                     if context_lines > 0 {
                         let start = i.saturating_sub(context_lines);
                         let end = std::cmp::min(lines.len(), i + context_lines + 1);
-                        let ctx: Vec<&str> = lines[start..end]
-                            .iter()
-                            .map(|l| l.trim_end())
-                            .collect();
+                        let ctx: Vec<&str> =
+                            lines[start..end].iter().map(|l| l.trim_end()).collect();
                         entry["context"] = json!(ctx);
                     }
                     matches.push(entry);
@@ -212,4 +210,3 @@ impl Tool for GrepFilesTool {
         Ok(out)
     }
 }
-

@@ -16,21 +16,17 @@ use crate::soul::Soul;
 /// Router strategy for selecting which agent handles a message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RouterStrategy {
     /// Use an LLM to classify the message and select the best agent.
     LlmClassify,
     /// Match keywords in the message to agent capabilities.
+    #[default]
     KeywordMatch,
     /// Rotate agents in order.
     RoundRobin,
     /// User explicitly mentions agent name (e.g., "@analyst").
     Explicit,
-}
-
-impl Default for RouterStrategy {
-    fn default() -> Self {
-        Self::KeywordMatch
-    }
 }
 
 /// Universe configuration.
@@ -134,7 +130,9 @@ impl Universe {
                 .filter(|cap| {
                     let cap_lower = cap.to_lowercase().replace('_', " ");
                     // Check if any word from the capability appears in the message.
-                    cap_lower.split_whitespace().any(|word| msg_lower.contains(word))
+                    cap_lower
+                        .split_whitespace()
+                        .any(|word| msg_lower.contains(word))
                 })
                 .count();
 
@@ -297,7 +295,10 @@ mod tests {
             default_response: "I can't help".into(),
         };
         let mut uni = Universe::new(config);
-        uni.add_agent(make_soul("analyst", &["analysis", "reporting", "data"]), "a1");
+        uni.add_agent(
+            make_soul("analyst", &["analysis", "reporting", "data"]),
+            "a1",
+        );
         uni.add_agent(make_soul("support", &["support", "help", "tickets"]), "a2");
 
         let decision = uni.route("Can you analyze the sales data?");
@@ -381,7 +382,8 @@ mod tests {
 
     #[test]
     fn groupchat_config_defaults() {
-        let config: GroupChatConfig = serde_json::from_str(r#"{"topic": "scaling", "participants": ["a", "b"]}"#).unwrap();
+        let config: GroupChatConfig =
+            serde_json::from_str(r#"{"topic": "scaling", "participants": ["a", "b"]}"#).unwrap();
         assert_eq!(config.max_rounds, 5);
         assert_eq!(config.moderator_strategy, ModeratorStrategy::RoundRobin);
         assert!(!config.consensus_required);

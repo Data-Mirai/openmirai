@@ -52,8 +52,7 @@ impl Tool for DbWriteTool {
         let data = match inputs.get("data") {
             Some(Value::String(s)) => {
                 // Try to parse JSON string
-                serde_json::from_str::<Value>(s)
-                    .unwrap_or_else(|_| json!({"content": s}))
+                serde_json::from_str::<Value>(s).unwrap_or_else(|_| json!({"content": s}))
             }
             Some(Value::Object(_)) => inputs.get("data").cloned().unwrap(),
             Some(other) => json!({"content": other.to_string()}),
@@ -61,18 +60,22 @@ impl Tool for DbWriteTool {
         };
 
         // Build SQL based on mode
-        let action = if mode == "upsert" { "updated" } else { "inserted" };
+        let action = if mode == "upsert" {
+            "updated"
+        } else {
+            "inserted"
+        };
 
         // Use the data as params for the execute call
         let params = vec![json!(table), data.clone(), json!(mode)];
 
-        let result = db
-            .execute("INSERT", &params)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                tool_type: "data/db_write".into(),
-                message: e.to_string(),
-            })?;
+        let result =
+            db.execute("INSERT", &params)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "data/db_write".into(),
+                    message: e.to_string(),
+                })?;
 
         // Extract row_id from result
         let row_id = result
@@ -88,4 +91,3 @@ impl Tool for DbWriteTool {
         Ok(out)
     }
 }
-

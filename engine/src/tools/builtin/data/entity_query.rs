@@ -43,10 +43,7 @@ impl Tool for EntityQueryTool {
             .and_then(|v| v.as_str())
             .unwrap_or("default");
 
-        let limit = config
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(100);
+        let limit = config.get("limit").and_then(|v| v.as_u64()).unwrap_or(100);
 
         let query = format!("SELECT * FROM entities WHERE type = ? LIMIT {}", limit);
         let params = vec![json!(entity_type)];
@@ -66,4 +63,3 @@ impl Tool for EntityQueryTool {
         Ok(out)
     }
 }
-

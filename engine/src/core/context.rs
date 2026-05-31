@@ -112,11 +112,7 @@ pub trait LLMResource: Send + Sync {
     ) -> Result<LLMResponse, ResourceError>;
 
     /// Produce an embedding vector for the given text.
-    async fn embed(
-        &self,
-        text: &str,
-        model: &str,
-    ) -> Result<Vec<f64>, ResourceError>;
+    async fn embed(&self, text: &str, model: &str) -> Result<Vec<f64>, ResourceError>;
 
     /// Name of the underlying LLM provider (e.g. `"gemini"`, `"claude"`).
     fn provider_name(&self) -> &str {
@@ -236,7 +232,10 @@ impl LLMResource for StubLLM {
     ) -> Result<LLMResponse, ResourceError> {
         Ok(LLMResponse {
             response: "stub".into(),
-            tokens_used: TokenUsage { input: 0, output: 0 },
+            tokens_used: TokenUsage {
+                input: 0,
+                output: 0,
+            },
             model: "stub".into(),
             provider: "stub".into(),
         })

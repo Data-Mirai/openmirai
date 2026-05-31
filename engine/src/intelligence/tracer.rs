@@ -123,14 +123,21 @@ impl ExecutionTracer {
     /// Count of records with error status.
     pub fn error_count(&self) -> usize {
         use crate::core::runner::TraceStatus;
-        self.records.iter().filter(|r| r.status == TraceStatus::Error).count()
+        self.records
+            .iter()
+            .filter(|r| r.status == TraceStatus::Error)
+            .count()
     }
 
     /// Produce an aggregate summary of all captured traces.
     pub fn summary(&self) -> TraceSummary {
         use crate::core::runner::TraceStatus;
         let total_blocks = self.records.len();
-        let successful = self.records.iter().filter(|r| r.status == TraceStatus::Ok).count();
+        let successful = self
+            .records
+            .iter()
+            .filter(|r| r.status == TraceStatus::Ok)
+            .count();
         let failed = self.error_count();
         let skipped = self
             .records

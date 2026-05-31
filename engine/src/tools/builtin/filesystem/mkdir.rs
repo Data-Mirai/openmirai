@@ -30,13 +30,12 @@ impl Tool for MkdirTool {
         _config: &HashMap<String, Value>,
         _context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let raw_path = inputs
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed {
+        let raw_path = inputs.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+            ToolError::ExecutionFailed {
                 tool_type: "filesystem/mkdir".into(),
                 message: "missing required input: path".into(),
-            })?;
+            }
+        })?;
 
         let path = PathBuf::from(raw_path);
         let abs_path = if path.is_absolute() {
@@ -58,4 +57,3 @@ impl Tool for MkdirTool {
         Ok(out)
     }
 }
-

@@ -37,7 +37,8 @@ impl Tool for RagSearchTool {
         config: &HashMap<String, Value>,
         context: &dyn ExecutionContext,
     ) -> Result<HashMap<String, Value>, ToolError> {
-        let query = inputs.get("query")
+        let query = inputs
+            .get("query")
             .and_then(|v| v.as_str())
             .or_else(|| config.get("query").and_then(|v| v.as_str()))
             .ok_or_else(|| ToolError::ExecutionFailed {
@@ -46,10 +47,15 @@ impl Tool for RagSearchTool {
             })?;
 
         // Get documents from input or config.
-        let docs: Vec<String> = inputs.get("documents")
+        let docs: Vec<String> = inputs
+            .get("documents")
             .or_else(|| config.get("documents"))
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if docs.is_empty() {
@@ -60,9 +66,18 @@ impl Tool for RagSearchTool {
         }
 
         let top_k = config.get("top_k").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
-        let chunk_strategy = config.get("chunk_strategy").and_then(|v| v.as_str()).unwrap_or("paragraph");
-        let chunk_size = config.get("chunk_size").and_then(|v| v.as_u64()).unwrap_or(512) as usize;
-        let embed_model = config.get("embedding_model").and_then(|v| v.as_str()).unwrap_or("");
+        let chunk_strategy = config
+            .get("chunk_strategy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("paragraph");
+        let chunk_size = config
+            .get("chunk_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(512) as usize;
+        let embed_model = config
+            .get("embedding_model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // Chunk documents.
         let rag_config = crate::rag::RAGPipelineConfig {
@@ -111,18 +126,28 @@ impl Tool for RagSearchTool {
         }
 
         // Cosine similarity ranking.
-        let mut scored: Vec<(usize, f64)> = chunk_embs.iter().enumerate().map(|(i, emb)| {
-            let dot: f64 = query_emb.iter().zip(emb.iter()).map(|(a, b)| a * b).sum();
-            let mag_a: f64 = query_emb.iter().map(|x| x * x).sum::<f64>().sqrt();
-            let mag_b: f64 = emb.iter().map(|x| x * x).sum::<f64>().sqrt();
-            let sim = if mag_a > 0.0 && mag_b > 0.0 { dot / (mag_a * mag_b) } else { 0.0 };
-            (i, sim)
-        }).collect();
+        let mut scored: Vec<(usize, f64)> = chunk_embs
+            .iter()
+            .enumerate()
+            .map(|(i, emb)| {
+                let dot: f64 = query_emb.iter().zip(emb.iter()).map(|(a, b)| a * b).sum();
+                let mag_a: f64 = query_emb.iter().map(|x| x * x).sum::<f64>().sqrt();
+                let mag_b: f64 = emb.iter().map(|x| x * x).sum::<f64>().sqrt();
+                let sim = if mag_a > 0.0 && mag_b > 0.0 {
+                    dot / (mag_a * mag_b)
+                } else {
+                    0.0
+                };
+                (i, sim)
+            })
+            .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let results: Vec<Value> = scored.iter().take(top_k).map(|(i, score)| {
-            json!({"chunk": all_chunks[*i], "score": score, "index": i})
-        }).collect();
+        let results: Vec<Value> = scored
+            .iter()
+            .take(top_k)
+            .map(|(i, score)| json!({"chunk": all_chunks[*i], "score": score, "index": i}))
+            .collect();
 
         let dims = query_emb.len();
 
@@ -137,4 +162,3 @@ impl Tool for RagSearchTool {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-

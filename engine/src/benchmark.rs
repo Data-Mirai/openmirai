@@ -146,7 +146,13 @@ pub fn log_execution(duration_ms: u64, agent_name: &str, node_count: usize, prov
 }
 
 /// Log LLM call latency.
-pub fn log_llm_latency(duration_ms: u64, model: &str, provider: &str, tokens_in: u32, tokens_out: u32) {
+pub fn log_llm_latency(
+    duration_ms: u64,
+    model: &str,
+    provider: &str,
+    tokens_in: u32,
+    tokens_out: u32,
+) {
     log(BenchmarkEntry {
         metric_type: MetricType::LlmLatency,
         value_ms: Some(duration_ms),
@@ -279,18 +285,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bench_test.jsonl");
 
-        log_to_file(&path, BenchmarkEntry {
-            metric_type: MetricType::Execution,
-            value_ms: Some(1234),
-            value_bytes: None,
-            context: serde_json::json!({"agent": "test"}),
-        });
-        log_to_file(&path, BenchmarkEntry {
-            metric_type: MetricType::MemoryUsage,
-            value_ms: None,
-            value_bytes: Some(8192),
-            context: Value::Null,
-        });
+        log_to_file(
+            &path,
+            BenchmarkEntry {
+                metric_type: MetricType::Execution,
+                value_ms: Some(1234),
+                value_bytes: None,
+                context: serde_json::json!({"agent": "test"}),
+            },
+        );
+        log_to_file(
+            &path,
+            BenchmarkEntry {
+                metric_type: MetricType::MemoryUsage,
+                value_ms: None,
+                value_bytes: Some(8192),
+                context: Value::Null,
+            },
+        );
 
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.trim().lines().collect();
@@ -312,16 +324,19 @@ mod tests {
         let path = dir.path().join("bench_exec.jsonl");
 
         // Simulate log_execution directly to file
-        log_to_file(&path, BenchmarkEntry {
-            metric_type: MetricType::Execution,
-            value_ms: Some(500),
-            value_bytes: None,
-            context: serde_json::json!({
-                "agent": "my-agent",
-                "nodes": 3,
-                "provider": "ollama",
-            }),
-        });
+        log_to_file(
+            &path,
+            BenchmarkEntry {
+                metric_type: MetricType::Execution,
+                value_ms: Some(500),
+                value_bytes: None,
+                context: serde_json::json!({
+                    "agent": "my-agent",
+                    "nodes": 3,
+                    "provider": "ollama",
+                }),
+            },
+        );
 
         let content = std::fs::read_to_string(&path).unwrap();
         let entry: Value = serde_json::from_str(content.trim()).unwrap();

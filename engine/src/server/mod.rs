@@ -55,7 +55,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/agents/{id}/play", post(play_agent))
         .route("/api/v1/agents/{id}/stop", post(stop_agent))
         .route("/api/v1/agents/{id}/cycles", get(get_agent_cycles))
-        .route("/api/v1/agents/{id}/memory", get(get_agent_memory).delete(clear_agent_memory))
+        .route(
+            "/api/v1/agents/{id}/memory",
+            get(get_agent_memory).delete(clear_agent_memory),
+        )
         // Tools
         .route("/api/v1/tools", get(list_tools))
         // Templates
@@ -103,10 +106,7 @@ async fn auth_middleware(
         return next.run(req).await;
     }
 
-    let provided = req
-        .headers()
-        .get("X-API-Key")
-        .and_then(|v| v.to_str().ok());
+    let provided = req.headers().get("X-API-Key").and_then(|v| v.to_str().ok());
 
     match provided {
         Some(key) if key == expected => next.run(req).await,

@@ -41,11 +41,7 @@ impl Default for InMemoryDBResource {
 
 #[async_trait]
 impl DBResource for InMemoryDBResource {
-    async fn execute(
-        &self,
-        query: &str,
-        params: &[Value],
-    ) -> Result<Value, ResourceError> {
+    async fn execute(&self, query: &str, params: &[Value]) -> Result<Value, ResourceError> {
         // Convention: first param may be a JSON object with `__table__` key.
         if let Some(obj) = params.first().and_then(|p| p.as_object()) {
             let table = obj
@@ -94,11 +90,7 @@ impl DBResource for InMemoryDBResource {
         Ok(None)
     }
 
-    async fn fetch_all(
-        &self,
-        _query: &str,
-        params: &[Value],
-    ) -> Result<Vec<Value>, ResourceError> {
+    async fn fetch_all(&self, _query: &str, params: &[Value]) -> Result<Vec<Value>, ResourceError> {
         if let Some(obj) = params.first().and_then(|p| p.as_object()) {
             let table = obj
                 .get("__table__")

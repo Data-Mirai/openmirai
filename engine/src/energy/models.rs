@@ -132,7 +132,10 @@ mod tests {
     #[test]
     fn test_cost_category_display() {
         assert_eq!(CostCategory::InternalInfra.to_string(), "INTERNAL_INFRA");
-        assert_eq!(CostCategory::ExternalService.to_string(), "EXTERNAL_SERVICE");
+        assert_eq!(
+            CostCategory::ExternalService.to_string(),
+            "EXTERNAL_SERVICE"
+        );
         assert_eq!(CostCategory::PlatformFee.to_string(), "PLATFORM_FEE");
     }
 

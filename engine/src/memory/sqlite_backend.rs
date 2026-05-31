@@ -74,10 +74,11 @@ impl SqliteBackend {
                 message: format!("failed to set PRAGMAs: {e}"),
             })?;
 
-        conn.execute_batch(SCHEMA).map_err(|e| RunnerError::Internal {
-            context: "sqlite_backend".into(),
-            message: format!("failed to initialise schema: {e}"),
-        })?;
+        conn.execute_batch(SCHEMA)
+            .map_err(|e| RunnerError::Internal {
+                context: "sqlite_backend".into(),
+                message: format!("failed to initialise schema: {e}"),
+            })?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -113,8 +114,7 @@ impl MemoryBackend for SqliteBackend {
         let content = entry.content.clone();
         let tags_json = serde_json::to_string(&entry.tags).unwrap_or_else(|_| "[]".into());
         let session_id = entry.session_id.clone();
-        let metadata_json =
-            serde_json::to_string(&entry.metadata).unwrap_or_else(|_| "{}".into());
+        let metadata_json = serde_json::to_string(&entry.metadata).unwrap_or_else(|_| "{}".into());
 
         let created_at = if entry.created_at == 0.0 {
             now_secs()
@@ -397,9 +397,18 @@ mod tests {
     #[tokio::test]
     async fn search_by_content_fts() {
         let backend = SqliteBackend::new_in_memory().unwrap();
-        backend.save(&entry("retry on HTTP 429 errors")).await.unwrap();
-        backend.save(&entry("use exponential backoff")).await.unwrap();
-        backend.save(&entry("cache responses locally")).await.unwrap();
+        backend
+            .save(&entry("retry on HTTP 429 errors"))
+            .await
+            .unwrap();
+        backend
+            .save(&entry("use exponential backoff"))
+            .await
+            .unwrap();
+        backend
+            .save(&entry("cache responses locally"))
+            .await
+            .unwrap();
 
         let results = backend.search("retry", 10).await.unwrap();
         assert_eq!(results.len(), 1);
@@ -410,8 +419,14 @@ mod tests {
     #[tokio::test]
     async fn search_is_case_insensitive() {
         let backend = SqliteBackend::new_in_memory().unwrap();
-        backend.save(&entry("UPPERCASE content here")).await.unwrap();
-        backend.save(&entry("lowercase content here")).await.unwrap();
+        backend
+            .save(&entry("UPPERCASE content here"))
+            .await
+            .unwrap();
+        backend
+            .save(&entry("lowercase content here"))
+            .await
+            .unwrap();
         backend.save(&entry("no match whatsoever")).await.unwrap();
 
         let results = backend.search("content", 10).await.unwrap();

@@ -44,4 +44,3 @@ impl Tool for VaultWriteTool {
         Ok(out)
     }
 }
-

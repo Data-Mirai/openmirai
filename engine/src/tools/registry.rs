@@ -68,7 +68,8 @@ impl ToolRegistry {
 
     /// Register a legacy alias that resolves to a canonical tool_type.
     pub fn register_alias(&mut self, alias: &str, canonical: &str) {
-        self.aliases.insert(alias.to_string(), canonical.to_string());
+        self.aliases
+            .insert(alias.to_string(), canonical.to_string());
     }
 
     /// Look up a factory by `tool_type`. Falls back to aliases if the direct
@@ -131,7 +132,8 @@ impl ToolExecutor for RegistryExecutor {
 
         // PRD-004 Capa 2: validate inputs against ToolSpec before executing
         let tool_spec = factory.spec();
-        let validated = match crate::tools::base::validate_node_inputs(&inputs, tool_spec, &node.id) {
+        let validated = match crate::tools::base::validate_node_inputs(&inputs, tool_spec, &node.id)
+        {
             Ok(v) => v,
             Err(validation_errors) => {
                 return Err(ToolError::ExecutionFailed {
@@ -144,9 +146,7 @@ impl ToolExecutor for RegistryExecutor {
         let tool = factory.create();
 
         // PRD-004: catch_unwind — tool panics become ToolError, not process crash
-        let result = std::panic::AssertUnwindSafe(
-            tool.execute(validated, &node.config, context)
-        );
+        let result = std::panic::AssertUnwindSafe(tool.execute(validated, &node.config, context));
         match futures_util::FutureExt::catch_unwind(result).await {
             Ok(inner) => inner,
             Err(panic_info) => {

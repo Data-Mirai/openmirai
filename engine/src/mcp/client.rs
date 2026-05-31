@@ -290,11 +290,17 @@ impl Transport for StdioTransport {
             .stdin
             .as_mut()
             .ok_or_else(|| MCPError::TransportError("stdin not available".into()))?;
-        stdin.write_all(payload.as_bytes()).await
+        stdin
+            .write_all(payload.as_bytes())
+            .await
             .map_err(|e| MCPError::TransportError(format!("stdin write: {e}")))?;
-        stdin.write_all(b"\n").await
+        stdin
+            .write_all(b"\n")
+            .await
             .map_err(|e| MCPError::TransportError(format!("stdin newline: {e}")))?;
-        stdin.flush().await
+        stdin
+            .flush()
+            .await
             .map_err(|e| MCPError::TransportError(format!("stdin flush: {e}")))?;
 
         Ok(())
@@ -309,11 +315,8 @@ impl Transport for StdioTransport {
             drop(child.stdin.take());
 
             // Wait up to 5 s for a clean exit, then kill.
-            let wait_result = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                child.wait(),
-            )
-            .await;
+            let wait_result =
+                tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
 
             match wait_result {
                 Ok(Ok(_)) => {}
@@ -442,11 +445,7 @@ impl MCPClient {
     }
 
     /// Send a raw JSON-RPC request through the transport, validating the response.
-    async fn rpc(
-        &self,
-        method: &str,
-        params: Option<Value>,
-    ) -> Result<Value, MCPError> {
+    async fn rpc(&self, method: &str, params: Option<Value>) -> Result<Value, MCPError> {
         let id = self.next_id();
         let request = JsonRpcRequest::new(id, method, params);
         let response = self.transport.send(request).await?;
@@ -622,10 +621,7 @@ mod tests {
         client.initialize().await.unwrap();
 
         assert!(client.server_info.is_some());
-        assert_eq!(
-            client.server_info.as_ref().unwrap()["name"],
-            "test-server"
-        );
+        assert_eq!(client.server_info.as_ref().unwrap()["name"], "test-server");
         assert!(client.server_capabilities.is_some());
 
         // Verify two requests were sent.

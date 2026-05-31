@@ -25,9 +25,8 @@ impl SqliteDBResource {
     ///
     /// Enables WAL mode and foreign keys by default.
     pub fn new(path: &str) -> Result<Self, ResourceError> {
-        let conn = Connection::open(path).map_err(|e| {
-            ResourceError::Database(format!("failed to open SQLite: {e}"))
-        })?;
+        let conn = Connection::open(path)
+            .map_err(|e| ResourceError::Database(format!("failed to open SQLite: {e}")))?;
 
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000; PRAGMA foreign_keys=ON;",
@@ -67,7 +66,7 @@ fn value_to_rusqlite(v: &Value) -> Box<dyn rusqlite::types::ToSql> {
 /// Convert a rusqlite Row to a JSON object using column names.
 fn row_to_json(row: &rusqlite::Row<'_>, col_count: usize, col_names: &[String]) -> Value {
     let mut obj = serde_json::Map::new();
-    for i in 0..col_count {
+    for (i, col_name) in col_names.iter().enumerate().take(col_count) {
         let val: Value = match row.get_ref(i) {
             Ok(rusqlite::types::ValueRef::Null) => Value::Null,
             Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
@@ -88,18 +87,14 @@ fn row_to_json(row: &rusqlite::Row<'_>, col_count: usize, col_names: &[String]) 
             }
             Err(_) => Value::Null,
         };
-        obj.insert(col_names[i].clone(), val);
+        obj.insert(col_name.clone(), val);
     }
     Value::Object(obj)
 }
 
 #[async_trait]
 impl DBResource for SqliteDBResource {
-    async fn execute(
-        &self,
-        query: &str,
-        params: &[Value],
-    ) -> Result<Value, ResourceError> {
+    async fn execute(&self, query: &str, params: &[Value]) -> Result<Value, ResourceError> {
         let conn = Arc::clone(&self.conn);
         let query = query.to_string();
         let params: Vec<Value> = params.to_vec();
@@ -156,7 +151,10 @@ impl DBResource for SqliteDBResource {
                 .query(param_slice.as_slice())
                 .map_err(|e| ResourceError::Database(format!("query failed: {e}")))?;
 
-            match rows.next().map_err(|e| ResourceError::Database(format!("next failed: {e}")))? {
+            match rows
+                .next()
+                .map_err(|e| ResourceError::Database(format!("next failed: {e}")))?
+            {
                 Some(row) => Ok(Some(row_to_json(row, col_count, &col_names))),
                 None => Ok(None),
             }
@@ -165,11 +163,7 @@ impl DBResource for SqliteDBResource {
         .map_err(|e| ResourceError::Database(format!("spawn_blocking join: {e}")))?
     }
 
-    async fn fetch_all(
-        &self,
-        query: &str,
-        params: &[Value],
-    ) -> Result<Vec<Value>, ResourceError> {
+    async fn fetch_all(&self, query: &str, params: &[Value]) -> Result<Vec<Value>, ResourceError> {
         let conn = Arc::clone(&self.conn);
         let query = query.to_string();
         let params: Vec<Value> = params.to_vec();
@@ -249,7 +243,10 @@ mod tests {
         assert_eq!(row["name"], json!("alpha"));
         assert_eq!(row["value"], json!(1.5));
 
-        let all = db.fetch_all("SELECT * FROM items ORDER BY name", &[]).await.unwrap();
+        let all = db
+            .fetch_all("SELECT * FROM items ORDER BY name", &[])
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0]["name"], json!("alpha"));
         assert_eq!(all[1]["name"], json!("beta"));
@@ -261,7 +258,10 @@ mod tests {
         db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", &[])
             .await
             .unwrap();
-        let result = db.fetch_one("SELECT * FROM t WHERE id = 999", &[]).await.unwrap();
+        let result = db
+            .fetch_one("SELECT * FROM t WHERE id = 999", &[])
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 

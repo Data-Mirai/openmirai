@@ -59,9 +59,18 @@ fn extension_to_mime() -> &'static HashMap<&'static str, &'static str> {
 
 const IMAGES_ONLY: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
 const GEMINI_ALL: &[&str] = &[
-    "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", "audio/flac",
-    "video/quicktime", "video/mp4", "video/webm",
-    "image/png", "image/jpeg", "image/webp", "image/gif",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/ogg",
+    "audio/flac",
+    "video/quicktime",
+    "video/mp4",
+    "video/webm",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
 ];
 
 /// Returns the MIME types supported by a given provider (zero allocation).
@@ -101,9 +110,7 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
 
     if metadata.len() > MAX_FILE_SIZE {
         let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
-        return Err(format!(
-            "media file too large: {size_mb:.1}MB (max 20MB)"
-        ));
+        return Err(format!("media file too large: {size_mb:.1}MB (max 20MB)"));
     }
 
     // 3. Detect MIME from extension
@@ -113,7 +120,10 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
         .map(|e| e.to_lowercase());
 
     let ext_str = ext.as_deref().ok_or_else(|| {
-        let supported: Vec<_> = extension_to_mime().keys().map(|k| format!(".{k}")).collect();
+        let supported: Vec<_> = extension_to_mime()
+            .keys()
+            .map(|k| format!(".{k}"))
+            .collect();
         format!(
             "cannot detect media type: file has no extension. Supported: {}",
             supported.join(", ")
@@ -121,7 +131,7 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
     })?;
 
     let mime_map = extension_to_mime();
-    let mime_type = mime_map.get(&*ext_str).ok_or_else(|| {
+    let mime_type = mime_map.get(ext_str).ok_or_else(|| {
         let supported: Vec<_> = mime_map.keys().map(|k| format!(".{k}")).collect();
         format!(
             "unsupported file extension: '.{ext_str}'. Supported: {}",
@@ -132,10 +142,12 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
     // 4. Check provider supports this MIME
     let supported = supported_mimes_for_provider(provider_name);
     if !supported.contains(mime_type) {
-        let supported_list: Vec<_> = supported.iter().copied().collect();
+        let supported_list: Vec<_> = supported.to_vec();
         return Err(format!(
             "media type '{}' not supported by provider '{}'. Supported: {}",
-            mime_type, provider_name, supported_list.join(", ")
+            mime_type,
+            provider_name,
+            supported_list.join(", ")
         ));
     }
 
@@ -166,7 +178,7 @@ pub const USER_MEDIA_KEY: &str = "__user_media";
 
 /// Build a context entry that carries media to the adapter bridge.
 pub fn user_media_entry(media: &MediaContent) -> serde_json::Value {
-    let media_json = serde_json::to_value(&[media]).unwrap_or(serde_json::json!([]));
+    let media_json = serde_json::to_value([media]).unwrap_or(serde_json::json!([]));
     serde_json::json!({ USER_MEDIA_KEY: media_json })
 }
 
@@ -177,7 +189,10 @@ pub fn mime_from_extension(path: &Path) -> &'static str {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
     match ext.as_deref() {
-        Some(e) => extension_to_mime().get(e).copied().unwrap_or("application/octet-stream"),
+        Some(e) => extension_to_mime()
+            .get(e)
+            .copied()
+            .unwrap_or("application/octet-stream"),
         None => "application/octet-stream",
     }
 }
@@ -194,7 +209,9 @@ pub fn create_file_ref(file_path: &str, base_dir: Option<&str>) -> Option<serde_
         Path::new(base).join(path)
     } else {
         // Try to canonicalize, fall back to as-is.
-        std::env::current_dir().map(|d| d.join(path)).unwrap_or_else(|_| path.to_path_buf())
+        std::env::current_dir()
+            .map(|d| d.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
     };
 
     if !abs_path.exists() {
@@ -227,12 +244,11 @@ pub fn is_file_ref(value: &serde_json::Value) -> bool {
 pub fn resolve_file_input(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Object(_) if is_file_ref(value) => {
-            value.get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        }
+        serde_json::Value::Object(_) if is_file_ref(value) => value
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     }
@@ -281,7 +297,9 @@ mod tests {
         // Claude doesn't support audio
         let result = read_media_file(path, "claude");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not supported by provider 'claude'"));
+        assert!(result
+            .unwrap_err()
+            .contains("not supported by provider 'claude'"));
     }
 
     #[test]

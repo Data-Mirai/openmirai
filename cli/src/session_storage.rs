@@ -1,6 +1,7 @@
 //! Session persistence — stores conversations as manifest + JSONL transcript.
 //!
-//! Each session lives in `~/.datamirai/sessions/<session_id>/` with:
+//! Each session lives in `~/.datamirai/sessions/<session_id>/` (the `.datamirai`
+//! path is kept intentionally for backward compatibility) with:
 //! - `manifest.json`    metadata (id, provider, model, cwd, timestamps)
 //! - `transcript.jsonl`  append-only log of every event
 

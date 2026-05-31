@@ -1,0 +1,1456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mirai edit — Visual Agent Editor</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        .editor-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            background: #252526;
+            border-bottom: 1px solid #3e3e42;
+            padding: 10px 15px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            border-right: 1px solid #3e3e42;
+            padding-right: 15px;
+        }
+
+        .toolbar-group:last-child {
+            border-right: none;
+        }
+
+        .tab-toggle {
+            display: flex;
+            gap: 0;
+            background: #3c3c3c;
+            border-radius: 3px;
+            border: 1px solid #3e3e42;
+        }
+
+        .tab-toggle button {
+            padding: 6px 12px;
+            background: transparent;
+            border: none;
+            color: #858585;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .tab-toggle button.active {
+            background: #1e1e1e;
+            color: #ffffff;
+        }
+
+        .tab-toggle button:hover:not(.active) {
+            color: #cccccc;
+        }
+
+        button {
+            padding: 6px 12px;
+            background: #0e639c;
+            border: 1px solid #0e639c;
+            color: #ffffff;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #1177bb;
+            border-color: #1177bb;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.danger {
+            background: #d13438;
+            border-color: #d13438;
+        }
+
+        button.danger:hover:not(:disabled) {
+            background: #f14547;
+        }
+
+        .status-indicator {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            font-size: 12px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-dot.clean {
+            background: #4ec9b0;
+        }
+
+        .status-dot.dirty {
+            background: #dcdcaa;
+        }
+
+        .status-dot.valid {
+            background: #4ec9b0;
+        }
+
+        .status-dot.invalid {
+            background: #f48771;
+        }
+
+        /* Main content area */
+        .content {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+        }
+
+        /* Left panel: Palette */
+        .palette {
+            width: 280px;
+            background: #252526;
+            border-right: 1px solid #3e3e42;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .palette-header {
+            padding: 10px 15px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #858585;
+            border-bottom: 1px solid #3e3e42;
+            text-transform: uppercase;
+        }
+
+        .tool-category {
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .category-name {
+            padding: 8px 15px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #cccccc;
+            background: #2d2d30;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .category-name:hover {
+            background: #3c3c3c;
+        }
+
+        .category-tools {
+            padding: 4px 0;
+        }
+
+        .tool-item {
+            padding: 6px 15px;
+            font-size: 12px;
+            color: #cccccc;
+            cursor: move;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .tool-item:hover {
+            background: #3c3c3c;
+            color: #ffffff;
+        }
+
+        /* Center: Canvas */
+        .canvas-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1e1e1e;
+            position: relative;
+        }
+
+        #canvas {
+            flex: 1;
+            background: linear-gradient(90deg, #2a2a2a 1px, transparent 1px),
+                        linear-gradient(#2a2a2a 1px, transparent 1px);
+            background-size: 20px 20px;
+            cursor: default;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .node-rect {
+            fill: #252526;
+            stroke: #3e3e42;
+            stroke-width: 2;
+            cursor: move;
+        }
+
+        .node-rect.selected {
+            stroke: #0e639c;
+            stroke-width: 2;
+        }
+
+        .node-rect.error {
+            stroke: #f48771;
+        }
+
+        .node-rect.running {
+            stroke: #dcdcaa;
+            fill: #3a3a2a;
+        }
+
+        .node-rect.completed {
+            stroke: #4ec9b0;
+            fill: #2a3a2f;
+        }
+
+        .node-label {
+            font-size: 12px;
+            font-weight: 500;
+            text-anchor: middle;
+            dominant-baseline: middle;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .node-label-id {
+            fill: #ffffff;
+        }
+
+        .node-label-type {
+            fill: #858585;
+            font-size: 10px;
+        }
+
+        .edge-line {
+            stroke: #3e3e42;
+            stroke-width: 2;
+            fill: none;
+            marker-end: url(#arrowhead);
+            cursor: pointer;
+        }
+
+        .edge-line.selected {
+            stroke: #0e639c;
+            stroke-width: 2;
+        }
+
+        .edge-label {
+            font-size: 10px;
+            fill: #858585;
+            background: #1e1e1e;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .output-handle {
+            fill: #0e639c;
+            cursor: crosshair;
+            r: 4;
+        }
+
+        .output-handle:hover {
+            fill: #1177bb;
+            r: 5;
+        }
+
+        defs marker {
+            fill: #3e3e42;
+        }
+
+        defs marker.selected {
+            fill: #0e639c;
+        }
+
+        /* Right panel: Properties */
+        .properties {
+            width: 320px;
+            background: #252526;
+            border-left: 1px solid #3e3e42;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .properties-header {
+            padding: 10px 15px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #858585;
+            border-bottom: 1px solid #3e3e42;
+            text-transform: uppercase;
+        }
+
+        .properties-content {
+            padding: 15px;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .property-group {
+            margin-bottom: 20px;
+        }
+
+        .property-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #cccccc;
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .property-input {
+            width: 100%;
+            padding: 6px 8px;
+            background: #3c3c3c;
+            border: 1px solid #3e3e42;
+            color: #e0e0e0;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .property-input:focus {
+            outline: none;
+            border-color: #0e639c;
+            background: #3c3c3c;
+        }
+
+        .property-input.textarea {
+            font-family: 'Monaco', 'Menlo', monospace;
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        /* YAML view */
+        .yaml-editor {
+            width: 100%;
+            height: 100%;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .yaml-textarea {
+            flex: 1;
+            padding: 15px;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            border: none;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+            font-size: 13px;
+            resize: none;
+            outline: none;
+        }
+
+        .error-panel {
+            background: #3c2625;
+            border: 1px solid #f48771;
+            border-radius: 3px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+
+        .error-panel .error-title {
+            color: #f48771;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .error-panel .error-message {
+            color: #d09999;
+            font-family: monospace;
+            word-break: break-word;
+        }
+
+        .diagnostics-list {
+            font-size: 12px;
+        }
+
+        .diagnostic-item {
+            padding: 8px;
+            border-left: 3px solid #f48771;
+            background: #3c2625;
+            margin-bottom: 5px;
+            border-radius: 2px;
+        }
+
+        .diagnostic-severity {
+            font-weight: 600;
+            color: #f48771;
+            text-transform: uppercase;
+        }
+
+        .diagnostic-location {
+            color: #858585;
+            font-size: 11px;
+            margin-top: 2px;
+        }
+
+        .diagnostic-message {
+            color: #d09999;
+            margin-top: 2px;
+            word-break: break-word;
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #858585;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .empty-state-text {
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .test-panel {
+            padding: 15px;
+            border-top: 1px solid #3e3e42;
+            background: #252526;
+        }
+
+        .test-input-area {
+            margin-bottom: 10px;
+        }
+
+        .test-input-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #cccccc;
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .test-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .test-output {
+            font-size: 11px;
+            font-family: monospace;
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 3px;
+            padding: 10px;
+            margin-top: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            color: #858585;
+        }
+
+        .test-output.error {
+            border-color: #f48771;
+            color: #f48771;
+        }
+
+        .test-output-item {
+            padding: 4px 0;
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .test-output-item:last-child {
+            border-bottom: none;
+        }
+
+        .node-output {
+            margin-top: 10px;
+        }
+
+        .node-output-header {
+            font-weight: 600;
+            color: #0e639c;
+            font-size: 11px;
+            margin-bottom: 5px;
+        }
+
+        .node-output-value {
+            background: #1e1e1e;
+            padding: 6px;
+            border-left: 2px solid #0e639c;
+            font-size: 11px;
+            word-break: break-word;
+        }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #464647;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #5a5a5a;
+        }
+    </style>
+</head>
+<body>
+    <div class="editor-container">
+        <div class="toolbar">
+            <div class="toolbar-group">
+                <div class="tab-toggle">
+                    <button id="visualTab" class="active">Visual</button>
+                    <button id="yamlTab">YAML</button>
+                </div>
+            </div>
+
+            <div class="toolbar-group">
+                <button id="compileBtn">Compilar</button>
+                <button id="saveBtn">Guardar</button>
+            </div>
+
+            <div class="toolbar-group">
+                <button id="undoBtn" disabled>↶ Undo</button>
+                <button id="redoBtn" disabled>↷ Redo</button>
+            </div>
+
+            <div class="toolbar-group">
+                <button id="runBtn" style="background: #107c10; border-color: #107c10;">▶ Probar</button>
+                <button id="stopBtn" class="danger" disabled>■ Detener</button>
+            </div>
+
+            <div style="flex: 1;"></div>
+
+            <div class="status-indicator">
+                <span class="status-dot clean" id="statusClean"></span>
+                <span id="statusText">guardado</span>
+            </div>
+
+            <div class="status-indicator">
+                <span class="status-dot valid" id="statusValid"></span>
+                <span id="validText">válido</span>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="palette">
+                <div class="palette-header">Herramientas</div>
+                <div id="paletteContent"></div>
+            </div>
+
+            <div class="canvas-wrapper">
+                <svg id="canvas">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                            <polygon points="0 0, 10 3, 0 6" fill="#3e3e42"/>
+                        </marker>
+                        <marker id="arrowhead-selected" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                            <polygon points="0 0, 10 3, 0 6" fill="#0e639c"/>
+                        </marker>
+                    </defs>
+                </svg>
+            </div>
+
+            <div class="properties">
+                <div class="properties-header" id="propertiesTitle">Propiedades</div>
+                <div class="properties-content" id="propertiesPanel">
+                    <div class="empty-state">
+                        <div class="empty-state-text">Selecciona un nodo o conexión</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="testPanel" class="test-panel" style="display: none;">
+            <div class="test-input-area">
+                <label class="test-input-label">Entrada (JSON):</label>
+                <textarea id="testInput" class="property-input textarea" style="min-height: 60px;"></textarea>
+            </div>
+            <div class="test-buttons">
+                <button id="runTestBtn" style="flex: 1;">Ejecutar</button>
+            </div>
+            <div class="test-output" id="testOutput" style="display: none;"></div>
+        </div>
+    </div>
+
+    <div id="yamlEditorContainer" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; flex-direction: column;">
+        <textarea id="yamlEditor" class="yaml-textarea"></textarea>
+        <div id="yamlErrors" style="display: none; padding: 15px; background: #3c2625; border-top: 1px solid #f48771;"></div>
+    </div>
+
+    <script>
+        // =====================================================================
+        // STATE MANAGEMENT
+        // =====================================================================
+
+        const STATE = {
+            spec: null,
+            raw: '',
+            path: '',
+            isDirty: false,
+            isValid: false,
+            canUndo: false,
+            canRedo: false,
+            mode: 'visual',
+            selectedNodeId: null,
+            selectedEdgeId: null,
+            tools: [],
+            toolsByType: {},
+            nodePositions: {},
+            draggingNode: null,
+            connectingFrom: null,
+            runningNodeId: null,
+            completedNodeIds: new Set(),
+            errorNodeIds: new Set(),
+            abortController: null,
+            testMode: false,
+        };
+
+        // =====================================================================
+        // INITIALIZATION
+        // =====================================================================
+
+        async function init() {
+            try {
+                await loadAgent();
+                await loadTools();
+                setupEventHandlers();
+                renderUI();
+            } catch (e) {
+                console.error('Init failed:', e);
+            }
+        }
+
+        async function loadAgent() {
+            const res = await fetch('/api/edit/agent');
+            const data = await res.json();
+            STATE.spec = data.spec;
+            STATE.raw = data.raw;
+            STATE.path = data.path;
+            STATE.isValid = !data.parse_error;
+
+            if (data.spec && data.spec.graph) {
+                (data.spec.graph.nodes || []).forEach(n => {
+                    const pos = n.position || { x: 0, y: 0 };
+                    STATE.nodePositions[n.id] = {
+                        x: typeof pos.x === 'number' ? pos.x : (pos['x'] || 0),
+                        y: typeof pos.y === 'number' ? pos.y : (pos['y'] || 0)
+                    };
+                });
+            }
+
+            if (data.parse_error && !STATE.spec) {
+                STATE.spec = {
+                    name: 'new-agent',
+                    version: 'v1',
+                    graph: { nodes: [], edges: [] }
+                };
+            }
+
+            updateStatus();
+        }
+
+        async function loadTools() {
+            const res = await fetch('/api/v1/tools');
+            const tools = await res.json();
+            STATE.tools = tools;
+            STATE.tools.forEach(t => {
+                STATE.toolsByType[t.tool_type] = t;
+            });
+            renderPalette();
+        }
+
+        function setupEventHandlers() {
+            document.getElementById('visualTab').addEventListener('click', () => switchMode('visual'));
+            document.getElementById('yamlTab').addEventListener('click', () => switchMode('yaml'));
+            document.getElementById('compileBtn').addEventListener('click', compile);
+            document.getElementById('saveBtn').addEventListener('click', save);
+            document.getElementById('undoBtn').addEventListener('click', undo);
+            document.getElementById('redoBtn').addEventListener('click', redo);
+            document.getElementById('runBtn').addEventListener('click', showTestPanel);
+            document.getElementById('runTestBtn').addEventListener('click', runTest);
+            document.getElementById('stopBtn').addEventListener('click', stopTest);
+
+            document.getElementById('canvas').addEventListener('click', onCanvasClick);
+            document.getElementById('canvas').addEventListener('mousedown', onCanvasMouseDown);
+            document.getElementById('canvas').addEventListener('mousemove', onCanvasMouseMove);
+            document.getElementById('canvas').addEventListener('mouseup', onCanvasMouseUp);
+
+            document.getElementById('yamlEditor').addEventListener('input', () => {
+                STATE.isDirty = true;
+                STATE.raw = document.getElementById('yamlEditor').value;
+                updateStatus();
+            });
+        }
+
+        // =====================================================================
+        // UI RENDERING
+        // =====================================================================
+
+        function renderUI() {
+            if (STATE.mode === 'visual') {
+                renderVisual();
+            } else {
+                renderYAML();
+            }
+        }
+
+        function renderVisual() {
+            document.getElementById('yamlEditorContainer').style.display = 'none';
+            document.querySelector('.content').style.display = 'flex';
+            renderCanvas();
+        }
+
+        function renderYAML() {
+            document.getElementById('yamlEditorContainer').style.display = 'flex';
+            document.querySelector('.content').style.display = 'none';
+            document.getElementById('yamlEditor').value = STATE.raw;
+        }
+
+        function renderPalette() {
+            const categories = {};
+            STATE.tools.forEach(tool => {
+                if (!categories[tool.category]) {
+                    categories[tool.category] = [];
+                }
+                categories[tool.category].push(tool);
+            });
+
+            const html = Object.entries(categories).map(([cat, tools]) => `
+                <div class="tool-category">
+                    <div class="category-name">${cat}</div>
+                    <div class="category-tools">
+                        ${tools.map(t => `
+                            <div class="tool-item" data-tool-type="${t.tool_type}" draggable="true">
+                                ${t.name}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('paletteContent').innerHTML = html;
+
+            document.querySelectorAll('.tool-item').forEach(item => {
+                item.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.effectAllowed = 'copy';
+                    e.dataTransfer.setData('toolType', item.dataset.toolType);
+                });
+            });
+        }
+
+        function renderCanvas() {
+            const canvas = document.getElementById('canvas');
+            canvas.innerHTML = `
+                <defs>
+                    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                        <polygon points="0 0, 10 3, 0 6" fill="#3e3e42"/>
+                    </marker>
+                    <marker id="arrowhead-selected" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                        <polygon points="0 0, 10 3, 0 6" fill="#0e639c"/>
+                    </marker>
+                </defs>
+            `;
+
+            if (!STATE.spec || !STATE.spec.graph) {
+                return;
+            }
+
+            const nodes = STATE.spec.graph.nodes || [];
+            const edges = STATE.spec.graph.edges || [];
+
+            layoutNodes();
+
+            edges.forEach(edge => {
+                drawEdge(canvas, edge);
+            });
+
+            nodes.forEach(node => {
+                drawNode(canvas, node);
+            });
+        }
+
+        function layoutNodes() {
+            if (!STATE.spec || !STATE.spec.graph) return;
+
+            const nodes = STATE.spec.graph.nodes || [];
+            const cols = Math.ceil(Math.sqrt(nodes.length));
+            let col = 0, row = 0;
+
+            nodes.forEach((node, i) => {
+                if (!STATE.nodePositions[node.id]) {
+                    STATE.nodePositions[node.id] = {
+                        x: 100 + col * 200,
+                        y: 100 + row * 150
+                    };
+                    col++;
+                    if (col >= cols) {
+                        col = 0;
+                        row++;
+                    }
+                }
+                const pos = STATE.nodePositions[node.id];
+                node.position = { x: pos.x, y: pos.y };
+            });
+        }
+
+        function drawNode(canvas, node) {
+            const pos = STATE.nodePositions[node.id] || { x: 0, y: 0 };
+            const w = 160, h = 60;
+            const x = pos.x - w / 2;
+            const y = pos.y - h / 2;
+
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', 'node-group');
+            g.setAttribute('data-node-id', node.id);
+
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', x);
+            rect.setAttribute('y', y);
+            rect.setAttribute('width', w);
+            rect.setAttribute('height', h);
+            rect.setAttribute('rx', 4);
+            rect.setAttribute('class', 'node-rect');
+            if (STATE.selectedNodeId === node.id) rect.classList.add('selected');
+            if (STATE.runningNodeId === node.id) rect.classList.add('running');
+            if (STATE.completedNodeIds.has(node.id)) rect.classList.add('completed');
+            if (STATE.errorNodeIds.has(node.id)) rect.classList.add('error');
+
+            rect.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectNode(node.id);
+            });
+
+            g.appendChild(rect);
+
+            const idText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            idText.setAttribute('x', pos.x);
+            idText.setAttribute('y', pos.y - 10);
+            idText.setAttribute('class', 'node-label node-label-id');
+            idText.textContent = node.id;
+            g.appendChild(idText);
+
+            const typeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            typeText.setAttribute('x', pos.x);
+            typeText.setAttribute('y', pos.y + 10);
+            typeText.setAttribute('class', 'node-label node-label-type');
+            typeText.textContent = node.tool_type;
+            g.appendChild(typeText);
+
+            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            handle.setAttribute('cx', x + w);
+            handle.setAttribute('cy', pos.y);
+            handle.setAttribute('class', 'output-handle');
+            handle.setAttribute('data-node-id', node.id);
+            handle.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                STATE.connectingFrom = node.id;
+            });
+            g.appendChild(handle);
+
+            document.getElementById('canvas').appendChild(g);
+        }
+
+        function drawEdge(canvas, edge) {
+            const fromNode = STATE.spec.graph.nodes.find(n => n.id === edge.source);
+            const toNode = STATE.spec.graph.nodes.find(n => n.id === edge.target);
+
+            if (!fromNode || !toNode) return;
+
+            const fromPos = STATE.nodePositions[fromNode.id] || { x: 0, y: 0 };
+            const toPos = STATE.nodePositions[toNode.id] || { x: 0, y: 0 };
+
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', fromPos.x + 80);
+            line.setAttribute('y1', fromPos.y);
+            line.setAttribute('x2', toPos.x - 80);
+            line.setAttribute('y2', toPos.y);
+            line.setAttribute('class', 'edge-line');
+            if (STATE.selectedEdgeId === edge.id) line.classList.add('selected');
+
+            line.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectEdge(edge.id);
+            });
+
+            canvas.appendChild(line);
+
+            if (edge.condition) {
+                const midX = (fromPos.x + toPos.x) / 2;
+                const midY = (fromPos.y + toPos.y) / 2;
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', midX);
+                text.setAttribute('y', midY - 5);
+                text.setAttribute('class', 'edge-label');
+                text.textContent = `${edge.condition.field} ${edge.condition.op}`;
+                canvas.appendChild(text);
+            }
+        }
+
+        function renderPropertiesForNode(nodeId) {
+            const node = STATE.spec.graph.nodes.find(n => n.id === nodeId);
+            if (!node) return;
+
+            const tool = STATE.toolsByType[node.tool_type];
+            let html = `<div class="property-group">`;
+            html += `<label class="property-label">Node ID</label>`;
+            html += `<input type="text" class="property-input" value="${node.id}" readonly>`;
+            html += `</div>`;
+
+            html += `<div class="property-group">`;
+            html += `<label class="property-label">Tool Type</label>`;
+            html += `<input type="text" class="property-input" value="${node.tool_type}" readonly>`;
+            html += `</div>`;
+
+            if (tool && tool.inputs) {
+                html += `<div class="property-group">`;
+                html += `<label class="property-label">Inputs</label>`;
+                tool.inputs.forEach(input => {
+                    const val = (node.config && node.config[input.name]) || '';
+                    html += `<label class="property-label" style="margin-top: 8px; margin-bottom: 4px;">${input.name}</label>`;
+                    html += `<input type="text" class="property-input" data-field="config" data-key="${input.name}" value="${JSON.stringify(val).replace(/"/g, '&quot;')}">`;
+                });
+                html += `</div>`;
+            }
+
+            document.getElementById('propertiesPanel').innerHTML = html;
+
+            document.querySelectorAll('[data-field="config"]').forEach(input => {
+                input.addEventListener('change', () => {
+                    try {
+                        const val = input.value ? JSON.parse(input.value) : null;
+                        if (!node.config) node.config = {};
+                        node.config[input.dataset.key] = val;
+                        STATE.isDirty = true;
+                        updateStatus();
+                    } catch (e) {
+                        console.error('Config parse error:', e);
+                    }
+                });
+            });
+        }
+
+        function renderPropertiesForEdge(edgeId) {
+            const edge = STATE.spec.graph.edges.find(e => e.id === edgeId);
+            if (!edge) return;
+
+            let html = `<div class="property-group">`;
+            html += `<label class="property-label">Source</label>`;
+            html += `<input type="text" class="property-input" value="${edge.source}" readonly>`;
+            html += `</div>`;
+
+            html += `<div class="property-group">`;
+            html += `<label class="property-label">Target</label>`;
+            html += `<input type="text" class="property-input" value="${edge.target}" readonly>`;
+            html += `</div>`;
+
+            if (edge.condition) {
+                html += `<div class="property-group">`;
+                html += `<label class="property-label">Condition Field</label>`;
+                html += `<input type="text" class="property-input" data-edge-field="condition-field" value="${edge.condition.field}">`;
+                html += `</div>`;
+
+                html += `<div class="property-group">`;
+                html += `<label class="property-label">Condition Op</label>`;
+                html += `<input type="text" class="property-input" data-edge-field="condition-op" value="${edge.condition.op}">`;
+                html += `</div>`;
+
+                html += `<div class="property-group">`;
+                html += `<label class="property-label">Condition Value</label>`;
+                html += `<input type="text" class="property-input" data-edge-field="condition-value" value="${JSON.stringify(edge.condition.value).replace(/"/g, '&quot;')}">`;
+                html += `</div>`;
+            }
+
+            document.getElementById('propertiesPanel').innerHTML = html;
+
+            document.querySelectorAll('[data-edge-field]').forEach(input => {
+                input.addEventListener('change', () => {
+                    try {
+                        if (input.dataset.edgeField === 'condition-field') {
+                            edge.condition.field = input.value;
+                        } else if (input.dataset.edgeField === 'condition-op') {
+                            edge.condition.op = input.value;
+                        } else if (input.dataset.edgeField === 'condition-value') {
+                            edge.condition.value = JSON.parse(input.value);
+                        }
+                        STATE.isDirty = true;
+                        updateStatus();
+                    } catch (e) {
+                        console.error('Edge property error:', e);
+                    }
+                });
+            });
+        }
+
+        // =====================================================================
+        // MODE SWITCHING
+        // =====================================================================
+
+        function switchMode(mode) {
+            STATE.mode = mode;
+            document.getElementById('visualTab').classList.toggle('active', mode === 'visual');
+            document.getElementById('yamlTab').classList.toggle('active', mode === 'yaml');
+            renderUI();
+        }
+
+        // =====================================================================
+        // API CALLS
+        // =====================================================================
+
+        async function compile() {
+            const payload = STATE.mode === 'visual' ? { spec: STATE.spec } : { raw: STATE.raw };
+            const res = await fetch('/api/edit/compile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+
+            STATE.isValid = data.ok;
+            updateStatus();
+
+            if (data.diagnostics && data.diagnostics.length > 0) {
+                let html = '<div class="diagnostics-list">';
+                data.diagnostics.forEach(d => {
+                    html += `
+                        <div class="diagnostic-item">
+                            <div class="diagnostic-severity">${d.severity}</div>
+                            <div class="diagnostic-location">${d.location}</div>
+                            <div class="diagnostic-message">${d.message}</div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+
+                const panel = document.getElementById('yamlErrors');
+                panel.innerHTML = html;
+                panel.style.display = data.ok ? 'none' : 'block';
+            }
+        }
+
+        async function save() {
+            const payload = STATE.mode === 'visual' ? { spec: STATE.spec } : { raw: STATE.raw };
+            const res = await fetch('/api/edit/agent', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+
+            if (data.ok) {
+                STATE.raw = data.raw;
+                STATE.isDirty = false;
+                updateStatus();
+            } else {
+                alert('Save failed: ' + (data.error || 'unknown error'));
+            }
+        }
+
+        async function undo() {
+            const res = await fetch('/api/edit/undo', { method: 'POST' });
+            const data = await res.json();
+            STATE.spec = data.spec;
+            STATE.raw = data.raw;
+            STATE.canUndo = data.can_undo;
+            STATE.canRedo = data.can_redo;
+            STATE.isDirty = false;
+            updateStatus();
+            renderUI();
+        }
+
+        async function redo() {
+            const res = await fetch('/api/edit/redo', { method: 'POST' });
+            const data = await res.json();
+            STATE.spec = data.spec;
+            STATE.raw = data.raw;
+            STATE.canUndo = data.can_undo;
+            STATE.canRedo = data.can_redo;
+            STATE.isDirty = false;
+            updateStatus();
+            renderUI();
+        }
+
+        async function runTest() {
+            if (!STATE.spec) {
+                alert('No agent spec');
+                return;
+            }
+
+            let triggerData = {};
+            try {
+                const input = document.getElementById('testInput').value.trim();
+                if (input) {
+                    triggerData = JSON.parse(input);
+                }
+            } catch (e) {
+                alert('Invalid JSON in input');
+                return;
+            }
+
+            STATE.abortController = new AbortController();
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('runTestBtn').disabled = true;
+            STATE.completedNodeIds.clear();
+            STATE.errorNodeIds.clear();
+            STATE.runningNodeId = null;
+
+            const createRes = await fetch('/api/v1/agents/from-spec', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(STATE.spec),
+                signal: STATE.abortController.signal,
+            }).catch(e => {
+                if (e.name !== 'AbortError') {
+                    document.getElementById('testOutput').innerHTML += `<div class="test-output-item error">Error creating agent: ${e.message}</div>`;
+                }
+                return null;
+            });
+
+            if (!createRes || !createRes.ok) {
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('runTestBtn').disabled = false;
+                return;
+            }
+
+            const createData = await createRes.json();
+            const agentId = createData.id;
+
+            const streamRes = await fetch(`/api/v1/agents/${agentId}/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ trigger_data: triggerData }),
+                signal: STATE.abortController.signal,
+            }).catch(e => {
+                if (e.name !== 'AbortError') {
+                    document.getElementById('testOutput').innerHTML += `<div class="test-output-item error">Error streaming: ${e.message}</div>`;
+                }
+                return null;
+            });
+
+            if (!streamRes || !streamRes.body) {
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('runTestBtn').disabled = false;
+                return;
+            }
+
+            const reader = streamRes.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            const outputEl = document.getElementById('testOutput');
+            outputEl.innerHTML = '';
+            outputEl.style.display = 'block';
+
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    let i = 0;
+                    while (i < lines.length) {
+                        const line = lines[i];
+                        if (line.startsWith('event: ')) {
+                            const eventType = line.substring(7);
+                            const dataLine = lines[i + 1];
+                            if (dataLine && dataLine.startsWith('data: ')) {
+                                try {
+                                    const eventData = JSON.parse(dataLine.substring(6));
+                                    handleStreamEvent(eventType, eventData, outputEl);
+                                } catch (e) {
+                                    console.error('Failed to parse event data:', e);
+                                }
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    outputEl.innerHTML += `<div class="test-output-item error">Error: ${e.message}</div>`;
+                }
+            } finally {
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('runTestBtn').disabled = false;
+                renderCanvas();
+            }
+        }
+
+        function handleStreamEvent(eventType, eventData, outputEl) {
+            if (eventType === 'graph.started') {
+                const item = document.createElement('div');
+                item.className = 'test-output-item';
+                item.textContent = `Graph started: ${eventData.data.graph_name || eventData.graph_name || 'agent'}`;
+                outputEl.appendChild(item);
+            } else if (eventType === 'node.started') {
+                STATE.runningNodeId = eventData.data.node_id || eventData.node_id;
+                renderCanvas();
+                const item = document.createElement('div');
+                item.className = 'test-output-item';
+                const nodeId = eventData.data.node_id || eventData.node_id;
+                const toolType = eventData.data.tool_type || eventData.tool_type;
+                item.textContent = `${nodeId} (${toolType}) started`;
+                outputEl.appendChild(item);
+            } else if (eventType === 'node.completed') {
+                const nodeId = eventData.data.node_id || eventData.node_id;
+                STATE.runningNodeId = null;
+                STATE.completedNodeIds.add(nodeId);
+                renderCanvas();
+                const item = document.createElement('div');
+                item.className = 'test-output-item';
+                const durationMs = eventData.data.duration_ms || eventData.duration_ms || 0;
+                item.innerHTML = `<span style="color: #4ec9b0;"><strong>${nodeId}</strong> completed (${durationMs}ms)</span>`;
+                outputEl.appendChild(item);
+            } else if (eventType === 'node.error') {
+                const nodeId = eventData.data.node_id || eventData.node_id;
+                STATE.runningNodeId = null;
+                STATE.errorNodeIds.add(nodeId);
+                renderCanvas();
+                const item = document.createElement('div');
+                item.className = 'test-output-item error';
+                const error = eventData.data.error || eventData.error || 'unknown error';
+                item.textContent = `${nodeId} error: ${error}`;
+                outputEl.appendChild(item);
+            } else if (eventType === 'graph.completed') {
+                STATE.runningNodeId = null;
+                renderCanvas();
+                const item = document.createElement('div');
+                item.className = 'test-output-item';
+                const totalMs = eventData.data.total_duration_ms || eventData.total_duration_ms || 0;
+                item.innerHTML = `<span style="color: #4ec9b0;">Graph completed (${totalMs}ms)</span>`;
+                outputEl.appendChild(item);
+            } else if (eventType === 'graph.error') {
+                STATE.runningNodeId = null;
+                renderCanvas();
+                const item = document.createElement('div');
+                item.className = 'test-output-item error';
+                const error = eventData.data.error || eventData.error || 'unknown error';
+                item.textContent = `Graph error: ${error}`;
+                outputEl.appendChild(item);
+            }
+            outputEl.scrollTop = outputEl.scrollHeight;
+        }
+
+        function stopTest() {
+            if (STATE.abortController) {
+                STATE.abortController.abort();
+                STATE.abortController = null;
+            }
+            STATE.runningNodeId = null;
+            STATE.testMode = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('runTestBtn').disabled = false;
+            renderCanvas();
+        }
+
+        function showTestPanel() {
+            STATE.testMode = true;
+            document.getElementById('testPanel').style.display = 'block';
+        }
+
+        // =====================================================================
+        // CANVAS INTERACTIONS
+        // =====================================================================
+
+        function onCanvasClick(e) {
+            if (e.target === document.getElementById('canvas')) {
+                STATE.selectedNodeId = null;
+                STATE.selectedEdgeId = null;
+                document.getElementById('propertiesPanel').innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-text">Selecciona un nodo o conexión</div>
+                    </div>
+                `;
+                renderCanvas();
+            }
+        }
+
+        function onCanvasMouseDown(e) {
+            if (e.target.classList.contains('node-rect')) {
+                const nodeGroup = e.target.closest('.node-group');
+                const nodeId = nodeGroup.dataset.nodeId;
+                STATE.draggingNode = nodeId;
+            }
+        }
+
+        function onCanvasMouseMove(e) {
+            if (STATE.draggingNode) {
+                const rect = document.getElementById('canvas').getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                STATE.nodePositions[STATE.draggingNode] = { x, y };
+                const node = STATE.spec.graph.nodes.find(n => n.id === STATE.draggingNode);
+                if (node) node.position = { x, y };
+                STATE.isDirty = true;
+                updateStatus();
+                renderCanvas();
+            }
+
+            if (STATE.connectingFrom) {
+                // Preview line could be added here in the future
+            }
+        }
+
+        function onCanvasMouseUp(e) {
+            STATE.draggingNode = null;
+
+            if (STATE.connectingFrom && e.target.classList.contains('node-rect')) {
+                const nodeGroup = e.target.closest('.node-group');
+                const toNodeId = nodeGroup.dataset.nodeId;
+                if (toNodeId !== STATE.connectingFrom) {
+                    addEdge(STATE.connectingFrom, toNodeId);
+                }
+            }
+
+            STATE.connectingFrom = null;
+            renderCanvas();
+        }
+
+        function selectNode(nodeId) {
+            STATE.selectedNodeId = nodeId;
+            STATE.selectedEdgeId = null;
+            renderPropertiesForNode(nodeId);
+            renderCanvas();
+        }
+
+        function selectEdge(edgeId) {
+            STATE.selectedEdgeId = edgeId;
+            STATE.selectedNodeId = null;
+            renderPropertiesForEdge(edgeId);
+            renderCanvas();
+        }
+
+        function addEdge(fromId, toId) {
+            const edgeId = `${fromId}__${toId}`;
+            const existing = STATE.spec.graph.edges.find(e => e.id === edgeId);
+            if (existing) return;
+
+            const edge = {
+                id: edgeId,
+                source: fromId,
+                target: toId,
+                condition: null,
+                data_map: null,
+            };
+            STATE.spec.graph.edges.push(edge);
+            STATE.isDirty = true;
+            updateStatus();
+            renderCanvas();
+        }
+
+        document.getElementById('canvas').addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+
+        document.getElementById('canvas').addEventListener('drop', (e) => {
+            e.preventDefault();
+            const toolType = e.dataTransfer.getData('toolType');
+            if (!toolType) return;
+
+            const rect = document.getElementById('canvas').getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            addNode(toolType, x, y);
+        });
+
+        function addNode(toolType, x, y) {
+            const tool = STATE.toolsByType[toolType];
+            if (!tool) return;
+
+            const shortType = toolType.split('/')[1] || toolType;
+            const nodeId = `${shortType}_${Date.now()}`;
+            const node = {
+                id: nodeId,
+                tool_type: toolType,
+                version: '1.0.0',
+                config: {},
+                position: { x, y },
+            };
+
+            STATE.spec.graph.nodes.push(node);
+            STATE.nodePositions[nodeId] = { x, y };
+            STATE.isDirty = true;
+            updateStatus();
+            renderCanvas();
+        }
+
+        function updateStatus() {
+            const cleanDot = document.getElementById('statusClean');
+            const statusText = document.getElementById('statusText');
+            const validDot = document.getElementById('statusValid');
+            const validText = document.getElementById('validText');
+
+            cleanDot.classList.toggle('clean', !STATE.isDirty);
+            cleanDot.classList.toggle('dirty', STATE.isDirty);
+            statusText.textContent = STATE.isDirty ? 'sin guardar' : 'guardado';
+
+            validDot.classList.toggle('valid', STATE.isValid);
+            validDot.classList.toggle('invalid', !STATE.isValid);
+            validText.textContent = STATE.isValid ? 'válido' : 'inválido';
+
+            document.getElementById('undoBtn').disabled = !STATE.canUndo;
+            document.getElementById('redoBtn').disabled = !STATE.canRedo;
+        }
+
+        // =====================================================================
+        // START
+        // =====================================================================
+
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

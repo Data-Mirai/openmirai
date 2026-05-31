@@ -1,4 +1,4 @@
-# Open Mirai
+# OpenMirai
 
 [![CI](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml/badge.svg)](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Gabo-TheCreator/openmirai?include_prereleases&sort=semver)](https://github.com/Gabo-TheCreator/openmirai/releases)
@@ -7,7 +7,7 @@
 
 > **Decentralize your AI agents.** One binary. Any LLM. Your machine. Your rules.
 
-Open Mirai is a Rust-native engine that runs agentic workflows defined as simple YAML graphs. No cloud lock-in, no heavy runtime, no vendor handcuffs — the engine runs wherever you do: your laptop, your server, your edge. A single portable binary with zero runtime dependencies.
+OpenMirai is a Rust-native engine that runs agentic workflows defined as simple YAML graphs. No cloud lock-in, no heavy runtime, no vendor handcuffs — the engine runs wherever you do: your laptop, your server, your edge. A single portable binary with zero runtime dependencies.
 
 A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
 
@@ -15,7 +15,7 @@ A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying you
 
 ## Why decentralized?
 
-Most agent platforms run *their* runtime, on *their* cloud, against *their* preferred model. Open Mirai inverts that:
+Most agent platforms run *their* runtime, on *their* cloud, against *their* preferred model. OpenMirai inverts that:
 
 - **Runs anywhere** — one self-contained binary, zero runtime dependencies. Your machine, your server, your edge.
 - **Any LLM** — 7 providers today, local Ollama included. No vendor lock-in.
@@ -80,7 +80,7 @@ The agent defines **what** to do. The engine decides **how** to run it.
 
 ## What's different
 
-| | Open Mirai | LangGraph / CrewAI | Google ADK |
+| | OpenMirai | LangGraph / CrewAI | Google ADK |
 |---|---|---|---|
 | Runtime | Single binary, zero deps | Python runtime + deps | Python runtime + deps |
 | Run on your own machine/edge | ✅ first-class | ⚠️ needs Python env | ⚠️ GCP-oriented |
@@ -172,7 +172,7 @@ API endpoints: `/api/v1/agents`, `/api/v1/graphs`, `/api/v1/sessions`, `/api/v1/
 
 ## Contributing
 
-Open Mirai is open source and built in the open. Contributions are welcome — new tools, LLM providers, docs, examples, bug fixes.
+OpenMirai is open source and built in the open. Contributions are welcome — new tools, LLM providers, docs, examples, bug fixes.
 
 - Start with **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - Pick up a [`good first issue`](https://github.com/Gabo-TheCreator/openmirai/labels/good%20first%20issue)

@@ -1,6 +1,6 @@
-# Contributing to Open Mirai
+# Contributing to OpenMirai
 
-Thanks for helping build Open Mirai — the open-source engine for **decentralized AI agents**. This guide gets you from clone to merged PR.
+Thanks for helping build OpenMirai — the open-source engine for **decentralized AI agents**. This guide gets you from clone to merged PR.
 
 ## TL;DR
 
@@ -20,7 +20,7 @@ cargo clippy --workspace --all-targets --all-features
 cargo test --workspace --all-features
 ```
 
-## What Open Mirai is
+## What OpenMirai is
 
 A Rust-native engine that runs agentic workflows defined as **YAML graphs**, compiled to a single portable binary with zero runtime dependencies. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system map before diving into a non-trivial change.
 

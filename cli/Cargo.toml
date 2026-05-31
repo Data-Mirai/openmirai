@@ -1,8 +1,8 @@
 [package]
 name = "openmirai-cli"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
-description = "Interactive CLI for Open Mirai"
+description = "Interactive CLI for OpenMirai"
 license = "MIT"
 
 [[bin]]

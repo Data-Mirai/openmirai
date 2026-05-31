@@ -1,4 +1,4 @@
-# Open Mirai — Documentation Index
+# OpenMirai — Documentation Index
 
 ## 1. Overview
 

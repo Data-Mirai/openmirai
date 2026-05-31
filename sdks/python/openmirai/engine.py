@@ -9,7 +9,7 @@ from openmirai.types import ExecutionResult, ExecutionStatus, StreamEvent, Trace
 
 
 class Engine:
-    """Open Mirai client.
+    """OpenMirai client.
 
     Runs agents via the HTTP API (if server is running) or via the CLI binary.
 

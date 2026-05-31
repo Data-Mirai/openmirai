@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to Open Mirai! -->
+<!-- Thanks for contributing to OpenMirai! -->
 
 ## What does this PR do?
 

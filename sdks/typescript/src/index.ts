@@ -1,7 +1,7 @@
 /**
- * openmirai — TypeScript SDK for Open Mirai.
+ * openmirai — TypeScript SDK for OpenMirai.
  *
- * Thin wrapper that communicates with the Open Mirai via HTTP API.
+ * Thin wrapper that communicates with OpenMirai via HTTP API.
  *
  * @example
  * ```typescript

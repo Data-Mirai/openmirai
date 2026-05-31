@@ -1,4 +1,4 @@
-# How to Use Open Mirai
+# How to Use OpenMirai
 
 ## The concept in 30 seconds
 

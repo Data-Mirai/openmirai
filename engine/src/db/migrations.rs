@@ -35,7 +35,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// Complete DDL for schema v1.  Using `IF NOT EXISTS` makes it idempotent.
 pub const SCHEMA_SQL: &str = r#"
--- Open Mirai — Standalone Schema v1
+-- OpenMirai — Standalone Schema v1
 
 -- Graphs
 CREATE TABLE IF NOT EXISTS graphs (

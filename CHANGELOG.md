@@ -4,6 +4,38 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.6.0 (2026-05-31)
+
+### Changed
+- **Rebrand: Data Mirai Engine → OpenMirai.** The open-source engine is now **OpenMirai** — positioning around running AI agents wherever you are, with no cloud lock-in. Added community on-ramp: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, issue templates, and PR template.
+
+### Breaking
+Identifiers were renamed. The agent YAML format, the runtime, and the API are **unchanged** — only package/crate names move. Update your imports and dependency declarations:
+
+| Surface | Old | New |
+|---------|-----|-----|
+| Rust crate (engine) | `datamirai-engine` | `openmirai-engine` |
+| Rust crate (cli) | `datamirai-cli` | `openmirai-cli` |
+| Rust lib import | `datamirai_engine` | `openmirai_engine` |
+| Python package | `datamirai` (`pip install datamirai`) | `openmirai` (`pip install openmirai`) |
+| TypeScript package | `datamirai` | `openmirai` |
+| Repository | `Gabo-TheCreator/data-mirai-engine` | `Gabo-TheCreator/openmirai` |
+
+### Unchanged (no action needed)
+- CLI binary and command: still `mirai`.
+- Environment variables: still `MIRAI_API_KEY`, `MIRAI_SCRATCH_DIR`, `MIRAI_*`.
+- Local data directory: still `~/.datamirai/`.
+- Company name and domain: still `Data Mirai` / `datamirai.com`.
+- Agent YAML spec: fully backward-compatible — all v0.5.x agents run unchanged.
+
+### Consumer action
+- **Rust**: rename the dependency in `Cargo.toml` and update `use datamirai_engine::…` → `use openmirai_engine::…`.
+- **Python**: `pip install openmirai` and update `from datamirai import …` → `from openmirai import …`.
+- **TypeScript**: update the `datamirai` dependency to `openmirai`.
+- **Binary users**: no change — keep using `mirai`.
+
+---
+
 ## v0.5.0 (2026-05-28)
 
 ### Added

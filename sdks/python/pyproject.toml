@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openmirai"
-version = "0.5.2"
-description = "Python SDK for Open Mirai — agentic graph execution"
+version = "0.6.0"
+description = "Python SDK for OpenMirai — agentic graph execution"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"

@@ -1,7 +1,7 @@
 """
-openmirai — Python SDK for Open Mirai.
+openmirai — Python SDK for OpenMirai.
 
-Thin wrapper that communicates with the Open Mirai via HTTP API or CLI binary.
+Thin wrapper that communicates with OpenMirai via HTTP API or CLI binary.
 
 Usage:
     from openmirai import Engine, Agent
@@ -16,7 +16,7 @@ Usage:
         print(event.type, event.data)
 """
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 
 from openmirai.engine import Engine
 from openmirai.agent import Agent

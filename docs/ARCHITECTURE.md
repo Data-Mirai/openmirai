@@ -1,4 +1,4 @@
-# Open Mirai — Architecture
+# OpenMirai — Architecture
 
 ## 1. Stack
 

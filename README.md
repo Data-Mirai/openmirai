@@ -27,6 +27,10 @@ Most agent platforms run *their* runtime, on *their* cloud, against *their* pref
 ## Quick Start
 
 ```bash
+# Install requirements
+sudo apt  install rustup
+rustup update stable
+
 # Build from source
 cargo build --release
 

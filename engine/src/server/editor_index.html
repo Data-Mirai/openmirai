@@ -317,13 +317,20 @@
     }
 
     .node-rect.running {
+      stroke: #111;
+      stroke-width: 3px;
+    }
+
+    .node-rect.completed {
       stroke: #2a8c6c;
-      stroke-width: 1px;
+      stroke-width: 2px;
+      fill: #f3faf7;
     }
 
     .node-rect.error {
       stroke: #d1314c;
-      stroke-width: 1px;
+      stroke-width: 2px;
+      fill: #fdf3f5;
     }
 
     .node-text {
@@ -1043,7 +1050,8 @@ async function runAgent() {
         
         state.runningAgentId = createResp.id;
         state.isRunning = true;
-        showView('console');
+        showView('visual'); // keep the graph visible so the run plays out on the canvas
+        resetHighlights();
         clearConsole();
         addConsoleLine('Starting run...', 'info');
         
@@ -1114,25 +1122,32 @@ async function runAgent() {
 
 function handleStreamEvent(event) {
   try {
-    const { event_type, node_id, data } = event;
-    
-    if (event_type === 'block_started') {
-      addConsoleLine(`→ ${node_id || '?'}: running`, 'running');
-      highlightNode(node_id, 'running');
-    } else if (event_type === 'block_completed') {
-      addConsoleLine(`✓ ${node_id || '?'}: completed`, 'ok');
-      highlightNode(node_id, null);
-    } else if (event_type === 'block_error') {
-      addConsoleLine(`✗ ${node_id || '?'}: ${(data && data.error) || 'error'}`, 'error');
-      highlightNode(node_id, 'error');
-    } else if (event_type === 'session_completed') {
-      addConsoleLine('Session completed.', 'ok');
-    } else if (event_type === 'session_failed') {
-      addConsoleLine(`Session failed: ${(data && data.error) || 'unknown error'}`, 'error');
-    } else if (event_type === 'llm_token') {
-      if (data && data.token) {
-        addConsoleLine(data.token, 'info');
-      }
+    // SSE payload shape (engine streaming::StreamEvent, adjacently tagged):
+    //   { "event": "node.started", "data": { "node_id": "...", ... } }
+    const name = event.event || event.event_type || '';
+    const d = event.data || event;
+    const nodeId = d.node_id;
+
+    if (name === 'graph.started') {
+      addConsoleLine('Execution started', 'info');
+    } else if (name === 'node.started') {
+      addConsoleLine(`→ ${nodeId || '?'}: running`, 'running');
+      highlightNode(nodeId, 'running');
+    } else if (name === 'node.completed') {
+      const ms = d.duration_ms != null ? ` (${d.duration_ms}ms)` : '';
+      addConsoleLine(`✓ ${nodeId || '?'}: completed${ms}`, 'ok');
+      highlightNode(nodeId, 'completed');
+    } else if (name === 'node.error') {
+      addConsoleLine(`✗ ${nodeId || '?'}: ${d.error || 'error'}`, 'error');
+      highlightNode(nodeId, 'error');
+    } else if (name === 'node.token') {
+      if (d.token) addConsoleLine(d.token, 'info');
+    } else if (name === 'graph.completed') {
+      addConsoleLine('✓ Execution completed', 'ok');
+      showToast('✓ Run completed', 'success');
+    } else if (name === 'graph.error') {
+      addConsoleLine(`✗ ${d.error || 'graph error'}`, 'error');
+      showToast('✗ Run failed', 'error');
     }
   } catch (err) {
     console.error('Handle stream event error:', err);
@@ -1501,12 +1516,19 @@ function highlightNode(id, status) {
   try {
     const rect = document.querySelector(`[data-id="${id}"] .node-rect`);
     if (rect) {
-      rect.classList.remove('running', 'error');
+      rect.classList.remove('running', 'completed', 'error');
       if (status) rect.classList.add(status);
     }
   } catch (err) {
     console.error('Highlight node error:', err);
   }
+}
+
+/// Clear every node's run-state styling (before a fresh run).
+function resetHighlights() {
+  document
+    .querySelectorAll('.node-rect.running, .node-rect.completed, .node-rect.error')
+    .forEach((r) => r.classList.remove('running', 'completed', 'error'));
 }
 
 function addConsoleLine(text, cls) {

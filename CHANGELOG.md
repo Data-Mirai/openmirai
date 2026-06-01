@@ -4,6 +4,21 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.6.1 (2026-05-31)
+
+No breaking changes. The agent YAML spec, runtime, and API are backward-compatible.
+
+### Added
+- **Configurable default model + guided preflight (PRD-014).** Pick your default provider/model from a curated Ollama catalog (merged with your installed models) — persisted to `~/.openmirai/config.toml`. Before any run, a preflight check turns cryptic failures ("HTTP 404: model not found") into actionable guidance: start Ollama, pull the missing model (with consent + streamed progress), or set an API key. New commands: `mirai doctor` (environment check) and `mirai models` (`list` / `pull <name>` / `use <name>`). **API keys are never written to config — env/flag only.**
+- **Visual editor: run, debug, configure (PRD-013/014/015).** `mirai edit <agent.yaml>` gained: step-by-step run visualization on the canvas (nodes light up running → completed/error); a **pre-run gate** that surfaces missing config with a one-click model download; a **Settings** panel to browse the catalog and set the default model; and a **Run result drawer** (PRD-015) that coexists with the graph and shows the final result plus per-node outputs (collapsible JSON) and errors.
+- **Run output in the stream (PRD-015).** SSE `node.completed` now carries the node's real output map and `graph.completed` carries the final state snapshot, so clients can show what the agent actually produced. The replay path (`trace_to_events`) populates the same outputs from final state.
+
+### Changed
+- **MSRV is now Rust 1.80** (declared via `rust-version`), and the repo pins a toolchain so `cargo build` from source guides you to the right compiler instead of failing on a lockfile-version mismatch. Added the `toml` dependency for user config.
+- **Internal cleanup (PRD-011 + DRY pass).** Unified duplicated helpers (`field()`, `value_type_label`, Ollama URL/client/status, the editor's SSE parser and LLM factory) and collapsed boilerplate — net negative lines, zero behavior change, all tests green.
+
+---
+
 ## v0.6.0 (2026-05-31)
 
 ### Changed

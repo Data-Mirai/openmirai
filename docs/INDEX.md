@@ -13,6 +13,8 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | Document | Description | Path |
 |---|---|---|
 | ARCHITECTURE.md | Stack, modules, conventions | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| CLI.md | `mirai` command reference, interactive mode, sessions | [CLI.md](CLI.md) |
+| CLI.es.md | Spanish translation of CLI.md | [CLI.es.md](CLI.es.md) |
 | DOMINIO.md | Domain glossary, roles, capabilities | [producto/DOMINIO.md](producto/DOMINIO.md) |
 | FLUJOS.md | Execution flows, state machines, business rules | [producto/FLUJOS.md](producto/FLUJOS.md) |
 | API.md | HTTP API endpoints and contracts | [backend/API.md](backend/API.md) |

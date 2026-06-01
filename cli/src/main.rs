@@ -589,7 +589,23 @@ async fn run_edit(args: &[String]) {
 
     let (provider, model, api_key, base_url) = resolve_provider(args);
 
-    // Real LLM factory (for the run/test feature). NO mocks unless --provider mock.
+    // PRD-016: the editor is the REAL app — its sandbox runs agents for real, never mock.
+    // Reject `--provider mock` loudly instead of debugging against fake responses.
+    if provider == "mock" {
+        eprintln!(
+            "{}El editor corre agentes reales — `--provider mock` no está permitido aquí.{}",
+            colors::RED,
+            colors::RESET
+        );
+        eprintln!(
+            "{}Usá un provider real (ej: --provider ollama --model <modelo>) o configurá tu default con `mirai models use`.{}",
+            colors::DIM,
+            colors::RESET
+        );
+        process::exit(1);
+    }
+
+    // Real LLM factory for the run/test feature — zero mocks in the editor runtime.
     let llm_factory = build_llm_factory(
         provider.clone(),
         model.clone(),

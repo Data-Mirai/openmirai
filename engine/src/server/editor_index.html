@@ -473,6 +473,20 @@
       min-height: 80px;
     }
 
+    /* PRD-016: typed run-form fields */
+    .form-hint {
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+      color: #999;
+      margin-left: 6px;
+    }
+    .form-hint.req { color: #d1314c; }
+    .form-input.invalid { border-color: #d1314c; background: #fdf3f5; }
+    .run-text { resize: vertical; min-height: 56px; font-family: inherit; }
+    .run-bool { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #111; }
+    .run-bool input { width: auto; }
+
     /* Views (hidden by default) */
     .view {
       display: none;
@@ -779,6 +793,7 @@
         <button class="view-toggle" data-view="yaml">YAML</button>
       </div>
       
+      <button id="btnFit" title="Fit graph to view">Fit</button>
       <button id="btnCompile">Compile</button>
       <button id="btnSave">Save</button>
       <button id="btnUndo" disabled>Undo</button>
@@ -889,10 +904,9 @@
       <div class="modal-title">Run Agent</div>
     </div>
     <div class="modal-body">
-      <div class="form-group">
-        <label class="form-label">Trigger Data (JSON)</label>
-        <textarea class="form-input textarea" id="runInput" placeholder='{}' spellcheck="false"></textarea>
-      </div>
+      <!-- PRD-016: fields generated from the agent's declared inputs (or JSON fallback) -->
+      <div id="runFields"></div>
+      <div id="runFormError" class="result-error-text" style="display:none;margin-top:6px;"></div>
     </div>
     <div class="modal-footer">
       <button id="runCancel">Cancel</button>
@@ -1029,8 +1043,9 @@ async function loadAgent() {
       showView('visual');
       autoLayout(state.spec);
       renderCanvas();
+      fitToView(); // center the graph in the viewport on load
     }
-    
+
     return true;
   } catch (err) {
     console.error('Load agent error:', err);
@@ -1119,27 +1134,153 @@ async function undoRedo(action) {
   }
 }
 
+// PRD-016: a value is "simple" (rendered as a field) unless it's object/array (→ JSON area).
+function isSimpleInputType(type) {
+  return !['object', 'array'].includes((type || 'text').toLowerCase());
+}
+
+// Build the Run modal body from the agent's declared `inputs` (schema-driven form).
+// No inputs declared → a free JSON textarea (fallback). Sets data-mode on the container.
+// Create the input element for one input type, with placeholder from the description.
+function createRunField(type, desc) {
+  if (type === 'boolean') {
+    const f = document.createElement('input');
+    f.type = 'checkbox';
+    return f;
+  }
+  if (type === 'number') {
+    const f = document.createElement('input');
+    f.type = 'number';
+    f.className = 'form-input';
+    f.placeholder = desc;
+    return f;
+  }
+  const f = document.createElement('textarea');
+  if (isSimpleInputType(type)) {
+    f.className = 'form-input run-text';
+    f.placeholder = desc;
+  } else {
+    f.className = 'form-input textarea'; // object/array → JSON
+    f.placeholder = desc || (type === 'array' ? '[]' : '{}');
+  }
+  return f;
+}
+
+// Render one labeled row per declared input into the container.
+function renderRunFields(inputs, container) {
+  Object.keys(inputs).forEach((name) => {
+    const spec = inputs[name] || {};
+    const type = (spec.type || 'text').toLowerCase();
+    const required = !!spec.required;
+    const desc = spec.description || '';
+    const g = document.createElement('div');
+    g.className = 'form-group';
+    g.innerHTML = `<label class="form-label">${escapeHtml(name)}` +
+      `<span class="form-hint${required ? ' req' : ''}">${escapeHtml(type)}${required ? ' · required' : ''}</span></label>`;
+
+    const field = createRunField(type, desc);
+    if (type === 'boolean') {
+      const wrap = document.createElement('label');
+      wrap.className = 'run-bool';
+      wrap.appendChild(field);
+      wrap.appendChild(document.createTextNode(desc || name));
+      g.appendChild(wrap);
+    } else {
+      g.appendChild(field);
+    }
+    field.dataset.inputName = name;
+    field.dataset.inputType = type;
+    field.dataset.required = required ? '1' : '';
+    container.appendChild(g);
+  });
+}
+
+// Build the Run modal body: a form from the agent's inputs, or a JSON textarea fallback.
+function buildRunForm() {
+  const container = document.getElementById('runFields');
+  document.getElementById('runFormError').style.display = 'none';
+  container.innerHTML = '';
+  const inputs = (state.spec && state.spec.inputs) || {};
+
+  if (!Object.keys(inputs).length) {
+    container.dataset.mode = 'json';
+    const g = document.createElement('div');
+    g.className = 'form-group';
+    g.innerHTML = '<label class="form-label">Trigger Data (JSON)</label>' +
+      '<textarea class="form-input textarea" id="runJsonInput" placeholder="{}" spellcheck="false"></textarea>';
+    container.appendChild(g);
+    return;
+  }
+
+  container.dataset.mode = 'form';
+  renderRunFields(inputs, container);
+}
+
+// Collect + validate the Run form → { ok, triggerData } or { ok:false, error, missing }.
+// Coerces by type (number→Number, boolean→bool, object/array→JSON.parse).
+function collectRunForm() {
+  const container = document.getElementById('runFields');
+  if (container.dataset.mode === 'json') {
+    const raw = (document.getElementById('runJsonInput').value || '').trim() || '{}';
+    try { return { ok: true, triggerData: JSON.parse(raw) }; }
+    catch (e) { return { ok: false, error: 'JSON inválido en Trigger Data' }; }
+  }
+
+  const fields = Array.from(container.querySelectorAll('[data-input-name]'));
+  const triggerData = {};
+  const missing = [];
+  fields.forEach((f) => f.classList.remove('invalid'));
+
+  for (const f of fields) {
+    const name = f.dataset.inputName;
+    const type = f.dataset.inputType;
+    const required = f.dataset.required === '1';
+
+    if (type === 'boolean') { triggerData[name] = f.checked; continue; }
+
+    const raw = (f.value || '').trim();
+    if (!raw) {
+      if (required) { missing.push(name); f.classList.add('invalid'); }
+      continue; // skip empty optional
+    }
+    if (type === 'number') {
+      const n = Number(raw);
+      if (Number.isNaN(n)) { f.classList.add('invalid'); return { ok: false, error: `"${name}" debe ser un número` }; }
+      triggerData[name] = n;
+    } else if (!isSimpleInputType(type)) {
+      try { triggerData[name] = JSON.parse(raw); }
+      catch (e) { f.classList.add('invalid'); return { ok: false, error: `JSON inválido en "${name}"` }; }
+    } else {
+      triggerData[name] = raw;
+    }
+  }
+
+  if (missing.length) return { ok: false, error: `Faltan campos requeridos: ${missing.join(', ')}`, missing };
+  return { ok: true, triggerData };
+}
+
 async function runAgent() {
   if (state.isRunning || !state.spec) {
     showToast('No spec to run', 'error');
     return;
   }
-  
+
   try {
     const modal = document.getElementById('runModal');
+    buildRunForm(); // schema-driven fields from the agent's inputs
     modal.classList.add('active');
-    
+
     document.getElementById('runStart').onclick = async () => {
       try {
-        const triggerDataStr = document.getElementById('runInput').value || '{}';
-        let triggerData;
-        try {
-          triggerData = JSON.parse(triggerDataStr);
-        } catch (e) {
-          showToast('Invalid JSON in trigger data', 'error');
-          return;
+        const collected = collectRunForm();
+        if (!collected.ok) {
+          const errEl = document.getElementById('runFormError');
+          errEl.textContent = collected.error;
+          errEl.style.display = 'block';
+          return; // keep modal open so the user can fix it
         }
-        
+        const triggerData = collected.triggerData;
+
         modal.classList.remove('active');
 
         // PRD-014: preflight gate — if the provider/model isn't ready, guide
@@ -1157,11 +1298,11 @@ async function runAgent() {
         modal.classList.remove('active');
       }
     };
-    
+
     document.getElementById('runCancel').onclick = () => {
       modal.classList.remove('active');
     };
-    
+
     document.getElementById('btnStop').onclick = () => {
       state.isRunning = false;
       addConsoleLine('Stopped.', 'info');
@@ -1708,49 +1849,95 @@ function renderCanvasBlank(title, msg) {
   }
 }
 
-// Assign a left→right topological layout when nodes have no saved positions.
-// Respects positions already present in the YAML.
-function autoLayout(spec) {
+// Layout + node geometry (single source of truth for the node box size).
+const LAYOUT = { colStride: 220, rowStride: 100, nodeW: 120, nodeH: 60, halfW: 60, halfH: 30 };
+
+// Left→right layered layout by LONGEST-PATH level, each column centered vertically.
+// Deterministic. Respects saved positions only if EVERY node already has one
+// (unless `force`). fitToView() handles centering the result in the viewport.
+function autoLayout(spec, force) {
   try {
     if (!spec || !spec.graph) return;
     const nodes = spec.graph.nodes || [];
     const edges = spec.graph.edges || [];
     if (!nodes.length) return;
-    const hasPos = nodes.some((n) => n.position && (Number(n.position.x) || Number(n.position.y)));
-    if (hasPos) return;
-    const indeg = {};
-    nodes.forEach((n) => { indeg[n.id] = 0; });
-    edges.forEach((e) => { if (indeg[e.target] != null) indeg[e.target]++; });
-    const adj = {};
-    edges.forEach((e) => { (adj[e.source] = adj[e.source] || []).push(e.target); });
-    let layer = nodes.filter((n) => indeg[n.id] === 0).map((n) => n.id);
-    if (!layer.length) layer = [nodes[0].id];
-    const placed = new Set();
-    let col = 0;
-    while (layer.length && col < nodes.length + 2) {
-      layer.forEach((id, row) => {
-        const n = nodes.find((x) => x.id === id);
-        if (n && !placed.has(id)) {
-          n.position = { x: col * 220 + 120, y: row * 120 + 100 };
-          placed.add(id);
-        }
+    // A "saved layout" = every node has a non-origin position. The spec serializer
+    // defaults absent positions to {0,0}, which we treat as "needs layout".
+    const hasSavedLayout = nodes.every((n) => n.position && (Number(n.position.x) || Number(n.position.y)));
+    if (hasSavedLayout && !force) return;
+
+    // Build adjacency + indegree.
+    const adj = {}, indeg = {};
+    nodes.forEach((n) => { adj[n.id] = []; indeg[n.id] = 0; });
+    edges.forEach((e) => {
+      if (adj[e.source] && indeg[e.target] != null) { adj[e.source].push(e.target); indeg[e.target]++; }
+    });
+
+    // Kahn traversal assigning longest-path column to each node.
+    const col = {}, work = { ...indeg };
+    const q = nodes.filter((n) => indeg[n.id] === 0).map((n) => n.id);
+    if (!q.length && nodes.length) q.push(nodes[0].id); // cycle fallback
+    q.forEach((id) => { col[id] = 0; });
+    while (q.length) {
+      const id = q.shift();
+      (adj[id] || []).forEach((t) => {
+        col[t] = Math.max(col[t] == null ? 0 : col[t], (col[id] || 0) + 1);
+        if (--work[t] === 0) q.push(t);
       });
-      const next = [];
-      layer.forEach((id) => (adj[id] || []).forEach((t) => {
-        if (!placed.has(t) && !next.includes(t)) next.push(t);
-      }));
-      layer = next;
-      col++;
     }
-    let row = 0;
-    nodes.forEach((n) => {
-      if (!placed.has(n.id)) {
-        n.position = { x: col * 220 + 120, y: row++ * 120 + 100 };
-        placed.add(n.id);
-      }
+    // Unreached nodes (cycles/orphans) → trailing columns.
+    let maxCol = 0; Object.values(col).forEach((c) => { maxCol = Math.max(maxCol, c); });
+    nodes.forEach((n) => { if (col[n.id] == null) col[n.id] = ++maxCol; });
+
+    // Group by column; center each column around y=0 (fitToView re-centers globally).
+    const byCol = {};
+    nodes.forEach((n) => { (byCol[col[n.id]] = byCol[col[n.id]] || []).push(n.id); });
+    Object.keys(byCol).forEach((c) => {
+      const ids = byCol[c];
+      const colH = (ids.length - 1) * LAYOUT.rowStride;
+      ids.forEach((id, i) => {
+        const n = nodes.find((x) => x.id === id);
+        if (n) n.position = { x: Number(c) * LAYOUT.colStride, y: i * LAYOUT.rowStride - colH / 2 };
+      });
     });
   } catch (err) {
     console.error('autoLayout error:', err);
+  }
+}
+
+// Apply the current pan/zoom to the canvas content (both edge and node groups).
+function applyViewport() {
+  const c = state.canvas;
+  const t = `translate(${c.panX} ${c.panY}) scale(${c.zoom})`;
+  const e = document.getElementById('edges');
+  const n = document.getElementById('nodes');
+  if (e) e.setAttribute('transform', t);
+  if (n) n.setAttribute('transform', t);
+}
+
+// Center + scale the whole graph to fit the viewport (never zooms past 1:1).
+function fitToView() {
+  try {
+    const nodes = (state.spec && state.spec.graph && state.spec.graph.nodes) || [];
+    if (!nodes.length) return;
+    const svg = document.getElementById('canvas');
+    const vw = svg.clientWidth || 900, vh = svg.clientHeight || 600;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach((nd) => {
+      const x = Number(nd.position && nd.position.x) || 0;
+      const y = Number(nd.position && nd.position.y) || 0;
+      minX = Math.min(minX, x - LAYOUT.halfW); maxX = Math.max(maxX, x + LAYOUT.halfW);
+      minY = Math.min(minY, y - LAYOUT.halfH); maxY = Math.max(maxY, y + LAYOUT.halfH);
+    });
+    const gw = Math.max(1, maxX - minX), gh = Math.max(1, maxY - minY);
+    const margin = 60;
+    const scale = Math.max(0.1, Math.min(1, (vw - margin * 2) / gw, (vh - margin * 2) / gh));
+    state.canvas.zoom = scale;
+    state.canvas.panX = (vw - gw * scale) / 2 - minX * scale;
+    state.canvas.panY = (vh - gh * scale) / 2 - minY * scale;
+    applyViewport();
+  } catch (err) {
+    console.error('fitToView error:', err);
   }
 }
 
@@ -1781,10 +1968,10 @@ function renderCanvas() {
       
       const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       rect.setAttribute('class', 'node-rect');
-      rect.setAttribute('x', x - 60);
-      rect.setAttribute('y', y - 30);
-      rect.setAttribute('width', '120');
-      rect.setAttribute('height', '60');
+      rect.setAttribute('x', x - LAYOUT.halfW);
+      rect.setAttribute('y', y - LAYOUT.halfH);
+      rect.setAttribute('width', LAYOUT.nodeW);
+      rect.setAttribute('height', LAYOUT.nodeH);
       rect.setAttribute('rx', '4');
       if (state.selectedNode === n.id) rect.classList.add('selected');
       
@@ -1827,9 +2014,10 @@ function renderCanvas() {
         let moved = false;
         const onMove = (me) => {
           moved = true;
+          const z = state.canvas.zoom || 1; // screen px → SVG units
           node.position = {
-            x: startX + (me.clientX - startMx),
-            y: startY + (me.clientY - startMy),
+            x: startX + (me.clientX - startMx) / z,
+            y: startY + (me.clientY - startMy) / z,
           };
           renderCanvas();
         };
@@ -1853,9 +2041,12 @@ function renderCanvas() {
       path.setAttribute('class', 'edge-line');
       if (state.selectedEdge === e.id) path.classList.add('selected');
       
+      // Smooth horizontal cubic bezier for the L→R flow (n8n-style). The control-point
+      // offset grows with distance but stays ≥ 40px to avoid sharp bends on close nodes.
       const dx = tgt.x - src.x;
-      const dy = tgt.y - src.y;
-      const d = `M ${src.x} ${src.y} Q ${src.x + dx / 2} ${src.y - 50} ${tgt.x} ${tgt.y}`;
+      const cpOffset = Math.max(40, Math.abs(dx) * 0.5);
+      const sx = src.x + LAYOUT.halfW, ex = tgt.x - LAYOUT.halfW;
+      const d = `M ${sx} ${src.y} C ${sx + cpOffset} ${src.y} ${ex - cpOffset} ${tgt.y} ${ex} ${tgt.y}`;
       path.setAttribute('d', d);
       path.setAttribute('marker-end', 'url(#arrowhead)');
       
@@ -1871,6 +2062,8 @@ function renderCanvas() {
         selectEdge(e.id);
       });
     }
+
+    applyViewport(); // keep pan/zoom applied across re-renders (e.g. during drag)
   } catch (err) {
     console.error('Render canvas error:', err);
   }
@@ -2100,6 +2293,14 @@ ui.btnSettings.addEventListener('click', () => {
   }
 });
 
+// PRD-016: re-center the graph in the viewport (after dragging / resize).
+document.getElementById('btnFit').addEventListener('click', () => {
+  try { fitToView(); } catch (err) { console.error('Fit error:', err); }
+});
+window.addEventListener('resize', () => {
+  try { if (state.spec && state.spec.graph) fitToView(); } catch (err) { /* noop */ }
+});
+
 // PRD-015: run result drawer controls
 document.getElementById('resultDrawerClose').addEventListener('click', () => {
   document.getElementById('resultDrawer').classList.remove('open', 'collapsed');
@@ -2172,8 +2373,10 @@ document.getElementById('paletteSearch').addEventListener('input', (e) => {
   }
 });
 
-document.getElementById('runInput').addEventListener('keypress', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+// Cmd/Ctrl+Enter submits the run form (plain Enter keeps adding newlines in text fields).
+document.getElementById('runFields').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
     document.getElementById('runStart').click();
   }
 });

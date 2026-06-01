@@ -4,6 +4,19 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.6.2 (2026-06-01)
+
+The visual editor (`mirai edit`) becomes a real local sandbox — design, run and debug agents before production. No breaking changes.
+
+### Added
+- **Clean canvas layout (PRD-016).** Nodes are laid out left→right by longest-path level, each column centered vertically, and the whole graph is centered and scaled to fit the viewport on load. Edges are smooth horizontal curves; a **Fit** button re-centers after dragging or resize.
+- **Typed run inputs (PRD-016).** The Run dialog is now a form generated from the agent's declared `inputs` (label · type · required · placeholder) with required-field validation and per-type coercion (number / boolean / object|array→JSON). Agents with no declared inputs still get a free JSON field. No more guessing what to send.
+
+### Changed
+- **The editor runs agents for real — zero mock (PRD-016).** `mirai edit` resolves a real provider (Ollama / your configured default) and **rejects `--provider mock`**. The sandbox executes the agent against a real LLM so you debug against real output, not fake responses. (MockLLM stays confined to unit tests.)
+
+---
+
 ## v0.6.1 (2026-05-31)
 
 No breaking changes. The agent YAML spec, runtime, and API are backward-compatible.

@@ -726,6 +726,7 @@
       <button id="btnSave">Save</button>
       <button id="btnUndo" disabled>Undo</button>
       <button id="btnRedo" disabled>Redo</button>
+      <button id="btnSettings" title="Model & defaults">Settings</button>
       <button id="btnRun" class="primary">Run</button>
     </div>
   </div>
@@ -844,6 +845,21 @@
   </div>
 </div>
 
+<!-- PRD-014: Settings — pick the default model from the curated catalog -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <div class="modal-title">Settings · default model</div>
+    </div>
+    <div class="modal-body" id="settingsBody">
+      <div style="color:#666;font-size:13px;">Loading models…</div>
+    </div>
+    <div class="modal-footer">
+      <button id="settingsClose">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST CONTAINER -->
 <div id="toastContainer"></div>
 
@@ -884,6 +900,7 @@ const ui = {
   btnRun: document.getElementById('btnRun'),
   btnUndo: document.getElementById('btnUndo'),
   btnRedo: document.getElementById('btnRedo'),
+  btnSettings: document.getElementById('btnSettings'),
   saveDot: document.getElementById('saveDot'),
   saveStatus: document.getElementById('saveStatus'),
   validDot: document.getElementById('validDot'),
@@ -1227,6 +1244,102 @@ async function pullModelStream(name, onLine) {
   } catch (err) {
     showToast(`Pull error: ${err.message}`, 'error');
     return false;
+  }
+}
+
+// PRD-014: open the Settings panel — browse the curated catalog and set the default model.
+async function openSettings() {
+  const modal = document.getElementById('settingsModal');
+  const body = document.getElementById('settingsBody');
+  modal.classList.add('active');
+  document.getElementById('settingsClose').onclick = () => modal.classList.remove('active');
+  body.innerHTML = '<div style="color:#666;font-size:13px;">Loading models…</div>';
+  try {
+    const [cfg, list] = await Promise.all([
+      api('GET', '/api/edit/config').catch(() => ({})),
+      api('GET', '/api/edit/models').catch(() => ({ catalog: [] })),
+    ]);
+    renderSettings(cfg || {}, (list && list.catalog) || []);
+  } catch (err) {
+    body.innerHTML = `<div style="color:#d1314c;font-size:13px;">Could not load models: ${err.message}</div>`;
+  }
+}
+
+function renderSettings(cfg, models) {
+  const body = document.getElementById('settingsBody');
+  body.innerHTML = '';
+  const current = cfg.default_model || '';
+  const head = document.createElement('div');
+  head.style.cssText = 'font-size:12px;color:#666;margin-bottom:12px;';
+  head.textContent = current
+    ? `Current default: ${cfg.default_provider || 'ollama'} · ${current}`
+    : 'No default configured yet — pick one below.';
+  body.appendChild(head);
+
+  if (!models.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:#666;font-size:13px;';
+    empty.textContent = 'No catalog available.';
+    body.appendChild(empty);
+    return;
+  }
+
+  models.forEach((m) => {
+    const isDefault = m.name === current;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #eee;';
+
+    const info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:13px;font-weight:600;color:#111;';
+    title.textContent = m.name + (m.recommended ? '  ·  recommended' : '');
+    const sub = document.createElement('div');
+    sub.style.cssText = 'font-size:11px;color:#999;margin-top:2px;';
+    const size = m.size_gb ? `${Number(m.size_gb).toFixed(1)} GB` : '';
+    sub.textContent = [m.description, size].filter(Boolean).join(' · ');
+    info.appendChild(title);
+    info.appendChild(sub);
+    row.appendChild(info);
+
+    const tag = document.createElement('span');
+    tag.style.cssText = `font-size:10px;letter-spacing:.04em;padding:2px 7px;border-radius:3px;${
+      m.installed ? 'background:#e8f4ef;color:#2a8c6c;' : 'background:#f2f2f2;color:#999;'}`;
+    tag.textContent = m.installed ? 'INSTALLED' : 'NOT LOCAL';
+    row.appendChild(tag);
+
+    const prog = document.createElement('div');
+    prog.style.cssText = 'font-size:11px;color:#666;min-width:90px;text-align:right;font-variant-numeric:tabular-nums;';
+
+    const action = document.createElement('button');
+    if (isDefault) {
+      action.textContent = 'Default';
+      action.className = 'primary';
+      action.disabled = true;
+    } else if (m.installed) {
+      action.textContent = 'Set default';
+      action.onclick = () => setDefaultModel(cfg.default_provider || 'ollama', m.name);
+    } else {
+      action.textContent = 'Download';
+      action.onclick = async () => {
+        action.disabled = true;
+        const ok = await pullModelStream(m.name, (line) => { prog.textContent = line; });
+        if (ok) await openSettings(); else action.disabled = false;
+      };
+    }
+    row.appendChild(prog);
+    row.appendChild(action);
+    body.appendChild(row);
+  });
+}
+
+async function setDefaultModel(provider, model) {
+  try {
+    await api('PUT', '/api/edit/config', { default_provider: provider, default_model: model });
+    showToast(`✓ Default set to ${model}`, 'success');
+    await openSettings();
+  } catch (err) {
+    showToast(`Could not set default: ${err.message}`, 'error');
   }
 }
 
@@ -1746,6 +1859,15 @@ ui.btnRun.addEventListener('click', () => {
   } catch (err) {
     console.error('Run handler error:', err);
     showToast(`Run error: ${err.message}`, 'error');
+  }
+});
+
+ui.btnSettings.addEventListener('click', () => {
+  try {
+    openSettings();
+  } catch (err) {
+    console.error('Settings handler error:', err);
+    showToast(`Settings error: ${err.message}`, 'error');
   }
 });
 

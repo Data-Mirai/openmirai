@@ -533,23 +533,12 @@ async fn run_serve(args: &[String]) {
     );
 
     // Build a factory that creates REAL LLM resources for each request.
-    let llm_factory: std::sync::Arc<
-        dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync,
-    > = {
-        let provider = provider.clone();
-        let model = model.clone();
-        let api_key = api_key.clone();
-        let base_url = base_url.clone();
-        std::sync::Arc::new(move || {
-            if provider == "mock" {
-                // Only allowed in explicit --provider mock for testing
-                Box::new(openmirai_engine::MockLLMResource::new())
-            } else {
-                let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
-                Box::new(AdapterBridgeLLMResource::new(adapter, &model))
-            }
-        })
-    };
+    let llm_factory = build_llm_factory(
+        provider.clone(),
+        model.clone(),
+        api_key.clone(),
+        base_url.clone(),
+    );
 
     // Read API key from env or flag.
     let server_api_key =
@@ -560,6 +549,24 @@ async fn run_serve(args: &[String]) {
         eprintln!("{}Server error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);
     }
+}
+
+/// Build a factory that creates a REAL LLM resource per request. A mock is only
+/// returned when `--provider mock` is set explicitly. Shared by `serve` and `edit`.
+fn build_llm_factory(
+    provider: String,
+    model: String,
+    api_key: String,
+    base_url: String,
+) -> std::sync::Arc<dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync> {
+    std::sync::Arc::new(move || {
+        if provider == "mock" {
+            Box::new(openmirai_engine::MockLLMResource::new())
+        } else {
+            let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
+            Box::new(AdapterBridgeLLMResource::new(adapter, &model))
+        }
+    })
 }
 
 /// `mirai edit <archivo.yaml>` — abre el mini-IDE visual en el navegador (PRD-013).
@@ -583,22 +590,12 @@ async fn run_edit(args: &[String]) {
     let (provider, model, api_key, base_url) = resolve_provider(args);
 
     // Real LLM factory (for the run/test feature). NO mocks unless --provider mock.
-    let llm_factory: std::sync::Arc<
-        dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync,
-    > = {
-        let provider = provider.clone();
-        let model = model.clone();
-        let api_key = api_key.clone();
-        let base_url = base_url.clone();
-        std::sync::Arc::new(move || {
-            if provider == "mock" {
-                Box::new(openmirai_engine::MockLLMResource::new())
-            } else {
-                let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
-                Box::new(AdapterBridgeLLMResource::new(adapter, &model))
-            }
-        })
-    };
+    let llm_factory = build_llm_factory(
+        provider.clone(),
+        model.clone(),
+        api_key.clone(),
+        base_url.clone(),
+    );
 
     let url = format!("http://127.0.0.1:{port}");
     eprintln!(

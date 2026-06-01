@@ -67,17 +67,38 @@ pub async fn check(provider: &str, model: &str, ollama_host: &str, has_key: bool
     }
 }
 
+/// Build an Ollama API URL, tolerating a trailing slash on the host.
+fn ollama_url(host: &str, path: &str) -> String {
+    format!(
+        "{}/{}",
+        host.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
+}
+
+/// A reqwest client with the given timeout (build errors mapped to `String`).
+fn ollama_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// Map a non-2xx Ollama response to an error.
+fn check_http_ok(resp: &reqwest::Response) -> Result<(), String> {
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
+}
+
 /// Models installed locally in Ollama via `GET /api/tags`.
 pub async fn installed_models(ollama_host: &str) -> Result<Vec<String>, String> {
-    let url = format!("{}/api/tags", ollama_host.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let url = ollama_url(ollama_host, "api/tags");
+    let client = ollama_client(5)?;
     let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
+    check_http_ok(&resp)?;
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     let models = v
         .get("models")
@@ -99,20 +120,15 @@ where
 {
     use futures_util::StreamExt;
 
-    let url = format!("{}/api/pull", ollama_host.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3600))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let url = ollama_url(ollama_host, "api/pull");
+    let client = ollama_client(3600)?;
     let resp = client
         .post(&url)
         .json(&serde_json::json!({ "name": name, "stream": true }))
         .send()
         .await
         .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
+    check_http_ok(&resp)?;
 
     let mut stream = resp.bytes_stream();
     let mut buf = String::new();

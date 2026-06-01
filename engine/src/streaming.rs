@@ -76,44 +76,20 @@ pub enum StreamEvent {
 impl StreamEvent {
     /// Format as SSE text line: `event: <type>\ndata: <json>\n\n`
     pub fn to_sse(&self) -> String {
-        let (event_name, data) = match self {
-            Self::GraphStarted { .. } => (
-                "graph.started",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeStarted { .. } => (
-                "node.started",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeToken { .. } => (
-                "node.token",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeCompleted { .. } => (
-                "node.completed",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeError { .. } => (
-                "node.error",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::FanoutStarted { .. } => (
-                "fanout.started",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::FanoutCompleted { .. } => (
-                "fanout.completed",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::GraphCompleted { .. } => (
-                "graph.completed",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::GraphError { .. } => (
-                "graph.error",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
+        // The event name mirrors each variant's #[serde(rename)]; the data is the
+        // variant serialized as JSON. Only the name varies per arm.
+        let event_name = match self {
+            Self::GraphStarted { .. } => "graph.started",
+            Self::NodeStarted { .. } => "node.started",
+            Self::NodeToken { .. } => "node.token",
+            Self::NodeCompleted { .. } => "node.completed",
+            Self::NodeError { .. } => "node.error",
+            Self::FanoutStarted { .. } => "fanout.started",
+            Self::FanoutCompleted { .. } => "fanout.completed",
+            Self::GraphCompleted { .. } => "graph.completed",
+            Self::GraphError { .. } => "graph.error",
         };
+        let data = serde_json::to_string(self).unwrap_or_default();
         format!("event: {event_name}\ndata: {data}\n\n")
     }
 }

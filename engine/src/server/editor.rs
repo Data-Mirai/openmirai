@@ -69,6 +69,17 @@ impl EditorState {
             })),
         }
     }
+
+    /// Snapshot of the launch run context: (provider, model, ollama_host, has_key).
+    async fn run_ctx(&self) -> (String, String, String, bool) {
+        let i = self.inner.lock().await;
+        (
+            i.provider.clone(),
+            i.model.clone(),
+            i.ollama_host.clone(),
+            i.has_key,
+        )
+    }
 }
 
 /// `<dir>/.openmirai-history/<filestem>/`
@@ -339,15 +350,7 @@ fn history_response(inner: &EditorInner) -> Json<HistoryResponse> {
 
 /// Is the editor's provider/model ready to run? (mock is always ready.)
 async fn preflight_handler(State(editor): State<EditorState>) -> Json<Value> {
-    let (provider, model, host, has_key) = {
-        let i = editor.inner.lock().await;
-        (
-            i.provider.clone(),
-            i.model.clone(),
-            i.ollama_host.clone(),
-            i.has_key,
-        )
-    };
+    let (provider, model, host, has_key) = editor.run_ctx().await;
     if provider == "mock" {
         return Json(
             json!({ "ok": true, "provider": provider, "model": model, "diagnostics": [] }),
@@ -359,10 +362,7 @@ async fn preflight_handler(State(editor): State<EditorState>) -> Json<Value> {
 
 /// Curated catalog ∪ installed (with `installed` flag + current provider/model).
 async fn models_handler(State(editor): State<EditorState>) -> Json<Value> {
-    let (host, provider, model) = {
-        let i = editor.inner.lock().await;
-        (i.ollama_host.clone(), i.provider.clone(), i.model.clone())
-    };
+    let (provider, model, host, _) = editor.run_ctx().await;
     let installed = crate::preflight::installed_models(&host)
         .await
         .unwrap_or_default();

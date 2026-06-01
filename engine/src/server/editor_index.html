@@ -1172,6 +1172,26 @@ async function runAgent() {
   }
 }
 
+// Read an SSE response body line by line, invoking onEvent(parsedJSON) for each
+// `data: {...}` line. Stops when the body ends or shouldContinue() turns false.
+async function parseSSEStream(resp, onEvent, shouldContinue = () => true) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (shouldContinue()) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try { onEvent(JSON.parse(line.substring(6))); }
+      catch (e) { console.error('SSE parse error:', e); }
+    }
+  }
+}
+
 // Create the agent instance and stream its execution onto the canvas.
 async function executeRun(triggerData) {
   try {
@@ -1198,22 +1218,7 @@ async function executeRun(triggerData) {
         state.isRunning = false;
         return;
       }
-      const reader = streamResp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (state.isRunning) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try { handleStreamEvent(JSON.parse(line.substring(6))); }
-            catch (e) { console.error('Parse event error:', e); }
-          }
-        }
-      }
+      await parseSSEStream(streamResp, handleStreamEvent, () => state.isRunning);
     } catch (err) {
       addConsoleLine(`Stream error: ${err.message}`, 'error');
     } finally {
@@ -1290,26 +1295,12 @@ async function pullModelStream(name, onLine) {
       body: JSON.stringify({ name }),
     });
     if (!resp.ok || !resp.body) { showToast('Pull failed', 'error'); return false; }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     let ok = false;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          const d = JSON.parse(line.substring(6));
-          const pct = (d.completed && d.total) ? ` ${Math.floor((d.completed * 100) / d.total)}%` : '';
-          onLine(`${d.status || ''}${pct}`);
-          if (d.done) ok = d.status === 'success';
-        } catch (e) { /* ignore partial */ }
-      }
-    }
+    await parseSSEStream(resp, (d) => {
+      const pct = (d.completed && d.total) ? ` ${Math.floor((d.completed * 100) / d.total)}%` : '';
+      onLine(`${d.status || ''}${pct}`);
+      if (d.done) ok = d.status === 'success';
+    });
     showToast(ok ? '✓ Model downloaded' : '✗ Download failed', ok ? 'success' : 'error');
     return ok;
   } catch (err) {
@@ -1510,6 +1501,12 @@ function pickFinalNode() {
   return ids.length ? ids[ids.length - 1] : null;
 }
 
+// Expand/collapse a node's output body and sync its caret.
+function setNodeBodyExpanded(head, nbody, expand) {
+  nbody.style.display = expand ? 'block' : 'none';
+  head.querySelector('.result-node-caret').textContent = expand ? '▾' : '▸';
+}
+
 // Render the drawer from state.runOutputs. opts: { title, graphError, finalSnapshot }.
 function renderRunResult(opts = {}) {
   try {
@@ -1587,16 +1584,8 @@ function renderRunResult(opts = {}) {
           pre.textContent = prettyValue(n.output);
           nbody.appendChild(pre);
         }
-        head.addEventListener('click', () => {
-          const open = nbody.style.display !== 'none';
-          nbody.style.display = open ? 'none' : 'block';
-          head.querySelector('.result-node-caret').textContent = open ? '▸' : '▾';
-        });
-        // auto-expand errored nodes so failures are visible immediately
-        if (isErr) {
-          nbody.style.display = 'block';
-          head.querySelector('.result-node-caret').textContent = '▾';
-        }
+        head.addEventListener('click', () => setNodeBodyExpanded(head, nbody, nbody.style.display === 'none'));
+        if (isErr) setNodeBodyExpanded(head, nbody, true); // surface failures immediately
         row.appendChild(head);
         row.appendChild(nbody);
         block.appendChild(row);

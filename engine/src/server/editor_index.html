@@ -561,6 +561,63 @@
     .console-line.info { color: #999; }
     .console-line.running { color: #f59e0b; }
 
+    /* Run result drawer — clean white, docks at the bottom of the canvas */
+    .result-drawer {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      max-height: 48%;
+      display: none;
+      flex-direction: column;
+      background: #fff;
+      border-top: 1px solid #e5e5e5;
+      box-shadow: 0 -2px 14px rgba(0,0,0,0.07);
+      z-index: 30;
+    }
+    .result-drawer.open { display: flex; }
+    .result-drawer.collapsed { max-height: none; }
+    .result-drawer.collapsed .result-drawer-body { display: none; }
+    .result-drawer-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 14px; border-bottom: 1px solid #eee;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.4px;
+      text-transform: uppercase; color: #111; flex-shrink: 0;
+    }
+    .result-drawer-actions button {
+      background: none; border: none; color: #999; cursor: pointer;
+      font-size: 13px; padding: 0 5px; line-height: 1;
+    }
+    .result-drawer-actions button:hover { color: #111; }
+    .result-drawer-body { overflow-y: auto; padding: 12px 14px; }
+    .result-block { margin-bottom: 14px; }
+    .result-block-label {
+      font-size: 10px; color: #999; text-transform: uppercase;
+      letter-spacing: 0.4px; margin-bottom: 5px;
+    }
+    .result-final {
+      font-size: 13px; color: #111; white-space: pre-wrap; word-break: break-word;
+      background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 11px;
+    }
+    .result-node { border: 1px solid #eee; border-radius: 4px; margin-bottom: 6px; }
+    .result-node-head {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 11px; cursor: pointer; user-select: none;
+    }
+    .result-node-head:hover { background: #fafafa; }
+    .result-node-caret { color: #bbb; font-size: 10px; width: 10px; }
+    .result-node-name { font-weight: 600; color: #111; font-size: 12px; }
+    .result-node-type { color: #999; font-size: 11px; }
+    .result-node-status { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .result-node-status.ok { background: #2a8c6c; }
+    .result-node-status.error { background: #d1314c; }
+    .result-node-ms { margin-left: auto; color: #bbb; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .result-node-body { padding: 0 11px 11px 29px; }
+    .result-json {
+      font-family: 'Monaco', 'Menlo', monospace; font-size: 11.5px;
+      white-space: pre-wrap; word-break: break-word; color: #333;
+      background: #fafafa; border-radius: 4px; padding: 9px; margin: 0;
+    }
+    .result-error-text { color: #d1314c; font-size: 12px; white-space: pre-wrap; }
+
     .console-input {
       padding: 12px 16px;
       border-top: 1px solid #333;
@@ -798,6 +855,18 @@
         </div>
       </div>
 
+      <!-- RUN RESULT DRAWER — overlays the bottom of the canvas after a run -->
+      <div class="result-drawer" id="resultDrawer">
+        <div class="result-drawer-header">
+          <span id="resultDrawerTitle">Run result</span>
+          <div class="result-drawer-actions">
+            <button id="resultDrawerToggle" title="Collapse">▾</button>
+            <button id="resultDrawerClose" title="Close">✕</button>
+          </div>
+        </div>
+        <div class="result-drawer-body" id="resultDrawerBody"></div>
+      </div>
+
     </div>
 
     <!-- RIGHT INSPECTOR -->
@@ -882,6 +951,7 @@ const state = {
   canRedo: false,
   tools: [],
   runningAgentId: null,
+  runOutputs: {}, // node_id → { tool_type, ms, output } captured from the run stream
   canvas: {
     panX: 0,
     panY: 0,
@@ -1114,6 +1184,7 @@ async function executeRun(triggerData) {
     state.isRunning = true;
     showView('visual'); // keep the graph visible so the run plays out on the canvas
     resetHighlights();
+    resetRunResult();
     clearConsole();
     addConsoleLine('Starting run...', 'info');
     try {
@@ -1360,20 +1431,180 @@ function handleStreamEvent(event) {
       const ms = d.duration_ms != null ? ` (${d.duration_ms}ms)` : '';
       addConsoleLine(`✓ ${nodeId || '?'}: completed${ms}`, 'ok');
       highlightNode(nodeId, 'completed');
+      state.runOutputs[nodeId] = { tool_type: d.tool_type, ms: d.duration_ms, output: d.output, status: 'ok' };
+      renderRunResult(); // surface output as nodes finish
     } else if (name === 'node.error') {
       addConsoleLine(`✗ ${nodeId || '?'}: ${d.error || 'error'}`, 'error');
       highlightNode(nodeId, 'error');
+      state.runOutputs[nodeId] = { tool_type: d.tool_type, error: d.error || 'error', status: 'error' };
+      renderRunResult();
     } else if (name === 'node.token') {
       if (d.token) addConsoleLine(d.token, 'info');
     } else if (name === 'graph.completed') {
       addConsoleLine('✓ Execution completed', 'ok');
       showToast('✓ Run completed', 'success');
+      const ms = d.total_duration_ms != null ? ` · ${d.total_duration_ms}ms` : '';
+      renderRunResult({ finalSnapshot: d.output, title: `Run result · ${d.status || 'Completed'}${ms}` });
     } else if (name === 'graph.error') {
       addConsoleLine(`✗ ${d.error || 'graph error'}`, 'error');
       showToast('✗ Run failed', 'error');
+      renderRunResult({ title: 'Run result · Error', graphError: d.error || 'graph error' });
     }
   } catch (err) {
     console.error('Handle stream event error:', err);
+  }
+}
+
+// ============================================================================
+// RUN RESULT DRAWER (PRD-015) — surface the agent's output, n8n-style
+// ============================================================================
+
+// Clear captured outputs and hide the drawer (called at the start of every run).
+function resetRunResult() {
+  state.runOutputs = {};
+  const drawer = document.getElementById('resultDrawer');
+  if (drawer) drawer.classList.remove('open', 'collapsed');
+  const body = document.getElementById('resultDrawerBody');
+  if (body) body.innerHTML = '';
+}
+
+// Field names that, when present, hold the human-readable result of a node.
+const RESULT_TEXT_KEYS = ['response', 'output', 'text', 'result', 'content', 'message', 'answer'];
+
+// Render a value for display: strings as-is, objects as pretty JSON.
+function prettyValue(val) {
+  if (val == null) return '(no output)';
+  if (typeof val === 'string') return val;
+  try { return JSON.stringify(val, null, 2); } catch (e) { return String(val); }
+}
+
+// A string is a meaningful headline if it isn't empty or a degenerate "{}"/"[]"/null.
+function isMeaningfulText(s) {
+  const t = (s || '').trim();
+  return t.length > 0 && t !== '{}' && t !== '[]' && t !== 'null';
+}
+
+// Pull the most likely "final answer" string out of a node's output map.
+function extractResultText(output) {
+  if (output == null) return null;
+  if (typeof output === 'string') return isMeaningfulText(output) ? output : null;
+  if (typeof output === 'object') {
+    for (const k of RESULT_TEXT_KEYS) {
+      if (typeof output[k] === 'string' && isMeaningfulText(output[k])) return output[k];
+    }
+  }
+  return null;
+}
+
+// Pick the node whose output is "the result". Prefer the last node (in execution
+// order) that actually carries human-readable text — an output/* node that just
+// echoes an empty map shouldn't win over the LLM node that holds the answer.
+function pickFinalNode() {
+  const ids = Object.keys(state.runOutputs).filter((id) => state.runOutputs[id].status === 'ok');
+  for (let i = ids.length - 1; i >= 0; i--) {
+    if (extractResultText(state.runOutputs[ids[i]].output) != null) return ids[i];
+  }
+  // No text anywhere → fall back to the output/* node, else the last ok node.
+  const outNode = ids.find((id) => (state.runOutputs[id].tool_type || '').startsWith('output/'));
+  if (outNode) return outNode;
+  return ids.length ? ids[ids.length - 1] : null;
+}
+
+// Render the drawer from state.runOutputs. opts: { title, graphError, finalSnapshot }.
+function renderRunResult(opts = {}) {
+  try {
+    const drawer = document.getElementById('resultDrawer');
+    const body = document.getElementById('resultDrawerBody');
+    const titleEl = document.getElementById('resultDrawerTitle');
+    if (!drawer || !body) return;
+    drawer.classList.add('open');
+    if (opts.title) titleEl.textContent = opts.title;
+
+    body.innerHTML = '';
+
+    // Graph-level error (e.g. validation) — show it and stop.
+    if (opts.graphError) {
+      const block = document.createElement('div');
+      block.className = 'result-block';
+      block.innerHTML = '<div class="result-block-label">Error</div>';
+      const err = document.createElement('div');
+      err.className = 'result-error-text';
+      err.textContent = opts.graphError;
+      block.appendChild(err);
+      body.appendChild(block);
+      return;
+    }
+
+    // RESULT block — the final node's output, only once the run has finished.
+    if (opts.finalSnapshot !== undefined) {
+      const finalId = pickFinalNode();
+      if (finalId && state.runOutputs[finalId]) {
+        const out = state.runOutputs[finalId].output;
+        const text = extractResultText(out);
+        const block = document.createElement('div');
+        block.className = 'result-block';
+        block.innerHTML = `<div class="result-block-label">Result · ${escapeHtml(finalId)}</div>`;
+        const fin = document.createElement('div');
+        fin.className = 'result-final';
+        fin.textContent = text != null ? text : prettyValue(out);
+        block.appendChild(fin);
+        body.appendChild(block);
+      }
+    }
+
+    // NODE OUTPUTS — one collapsible row per node, in execution order.
+    const ids = Object.keys(state.runOutputs);
+    if (ids.length) {
+      const block = document.createElement('div');
+      block.className = 'result-block';
+      block.innerHTML = '<div class="result-block-label">Node outputs</div>';
+      ids.forEach((id) => {
+        const n = state.runOutputs[id];
+        const isErr = n.status === 'error';
+        const row = document.createElement('div');
+        row.className = 'result-node';
+
+        const head = document.createElement('div');
+        head.className = 'result-node-head';
+        const caret = `<span class="result-node-caret">▸</span>`;
+        const dot = `<span class="result-node-status ${isErr ? 'error' : 'ok'}"></span>`;
+        const name = `<span class="result-node-name">${escapeHtml(id)}</span>`;
+        const type = `<span class="result-node-type">${escapeHtml(n.tool_type || '')}</span>`;
+        const ms = n.ms != null ? `<span class="result-node-ms">${n.ms}ms</span>` : '';
+        head.innerHTML = caret + dot + name + type + ms;
+
+        const nbody = document.createElement('div');
+        nbody.className = 'result-node-body';
+        nbody.style.display = 'none';
+        if (isErr) {
+          const e = document.createElement('div');
+          e.className = 'result-error-text';
+          e.textContent = n.error || 'error';
+          nbody.appendChild(e);
+        } else {
+          const pre = document.createElement('pre');
+          pre.className = 'result-json';
+          pre.textContent = prettyValue(n.output);
+          nbody.appendChild(pre);
+        }
+        head.addEventListener('click', () => {
+          const open = nbody.style.display !== 'none';
+          nbody.style.display = open ? 'none' : 'block';
+          head.querySelector('.result-node-caret').textContent = open ? '▸' : '▾';
+        });
+        // auto-expand errored nodes so failures are visible immediately
+        if (isErr) {
+          nbody.style.display = 'block';
+          head.querySelector('.result-node-caret').textContent = '▾';
+        }
+        row.appendChild(head);
+        row.appendChild(nbody);
+        block.appendChild(row);
+      });
+      body.appendChild(block);
+    }
+  } catch (err) {
+    console.error('renderRunResult error:', err);
   }
 }
 
@@ -1869,6 +2100,16 @@ ui.btnSettings.addEventListener('click', () => {
     console.error('Settings handler error:', err);
     showToast(`Settings error: ${err.message}`, 'error');
   }
+});
+
+// PRD-015: run result drawer controls
+document.getElementById('resultDrawerClose').addEventListener('click', () => {
+  document.getElementById('resultDrawer').classList.remove('open', 'collapsed');
+});
+document.getElementById('resultDrawerToggle').addEventListener('click', () => {
+  const drawer = document.getElementById('resultDrawer');
+  const collapsed = drawer.classList.toggle('collapsed');
+  document.getElementById('resultDrawerToggle').textContent = collapsed ? '▴' : '▾';
 });
 
 ui.btnUndo.addEventListener('click', () => {

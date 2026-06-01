@@ -616,6 +616,7 @@ impl GraphRunner {
             tool_type: node.tool_type.clone(),
             duration_ms: elapsed_ms,
             output_keys: output.keys().cloned().collect(),
+            output: serde_json::to_value(&output).unwrap_or(serde_json::Value::Null),
         });
         transcript.push(TranscriptEntry {
             entry_type: wk::TRANSCRIPT_BLOCK_END.to_string(),
@@ -893,6 +894,7 @@ impl GraphRunner {
             status: format!("{:?}", ExecutionStatus::Completed),
             total_duration_ms: total_ms,
             nodes_executed: trace.len(),
+            output: serde_json::to_value(state.snapshot()).unwrap_or(serde_json::Value::Null),
         });
         info!(session_id = %session_id, nodes_executed = trace.len(), "graph execution completed");
         ExecutionResult {

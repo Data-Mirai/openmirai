@@ -16,6 +16,8 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | DOMINIO.md | Domain glossary, roles, capabilities | [producto/DOMINIO.md](producto/DOMINIO.md) |
 | FLUJOS.md | Execution flows, state machines, business rules | [producto/FLUJOS.md](producto/FLUJOS.md) |
 | API.md | HTTP API endpoints and contracts | [backend/API.md](backend/API.md) |
+| MEMORY.md | Memory subsystem (short/long-term, agent KV, CLI sessions) | [backend/MEMORY.md](backend/MEMORY.md) |
+| MEMORY.es.md | MEMORY.md — Spanish translation | [backend/MEMORY.es.md](backend/MEMORY.es.md) |
 | PRIMITIVES.md | Reusable engine code patterns | [backend/PRIMITIVES.md](backend/PRIMITIVES.md) |
 | SCHEMA.md | SQLite schema (tables, stores) | [database/SCHEMA.md](database/SCHEMA.md) |
 | STORAGE.md | Storage backends, vault, FileRef | [database/STORAGE.md](database/STORAGE.md) |

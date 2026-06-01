@@ -48,6 +48,8 @@ async fn main() {
             run_serve(rest).await;
         }
         Some("edit") => run_edit(&args[1..]).await,
+        Some("doctor") => cmd_doctor(&args[1..]).await,
+        Some("models") => cmd_models(&args[1..]).await,
         Some("tools") => cmd_tools(&args[1..]),
         Some("templates") => cmd_templates(&args[1..]),
         Some("new") => cmd_new(&args[1..]),
@@ -128,7 +130,10 @@ fn resolve_provider(args: &[String]) -> (String, String, String, String) {
     let env_provider = std::env::var("MIRAI_LLM_PROVIDER").ok();
     let env_model = std::env::var("MIRAI_LLM_MODEL").ok();
 
-    // Provider resolution chain
+    // PRD-014: the developer's persisted choice (~/.openmirai/config.toml).
+    let cfg = openmirai_engine::config::UserConfig::load();
+
+    // Provider: flag > env > model auto-detect > config default.
     let provider = explicit_provider
         .or(env_provider)
         .or_else(|| {
@@ -138,11 +143,16 @@ fn resolve_provider(args: &[String]) -> (String, String, String, String) {
                 .and_then(detect_provider_from_model)
                 .map(String::from)
         })
-        .unwrap_or_else(|| "ollama".to_string());
+        .unwrap_or_else(|| cfg.default_provider.clone());
 
-    let model = explicit_model
-        .or(env_model)
-        .unwrap_or_else(|| adapter_factory::default_model(&provider).to_string());
+    // Model: flag > env > config default (same provider) > provider fallback.
+    let model = explicit_model.or(env_model).unwrap_or_else(|| {
+        if provider == cfg.default_provider {
+            cfg.default_model.clone()
+        } else {
+            adapter_factory::default_model(&provider).to_string()
+        }
+    });
 
     let api_key = explicit_key.unwrap_or_default();
     let base_url = explicit_url.unwrap_or_default();
@@ -238,6 +248,16 @@ async fn run_agent(args: &[String]) {
         },
         colors::RESET
     );
+
+    // PRD-014: preflight — ensure the provider/model is ready, guide if not.
+    if !run_preflight(&provider, &model, &api_key, &base_url).await {
+        eprintln!(
+            "{}Run aborted: provider not ready. Run `mirai doctor` for the full check.{}",
+            colors::RED,
+            colors::RESET
+        );
+        process::exit(1);
+    }
 
     // Load agent spec
     let spec = match AgentSpec::from_file(path) {
@@ -513,23 +533,12 @@ async fn run_serve(args: &[String]) {
     );
 
     // Build a factory that creates REAL LLM resources for each request.
-    let llm_factory: std::sync::Arc<
-        dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync,
-    > = {
-        let provider = provider.clone();
-        let model = model.clone();
-        let api_key = api_key.clone();
-        let base_url = base_url.clone();
-        std::sync::Arc::new(move || {
-            if provider == "mock" {
-                // Only allowed in explicit --provider mock for testing
-                Box::new(openmirai_engine::MockLLMResource::new())
-            } else {
-                let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
-                Box::new(AdapterBridgeLLMResource::new(adapter, &model))
-            }
-        })
-    };
+    let llm_factory = build_llm_factory(
+        provider.clone(),
+        model.clone(),
+        api_key.clone(),
+        base_url.clone(),
+    );
 
     // Read API key from env or flag.
     let server_api_key =
@@ -540,6 +549,24 @@ async fn run_serve(args: &[String]) {
         eprintln!("{}Server error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);
     }
+}
+
+/// Build a factory that creates a REAL LLM resource per request. A mock is only
+/// returned when `--provider mock` is set explicitly. Shared by `serve` and `edit`.
+fn build_llm_factory(
+    provider: String,
+    model: String,
+    api_key: String,
+    base_url: String,
+) -> std::sync::Arc<dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync> {
+    std::sync::Arc::new(move || {
+        if provider == "mock" {
+            Box::new(openmirai_engine::MockLLMResource::new())
+        } else {
+            let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
+            Box::new(AdapterBridgeLLMResource::new(adapter, &model))
+        }
+    })
 }
 
 /// `mirai edit <archivo.yaml>` — abre el mini-IDE visual en el navegador (PRD-013).
@@ -563,22 +590,12 @@ async fn run_edit(args: &[String]) {
     let (provider, model, api_key, base_url) = resolve_provider(args);
 
     // Real LLM factory (for the run/test feature). NO mocks unless --provider mock.
-    let llm_factory: std::sync::Arc<
-        dyn Fn() -> Box<dyn openmirai_engine::LLMResource> + Send + Sync,
-    > = {
-        let provider = provider.clone();
-        let model = model.clone();
-        let api_key = api_key.clone();
-        let base_url = base_url.clone();
-        std::sync::Arc::new(move || {
-            if provider == "mock" {
-                Box::new(openmirai_engine::MockLLMResource::new())
-            } else {
-                let adapter = adapter_factory::create_adapter(&provider, &api_key, &base_url);
-                Box::new(AdapterBridgeLLMResource::new(adapter, &model))
-            }
-        })
-    };
+    let llm_factory = build_llm_factory(
+        provider.clone(),
+        model.clone(),
+        api_key.clone(),
+        base_url.clone(),
+    );
 
     let url = format!("http://127.0.0.1:{port}");
     eprintln!(
@@ -591,8 +608,21 @@ async fn run_edit(args: &[String]) {
     eprintln!("{}Ctrl-C para salir{}", colors::DIM, colors::RESET);
     open_browser(&url);
 
-    if let Err(e) =
-        openmirai_engine::server::editor::serve_editor("127.0.0.1", port, llm_factory, &path).await
+    let cfg = openmirai_engine::config::UserConfig::load();
+    let run_ctx = openmirai_engine::server::editor::RunCtx {
+        ollama_host: ollama_host(&base_url, &cfg),
+        has_key: provider_has_key(&provider, &api_key),
+        provider,
+        model,
+    };
+    if let Err(e) = openmirai_engine::server::editor::serve_editor(
+        "127.0.0.1",
+        port,
+        llm_factory,
+        &path,
+        run_ctx,
+    )
+    .await
     {
         eprintln!("{}Editor error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);
@@ -614,6 +644,282 @@ fn open_browser(url: &str) {
         let _ = process::Command::new("cmd")
             .args(["/C", "start", "", url])
             .spawn();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PRD-014: provider readiness — preflight, doctor, models
+// ---------------------------------------------------------------------------
+
+/// Ollama host: `--base-url` > config (if non-default) > `OLLAMA_BASE_URL` > localhost.
+fn ollama_host(base_url: &str, cfg: &openmirai_engine::config::UserConfig) -> String {
+    if !base_url.is_empty() {
+        return base_url.to_string();
+    }
+    if cfg.ollama_host != "http://localhost:11434" {
+        return cfg.ollama_host.clone();
+    }
+    std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| cfg.ollama_host.clone())
+}
+
+/// Whether a cloud provider has an API key available (flag or env).
+fn provider_has_key(provider: &str, api_key: &str) -> bool {
+    if !api_key.is_empty() {
+        return true;
+    }
+    let env_name = match provider {
+        "claude" | "anthropic" => "ANTHROPIC_API_KEY",
+        "openai" => "OPENAI_API_KEY",
+        "gemini" => "GOOGLE_API_KEY",
+        "groq" => "GROQ_API_KEY",
+        "nvidia" => "NVIDIA_API_KEY",
+        "openrouter" => "OPENROUTER_API_KEY",
+        _ => return true, // ollama / unknown → not key-gated here
+    };
+    std::env::var(env_name)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
+/// Run preflight; print actionable guidance and, on a TTY, offer to pull a
+/// missing Ollama model. Returns true if it's OK to proceed.
+async fn run_preflight(provider: &str, model: &str, api_key: &str, base_url: &str) -> bool {
+    if provider == "mock" {
+        return true;
+    }
+    let cfg = openmirai_engine::config::UserConfig::load();
+    let host = ollama_host(base_url, &cfg);
+    let has_key = provider_has_key(provider, api_key);
+
+    let pf = openmirai_engine::preflight::check(provider, model, &host, has_key).await;
+    if pf.ok {
+        return true;
+    }
+
+    for d in &pf.diagnostics {
+        eprintln!("{}✗ {}{}", colors::RED, d.message, colors::RESET);
+        eprintln!("  {}→ {}{}", colors::DIM, d.action, colors::RESET);
+    }
+
+    let missing_model = provider == "ollama"
+        && pf
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("not downloaded"));
+    if missing_model && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprint!(
+            "\n  {}Download '{model}' now? [Y/n]: {}",
+            colors::YELLOW,
+            colors::RESET
+        );
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_ok() {
+            let ans = line.trim().to_lowercase();
+            let yes = ans.is_empty() || ans == "y" || ans == "yes" || ans == "s" || ans == "si";
+            if yes && pull_with_progress(&host, model).await {
+                let pf2 = openmirai_engine::preflight::check(provider, model, &host, has_key).await;
+                return pf2.ok;
+            }
+        }
+    }
+    false
+}
+
+/// Pull an Ollama model, printing live progress. Returns true on success.
+async fn pull_with_progress(host: &str, name: &str) -> bool {
+    eprintln!("{}Pulling {name} …{}", colors::DIM, colors::RESET);
+    let mut last = String::new();
+    let res = openmirai_engine::preflight::pull_model(host, name, |status, completed, total| {
+        let pct = match (completed, total) {
+            (Some(c), Some(t)) if t > 0 => format!(" {}%", c * 100 / t),
+            _ => String::new(),
+        };
+        let line = format!("{status}{pct}");
+        if line != last {
+            eprint!(
+                "\r  {}{}{}                    ",
+                colors::DIM,
+                line,
+                colors::RESET
+            );
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+            last = line;
+        }
+    })
+    .await;
+    eprintln!();
+    match res {
+        Ok(()) => {
+            eprintln!("{}✓ {name} ready{}", colors::GREEN, colors::RESET);
+            true
+        }
+        Err(e) => {
+            eprintln!("{}✗ pull failed: {e}{}", colors::RED, colors::RESET);
+            false
+        }
+    }
+}
+
+/// `mirai doctor` — check the environment and report exactly what's needed.
+async fn cmd_doctor(_args: &[String]) {
+    let cfg = openmirai_engine::config::UserConfig::load();
+    println!("{}OpenMirai — doctor{}", colors::BOLD, colors::RESET);
+    println!("  binary:  mirai {VERSION}");
+    let cfg_loc = if openmirai_engine::config::UserConfig::exists() {
+        openmirai_engine::config::UserConfig::config_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    } else {
+        "(using defaults — no ~/.openmirai/config.toml yet)".to_string()
+    };
+    println!("  config:  {cfg_loc}");
+    println!(
+        "  default: {} / {}",
+        cfg.default_provider, cfg.default_model
+    );
+    println!();
+
+    let host = ollama_host("", &cfg);
+    match openmirai_engine::preflight::installed_models(&host).await {
+        Ok(models) => {
+            println!(
+                "  {}✓ Ollama{} reachable at {host} — {} model(s) installed",
+                colors::GREEN,
+                colors::RESET,
+                models.len()
+            );
+            for m in &models {
+                println!("      ● {m}");
+            }
+        }
+        Err(_) => println!(
+            "  {}✗ Ollama{} not reachable at {host} → start `ollama serve` (install: https://ollama.com)",
+            colors::RED,
+            colors::RESET
+        ),
+    }
+
+    println!();
+    for p in ["claude", "openai", "gemini", "groq", "nvidia", "openrouter"] {
+        if provider_has_key(p, "") {
+            println!("  {}✓{} {p} API key set", colors::GREEN, colors::RESET);
+        } else {
+            println!("  {}·{} {p} API key not set", colors::DIM, colors::RESET);
+        }
+    }
+
+    println!();
+    let pf = openmirai_engine::preflight::check(
+        &cfg.default_provider,
+        &cfg.default_model,
+        &host,
+        provider_has_key(&cfg.default_provider, ""),
+    )
+    .await;
+    if pf.ok {
+        println!(
+            "{}Ready to run {} / {}{}",
+            colors::GREEN,
+            cfg.default_provider,
+            cfg.default_model,
+            colors::RESET
+        );
+    } else {
+        println!("{}Default not ready:{}", colors::YELLOW, colors::RESET);
+        for d in &pf.diagnostics {
+            println!("  ✗ {} → {}", d.message, d.action);
+        }
+    }
+}
+
+/// `mirai models [list | pull <name> | use <name>]`
+async fn cmd_models(args: &[String]) {
+    let cfg = openmirai_engine::config::UserConfig::load();
+    let host = ollama_host("", &cfg);
+
+    match args.first().map(|s| s.as_str()) {
+        Some("pull") => {
+            let Some(name) = args.get(1) else {
+                eprintln!("Usage: mirai models pull <name>");
+                process::exit(1);
+            };
+            if !pull_with_progress(&host, name).await {
+                process::exit(1);
+            }
+        }
+        Some("use") => {
+            let Some(name) = args.get(1) else {
+                eprintln!("Usage: mirai models use <name>");
+                process::exit(1);
+            };
+            let mut c = cfg.clone();
+            c.default_provider = "ollama".to_string();
+            c.default_model = name.to_string();
+            match c.save() {
+                Ok(p) => println!(
+                    "{}✓ default → ollama / {name}{}  ({})",
+                    colors::GREEN,
+                    colors::RESET,
+                    p.display()
+                ),
+                Err(e) => {
+                    eprintln!("{}save failed: {e}{}", colors::RED, colors::RESET);
+                    process::exit(1);
+                }
+            }
+        }
+        _ => {
+            let installed = openmirai_engine::preflight::installed_models(&host)
+                .await
+                .unwrap_or_default();
+            let is_installed = |name: &str| {
+                installed.iter().any(|i| {
+                    let i = i.as_str();
+                    i == name || i == format!("{name}:latest").as_str()
+                })
+            };
+            println!(
+                "{}Curated Ollama models{}  (★ recommended · ● installed)",
+                colors::BOLD,
+                colors::RESET
+            );
+            for m in openmirai_engine::catalog::CATALOG {
+                let star = if m.recommended { "★" } else { " " };
+                let dot = if is_installed(m.name) {
+                    format!("{}●{}", colors::GREEN, colors::RESET)
+                } else {
+                    " ".to_string()
+                };
+                println!(
+                    "  {star} {dot} {:24} {:>5.1} GB  {}",
+                    m.name, m.size_gb, m.description
+                );
+            }
+            let extra: Vec<&String> = installed
+                .iter()
+                .filter(|i| {
+                    let name = i.as_str();
+                    !openmirai_engine::catalog::CATALOG
+                        .iter()
+                        .any(|m| name == m.name || name == format!("{}:latest", m.name).as_str())
+                })
+                .collect();
+            if !extra.is_empty() {
+                println!(
+                    "\n{}Also installed (not in catalog):{}",
+                    colors::DIM,
+                    colors::RESET
+                );
+                for i in extra {
+                    println!("  ● {i}");
+                }
+            }
+            println!(
+                "\n  Download: {}mirai models pull <name>{}   ·   Set default: {}mirai models use <name>{}",
+                colors::BOLD, colors::RESET, colors::BOLD, colors::RESET
+            );
+        }
     }
 }
 

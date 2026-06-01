@@ -35,6 +35,8 @@ pub enum StreamEvent {
         tool_type: String,
         duration_ms: u64,
         output_keys: Vec<String>,
+        /// The node's output map (field → value), so clients can show real results.
+        output: serde_json::Value,
     },
 
     /// A node failed.
@@ -62,6 +64,8 @@ pub enum StreamEvent {
         status: String,
         total_duration_ms: u64,
         nodes_executed: usize,
+        /// Final state snapshot (node_id → output map), so clients can show the result.
+        output: serde_json::Value,
     },
 
     /// Graph execution failed.
@@ -72,44 +76,20 @@ pub enum StreamEvent {
 impl StreamEvent {
     /// Format as SSE text line: `event: <type>\ndata: <json>\n\n`
     pub fn to_sse(&self) -> String {
-        let (event_name, data) = match self {
-            Self::GraphStarted { .. } => (
-                "graph.started",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeStarted { .. } => (
-                "node.started",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeToken { .. } => (
-                "node.token",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeCompleted { .. } => (
-                "node.completed",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::NodeError { .. } => (
-                "node.error",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::FanoutStarted { .. } => (
-                "fanout.started",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::FanoutCompleted { .. } => (
-                "fanout.completed",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::GraphCompleted { .. } => (
-                "graph.completed",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
-            Self::GraphError { .. } => (
-                "graph.error",
-                serde_json::to_string(self).unwrap_or_default(),
-            ),
+        // The event name mirrors each variant's #[serde(rename)]; the data is the
+        // variant serialized as JSON. Only the name varies per arm.
+        let event_name = match self {
+            Self::GraphStarted { .. } => "graph.started",
+            Self::NodeStarted { .. } => "node.started",
+            Self::NodeToken { .. } => "node.token",
+            Self::NodeCompleted { .. } => "node.completed",
+            Self::NodeError { .. } => "node.error",
+            Self::FanoutStarted { .. } => "fanout.started",
+            Self::FanoutCompleted { .. } => "fanout.completed",
+            Self::GraphCompleted { .. } => "graph.completed",
+            Self::GraphError { .. } => "graph.error",
         };
+        let data = serde_json::to_string(self).unwrap_or_default();
         format!("event: {event_name}\ndata: {data}\n\n")
     }
 }
@@ -125,6 +105,9 @@ pub fn trace_to_events(
         node_count,
     }];
 
+    // Real outputs come from the final state snapshot (node_id → field → value).
+    let snapshot = result.state.snapshot();
+
     for entry in &result.trace {
         events.push(StreamEvent::NodeStarted {
             node_id: entry.node_id.clone(),
@@ -133,11 +116,17 @@ pub fn trace_to_events(
 
         match entry.status {
             crate::core::runner::TraceStatus::Ok => {
+                let node_out = snapshot.get(&entry.node_id);
                 events.push(StreamEvent::NodeCompleted {
                     node_id: entry.node_id.clone(),
                     tool_type: entry.tool_type.clone(),
                     duration_ms: entry.duration_ms,
-                    output_keys: vec![], // Would need state access for real keys
+                    output_keys: node_out
+                        .map(|m| m.keys().cloned().collect())
+                        .unwrap_or_default(),
+                    output: node_out
+                        .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
+                        .unwrap_or(serde_json::Value::Null),
                 });
             }
             crate::core::runner::TraceStatus::Error => {
@@ -157,6 +146,7 @@ pub fn trace_to_events(
         status,
         total_duration_ms: total_ms,
         nodes_executed: result.trace.len(),
+        output: serde_json::to_value(&snapshot).unwrap_or(serde_json::Value::Null),
     });
 
     events
@@ -189,10 +179,12 @@ mod tests {
             tool_type: "ai/llm_call".into(),
             duration_ms: 1500,
             output_keys: vec!["response".into()],
+            output: serde_json::json!({ "response": "hi" }),
         };
         let sse = event.to_sse();
         assert!(sse.contains("node.completed"));
         assert!(sse.contains("1500"));
+        assert!(sse.contains("response"));
     }
 
     #[test]
@@ -233,6 +225,64 @@ mod tests {
     }
 
     #[test]
+    fn trace_to_events_populates_outputs_from_state() {
+        use crate::core::runner::*;
+        use crate::core::state::SharedState;
+        use std::collections::HashMap;
+
+        // Final state holds the node's real output (PRD-015 TEST-183).
+        let state = SharedState::new();
+        let mut out = HashMap::new();
+        out.insert("response".to_string(), serde_json::json!("hello world"));
+        state.set("b", out, true).unwrap();
+
+        let result = ExecutionResult {
+            status: ExecutionStatus::Completed,
+            state,
+            trace: vec![TraceEntry {
+                node_id: "b".into(),
+                tool_type: "ai/llm_call".into(),
+                status: TraceStatus::Ok,
+                duration_ms: 5,
+                retries: 0,
+                error: None,
+            }],
+            transcript: vec![],
+            error: None,
+            interrupt_node_id: None,
+            interrupt_info: None,
+        };
+
+        let events = trace_to_events(&result, "g", 1);
+
+        // node.completed carries the real output + populated keys
+        let (output, keys) = events
+            .iter()
+            .find_map(|e| match e {
+                StreamEvent::NodeCompleted {
+                    node_id,
+                    output,
+                    output_keys,
+                    ..
+                } if node_id == "b" => Some((output.clone(), output_keys.clone())),
+                _ => None,
+            })
+            .expect("node.completed for b");
+        assert_eq!(output["response"], serde_json::json!("hello world"));
+        assert!(keys.contains(&"response".to_string()));
+
+        // graph.completed carries the final snapshot
+        let snapshot = events
+            .iter()
+            .find_map(|e| match e {
+                StreamEvent::GraphCompleted { output, .. } => Some(output.clone()),
+                _ => None,
+            })
+            .expect("graph.completed");
+        assert_eq!(snapshot["b"]["response"], serde_json::json!("hello world"));
+    }
+
+    #[test]
     fn all_event_variants_serialize() {
         let events = vec![
             StreamEvent::GraphStarted {
@@ -252,6 +302,7 @@ mod tests {
                 tool_type: "t".into(),
                 duration_ms: 10,
                 output_keys: vec![],
+                output: serde_json::Value::Null,
             },
             StreamEvent::NodeError {
                 node_id: "n".into(),
@@ -270,6 +321,7 @@ mod tests {
                 status: "ok".into(),
                 total_duration_ms: 100,
                 nodes_executed: 2,
+                output: serde_json::Value::Null,
             },
             StreamEvent::GraphError {
                 error: "fail".into(),

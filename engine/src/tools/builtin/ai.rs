@@ -638,7 +638,7 @@ fn validate_response(response: &str, schema: &Value) -> (Option<Value>, Vec<Stri
                 // Check type
                 if let Some(expected_type) = field_schema.get("type").and_then(|t| t.as_str()) {
                     if !check_json_type(value, expected_type) {
-                        let actual_type = json_type_name(value);
+                        let actual_type = value_type_label(value);
                         errors.push(format!(
                             "Field '{}' expected type '{}', got '{}'",
                             field_name, expected_type, actual_type
@@ -676,8 +676,7 @@ fn check_json_type(value: &Value, expected: &str) -> bool {
     }
 }
 
-// json_type_name: use canonical source
-use crate::core::value_type::value_type_label as json_type_name;
+use crate::core::value_type::value_type_label;
 
 /// Build a retry prompt with error feedback.
 fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[String]) -> String {

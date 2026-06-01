@@ -611,8 +611,21 @@ async fn run_edit(args: &[String]) {
     eprintln!("{}Ctrl-C para salir{}", colors::DIM, colors::RESET);
     open_browser(&url);
 
-    if let Err(e) =
-        openmirai_engine::server::editor::serve_editor("127.0.0.1", port, llm_factory, &path).await
+    let cfg = openmirai_engine::config::UserConfig::load();
+    let run_ctx = openmirai_engine::server::editor::RunCtx {
+        ollama_host: ollama_host(&base_url, &cfg),
+        has_key: provider_has_key(&provider, &api_key),
+        provider,
+        model,
+    };
+    if let Err(e) = openmirai_engine::server::editor::serve_editor(
+        "127.0.0.1",
+        port,
+        llm_factory,
+        &path,
+        run_ctx,
+    )
+    .await
     {
         eprintln!("{}Editor error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);

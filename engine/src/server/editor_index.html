@@ -831,6 +831,19 @@
   </div>
 </div>
 
+<!-- PRD-014: preflight gate (missing configuration before a run) -->
+<div class="modal-overlay" id="preflightModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Missing configuration</div>
+    </div>
+    <div class="modal-body" id="preflightBody"></div>
+    <div class="modal-footer">
+      <button id="preflightClose">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST CONTAINER -->
 <div id="toastContainer"></div>
 
@@ -1041,64 +1054,16 @@ async function runAgent() {
         }
         
         modal.classList.remove('active');
-        
-        const createResp = await api('POST', '/api/v1/agents/from-spec', state.spec);
-        if (!createResp || !createResp.id) {
-          showToast('Failed to create agent instance', 'error');
+
+        // PRD-014: preflight gate — if the provider/model isn't ready, guide
+        // the user (download the model, start Ollama, set a key) before running.
+        const pf = await checkPreflight();
+        if (!pf.ok) {
+          showPreflightGate(pf, triggerData);
           return;
         }
-        
-        state.runningAgentId = createResp.id;
-        state.isRunning = true;
-        showView('visual'); // keep the graph visible so the run plays out on the canvas
-        resetHighlights();
-        clearConsole();
-        addConsoleLine('Starting run...', 'info');
-        
-        // POST to stream endpoint
-        try {
-          const streamResp = await fetch(`/api/v1/agents/${state.runningAgentId}/stream`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(triggerData),
-          });
-          
-          if (!streamResp.ok) {
-            addConsoleLine(`Stream failed: ${streamResp.statusText}`, 'error');
-            state.isRunning = false;
-            return;
-          }
-          
-          const reader = streamResp.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          
-          while (state.isRunning) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const json = line.substring(6);
-                try {
-                  const event = JSON.parse(json);
-                  handleStreamEvent(event);
-                } catch (e) {
-                  console.error('Parse event error:', e);
-                }
-              }
-            }
-          }
-        } catch (err) {
-          addConsoleLine(`Stream error: ${err.message}`, 'error');
-          console.error('Stream error:', err);
-        } finally {
-          state.isRunning = false;
-        }
+
+        await executeRun(triggerData);
       } catch (err) {
         showToast(`Run setup error: ${err.message}`, 'error');
         console.error('Run setup error:', err);
@@ -1117,6 +1082,151 @@ async function runAgent() {
   } catch (err) {
     console.error('Run init error:', err);
     showToast(`Run error: ${err.message}`, 'error');
+  }
+}
+
+// Create the agent instance and stream its execution onto the canvas.
+async function executeRun(triggerData) {
+  try {
+    const createResp = await api('POST', '/api/v1/agents/from-spec', state.spec);
+    if (!createResp || !createResp.id) {
+      showToast('Failed to create agent instance', 'error');
+      return;
+    }
+    state.runningAgentId = createResp.id;
+    state.isRunning = true;
+    showView('visual'); // keep the graph visible so the run plays out on the canvas
+    resetHighlights();
+    clearConsole();
+    addConsoleLine('Starting run...', 'info');
+    try {
+      const streamResp = await fetch(`/api/v1/agents/${state.runningAgentId}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(triggerData),
+      });
+      if (!streamResp.ok) {
+        addConsoleLine(`Stream failed: ${streamResp.statusText}`, 'error');
+        state.isRunning = false;
+        return;
+      }
+      const reader = streamResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (state.isRunning) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try { handleStreamEvent(JSON.parse(line.substring(6))); }
+            catch (e) { console.error('Parse event error:', e); }
+          }
+        }
+      }
+    } catch (err) {
+      addConsoleLine(`Stream error: ${err.message}`, 'error');
+    } finally {
+      state.isRunning = false;
+    }
+  } catch (err) {
+    showToast(`Run error: ${err.message}`, 'error');
+  }
+}
+
+// PRD-014: is the launch provider/model ready? (Never blocks if the check fails.)
+async function checkPreflight() {
+  try {
+    const pf = await api('GET', '/api/edit/preflight');
+    return pf || { ok: true, diagnostics: [] };
+  } catch (err) {
+    return { ok: true, diagnostics: [] };
+  }
+}
+
+// Show the "missing configuration" gate with actionable fixes (download model, etc.).
+function showPreflightGate(pf, triggerData) {
+  try {
+    const modal = document.getElementById('preflightModal');
+    const body = document.getElementById('preflightBody');
+    body.innerHTML = '';
+    (pf.diagnostics || []).forEach((d) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #eee;';
+      const msg = document.createElement('div');
+      msg.style.cssText = 'color:#d1314c;font-size:13px;';
+      msg.textContent = '✗ ' + (d.message || '');
+      row.appendChild(msg);
+      const action = document.createElement('div');
+      action.style.cssText = 'color:#666;font-size:12px;margin-top:4px;';
+      action.textContent = '→ ' + (d.action || '');
+      row.appendChild(action);
+      const m = /ollama pull (\S+)/.exec(d.action || '');
+      if (m) {
+        const btn = document.createElement('button');
+        btn.className = 'primary';
+        btn.style.cssText = 'margin-top:8px;';
+        btn.textContent = `Download ${m[1]}`;
+        const prog = document.createElement('div');
+        prog.style.cssText = 'font-size:12px;color:#666;margin-top:6px;font-variant-numeric:tabular-nums;';
+        btn.onclick = async () => {
+          btn.disabled = true;
+          const ok = await pullModelStream(m[1], (line) => { prog.textContent = line; });
+          if (ok) {
+            modal.classList.remove('active');
+            await executeRun(triggerData);
+          } else {
+            btn.disabled = false;
+          }
+        };
+        row.appendChild(btn);
+        row.appendChild(prog);
+      }
+      body.appendChild(row);
+    });
+    modal.classList.add('active');
+    document.getElementById('preflightClose').onclick = () => modal.classList.remove('active');
+  } catch (err) {
+    console.error('showPreflightGate error:', err);
+  }
+}
+
+// Pull an Ollama model, streaming progress lines to `onLine`. Returns true on success.
+async function pullModelStream(name, onLine) {
+  try {
+    const resp = await fetch('/api/edit/models/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!resp.ok || !resp.body) { showToast('Pull failed', 'error'); return false; }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let ok = false;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const d = JSON.parse(line.substring(6));
+          const pct = (d.completed && d.total) ? ` ${Math.floor((d.completed * 100) / d.total)}%` : '';
+          onLine(`${d.status || ''}${pct}`);
+          if (d.done) ok = d.status === 'success';
+        } catch (e) { /* ignore partial */ }
+      }
+    }
+    showToast(ok ? '✓ Model downloaded' : '✗ Download failed', ok ? 'success' : 'error');
+    return ok;
+  } catch (err) {
+    showToast(`Pull error: ${err.message}`, 'error');
+    return false;
   }
 }
 

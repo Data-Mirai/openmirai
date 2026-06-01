@@ -1507,23 +1507,79 @@ function setNodeBodyExpanded(head, nbody, expand) {
   head.querySelector('.result-node-caret').textContent = expand ? '▾' : '▸';
 }
 
+// A labeled block container for the drawer (e.g. "Result", "Node outputs").
+function resultBlock(label) {
+  const block = document.createElement('div');
+  block.className = 'result-block';
+  block.innerHTML = `<div class="result-block-label">${escapeHtml(label)}</div>`;
+  return block;
+}
+
+// One collapsible row showing a node's output (or its error, auto-expanded).
+function buildNodeRow(id, n) {
+  const isErr = n.status === 'error';
+  const row = document.createElement('div');
+  row.className = 'result-node';
+
+  const head = document.createElement('div');
+  head.className = 'result-node-head';
+  const ms = n.ms != null ? `<span class="result-node-ms">${n.ms}ms</span>` : '';
+  head.innerHTML =
+    '<span class="result-node-caret">▸</span>' +
+    `<span class="result-node-status ${isErr ? 'error' : 'ok'}"></span>` +
+    `<span class="result-node-name">${escapeHtml(id)}</span>` +
+    `<span class="result-node-type">${escapeHtml(n.tool_type || '')}</span>` +
+    ms;
+
+  const nbody = document.createElement('div');
+  nbody.className = 'result-node-body';
+  nbody.style.display = 'none';
+  if (isErr) {
+    const e = document.createElement('div');
+    e.className = 'result-error-text';
+    e.textContent = n.error || 'error';
+    nbody.appendChild(e);
+  } else {
+    const pre = document.createElement('pre');
+    pre.className = 'result-json';
+    pre.textContent = prettyValue(n.output);
+    nbody.appendChild(pre);
+  }
+  head.addEventListener('click', () => setNodeBodyExpanded(head, nbody, nbody.style.display === 'none'));
+  if (isErr) setNodeBodyExpanded(head, nbody, true); // surface failures immediately
+  row.appendChild(head);
+  row.appendChild(nbody);
+  return row;
+}
+
+// The highlighted "Result" block: the final node's output as text (or JSON).
+function buildResultBlock() {
+  const finalId = pickFinalNode();
+  if (!finalId || !state.runOutputs[finalId]) return null;
+  const out = state.runOutputs[finalId].output;
+  const text = extractResultText(out);
+  const block = resultBlock(`Result · ${finalId}`);
+  const fin = document.createElement('div');
+  fin.className = 'result-final';
+  fin.textContent = text != null ? text : prettyValue(out);
+  block.appendChild(fin);
+  return block;
+}
+
 // Render the drawer from state.runOutputs. opts: { title, graphError, finalSnapshot }.
+// Orchestrator only — each block is built by a dedicated helper.
 function renderRunResult(opts = {}) {
   try {
     const drawer = document.getElementById('resultDrawer');
     const body = document.getElementById('resultDrawerBody');
-    const titleEl = document.getElementById('resultDrawerTitle');
     if (!drawer || !body) return;
     drawer.classList.add('open');
-    if (opts.title) titleEl.textContent = opts.title;
-
+    if (opts.title) document.getElementById('resultDrawerTitle').textContent = opts.title;
     body.innerHTML = '';
 
     // Graph-level error (e.g. validation) — show it and stop.
     if (opts.graphError) {
-      const block = document.createElement('div');
-      block.className = 'result-block';
-      block.innerHTML = '<div class="result-block-label">Error</div>';
+      const block = resultBlock('Error');
       const err = document.createElement('div');
       err.className = 'result-error-text';
       err.textContent = opts.graphError;
@@ -1532,64 +1588,17 @@ function renderRunResult(opts = {}) {
       return;
     }
 
-    // RESULT block — the final node's output, only once the run has finished.
+    // RESULT — only once the run has finished (finalSnapshot present).
     if (opts.finalSnapshot !== undefined) {
-      const finalId = pickFinalNode();
-      if (finalId && state.runOutputs[finalId]) {
-        const out = state.runOutputs[finalId].output;
-        const text = extractResultText(out);
-        const block = document.createElement('div');
-        block.className = 'result-block';
-        block.innerHTML = `<div class="result-block-label">Result · ${escapeHtml(finalId)}</div>`;
-        const fin = document.createElement('div');
-        fin.className = 'result-final';
-        fin.textContent = text != null ? text : prettyValue(out);
-        block.appendChild(fin);
-        body.appendChild(block);
-      }
+      const block = buildResultBlock();
+      if (block) body.appendChild(block);
     }
 
     // NODE OUTPUTS — one collapsible row per node, in execution order.
     const ids = Object.keys(state.runOutputs);
     if (ids.length) {
-      const block = document.createElement('div');
-      block.className = 'result-block';
-      block.innerHTML = '<div class="result-block-label">Node outputs</div>';
-      ids.forEach((id) => {
-        const n = state.runOutputs[id];
-        const isErr = n.status === 'error';
-        const row = document.createElement('div');
-        row.className = 'result-node';
-
-        const head = document.createElement('div');
-        head.className = 'result-node-head';
-        const caret = `<span class="result-node-caret">▸</span>`;
-        const dot = `<span class="result-node-status ${isErr ? 'error' : 'ok'}"></span>`;
-        const name = `<span class="result-node-name">${escapeHtml(id)}</span>`;
-        const type = `<span class="result-node-type">${escapeHtml(n.tool_type || '')}</span>`;
-        const ms = n.ms != null ? `<span class="result-node-ms">${n.ms}ms</span>` : '';
-        head.innerHTML = caret + dot + name + type + ms;
-
-        const nbody = document.createElement('div');
-        nbody.className = 'result-node-body';
-        nbody.style.display = 'none';
-        if (isErr) {
-          const e = document.createElement('div');
-          e.className = 'result-error-text';
-          e.textContent = n.error || 'error';
-          nbody.appendChild(e);
-        } else {
-          const pre = document.createElement('pre');
-          pre.className = 'result-json';
-          pre.textContent = prettyValue(n.output);
-          nbody.appendChild(pre);
-        }
-        head.addEventListener('click', () => setNodeBodyExpanded(head, nbody, nbody.style.display === 'none'));
-        if (isErr) setNodeBodyExpanded(head, nbody, true); // surface failures immediately
-        row.appendChild(head);
-        row.appendChild(nbody);
-        block.appendChild(row);
-      });
+      const block = resultBlock('Node outputs');
+      ids.forEach((id) => block.appendChild(buildNodeRow(id, state.runOutputs[id])));
       body.appendChild(block);
     }
   } catch (err) {

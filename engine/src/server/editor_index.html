@@ -1141,14 +1141,68 @@ function isSimpleInputType(type) {
 
 // Build the Run modal body from the agent's declared `inputs` (schema-driven form).
 // No inputs declared → a free JSON textarea (fallback). Sets data-mode on the container.
+// Create the input element for one input type, with placeholder from the description.
+function createRunField(type, desc) {
+  if (type === 'boolean') {
+    const f = document.createElement('input');
+    f.type = 'checkbox';
+    return f;
+  }
+  if (type === 'number') {
+    const f = document.createElement('input');
+    f.type = 'number';
+    f.className = 'form-input';
+    f.placeholder = desc;
+    return f;
+  }
+  const f = document.createElement('textarea');
+  if (isSimpleInputType(type)) {
+    f.className = 'form-input run-text';
+    f.placeholder = desc;
+  } else {
+    f.className = 'form-input textarea'; // object/array → JSON
+    f.placeholder = desc || (type === 'array' ? '[]' : '{}');
+  }
+  return f;
+}
+
+// Render one labeled row per declared input into the container.
+function renderRunFields(inputs, container) {
+  Object.keys(inputs).forEach((name) => {
+    const spec = inputs[name] || {};
+    const type = (spec.type || 'text').toLowerCase();
+    const required = !!spec.required;
+    const desc = spec.description || '';
+    const g = document.createElement('div');
+    g.className = 'form-group';
+    g.innerHTML = `<label class="form-label">${escapeHtml(name)}` +
+      `<span class="form-hint${required ? ' req' : ''}">${escapeHtml(type)}${required ? ' · required' : ''}</span></label>`;
+
+    const field = createRunField(type, desc);
+    if (type === 'boolean') {
+      const wrap = document.createElement('label');
+      wrap.className = 'run-bool';
+      wrap.appendChild(field);
+      wrap.appendChild(document.createTextNode(desc || name));
+      g.appendChild(wrap);
+    } else {
+      g.appendChild(field);
+    }
+    field.dataset.inputName = name;
+    field.dataset.inputType = type;
+    field.dataset.required = required ? '1' : '';
+    container.appendChild(g);
+  });
+}
+
+// Build the Run modal body: a form from the agent's inputs, or a JSON textarea fallback.
 function buildRunForm() {
   const container = document.getElementById('runFields');
   document.getElementById('runFormError').style.display = 'none';
   container.innerHTML = '';
   const inputs = (state.spec && state.spec.inputs) || {};
-  const names = Object.keys(inputs);
 
-  if (!names.length) {
+  if (!Object.keys(inputs).length) {
     container.dataset.mode = 'json';
     const g = document.createElement('div');
     g.className = 'form-group';
@@ -1159,47 +1213,7 @@ function buildRunForm() {
   }
 
   container.dataset.mode = 'form';
-  names.forEach((name) => {
-    const spec = inputs[name] || {};
-    const type = (spec.type || 'text').toLowerCase();
-    const required = !!spec.required;
-    const desc = spec.description || '';
-    const g = document.createElement('div');
-    g.className = 'form-group';
-    g.innerHTML = `<label class="form-label">${escapeHtml(name)}` +
-      `<span class="form-hint${required ? ' req' : ''}">${escapeHtml(type)}${required ? ' · required' : ''}</span></label>`;
-
-    let field;
-    if (type === 'boolean') {
-      const wrap = document.createElement('label');
-      wrap.className = 'run-bool';
-      field = document.createElement('input');
-      field.type = 'checkbox';
-      wrap.appendChild(field);
-      wrap.appendChild(document.createTextNode(desc || name));
-      g.appendChild(wrap);
-    } else if (type === 'number') {
-      field = document.createElement('input');
-      field.type = 'number';
-      field.className = 'form-input';
-      field.placeholder = desc;
-      g.appendChild(field);
-    } else if (!isSimpleInputType(type)) {
-      field = document.createElement('textarea');
-      field.className = 'form-input textarea';
-      field.placeholder = desc || (type === 'array' ? '[]' : '{}');
-      g.appendChild(field);
-    } else {
-      field = document.createElement('textarea');
-      field.className = 'form-input run-text';
-      field.placeholder = desc;
-      g.appendChild(field);
-    }
-    field.dataset.inputName = name;
-    field.dataset.inputType = type;
-    field.dataset.required = required ? '1' : '';
-    container.appendChild(g);
-  });
+  renderRunFields(inputs, container);
 }
 
 // Collect + validate the Run form → { ok, triggerData } or { ok:false, error, missing }.

@@ -74,6 +74,9 @@ blueprint/
 CLAUDE.md
 .claude/
 
+# graphify (local knowledge-graph analysis output, regenerated on demand)
+graphify-out/
+
 # Legacy
 legacy/
 rust/

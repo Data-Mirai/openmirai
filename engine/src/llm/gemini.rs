@@ -233,15 +233,18 @@ impl LLMAdapter for GeminiAdapter {
         prompt: &str,
         context: Option<&str>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let mut payload = json!({
             "contents": [{ "parts": [{ "text": prompt }] }],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens,
             },
         });
+
+        if let Some(max) = max_tokens {
+            payload["generationConfig"]["maxOutputTokens"] = json!(max);
+        }
 
         if let Some(ctx) = context {
             payload["systemInstruction"] = json!({
@@ -310,7 +313,7 @@ impl LLMAdapter for GeminiAdapter {
         messages: Vec<Message>,
         tools: Option<Vec<Value>>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let (system_instruction, contents) = Self::convert_messages(&messages);
 
@@ -318,9 +321,12 @@ impl LLMAdapter for GeminiAdapter {
             "contents": contents,
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens,
             },
         });
+
+        if let Some(max) = max_tokens {
+            payload["generationConfig"]["maxOutputTokens"] = json!(max);
+        }
 
         if let Some(sys) = system_instruction {
             payload["systemInstruction"] = sys;

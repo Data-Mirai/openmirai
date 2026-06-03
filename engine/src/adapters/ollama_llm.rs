@@ -51,7 +51,7 @@ impl LLMResource for OllamaLLMResource {
         prompt: &str,
         context: &[Value],
         temperature: f64,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<LLMResponse, ResourceError> {
         let model = if model.is_empty() {
             &self.default_model
@@ -66,15 +66,17 @@ impl LLMResource for OllamaLLMResource {
             "content": prompt,
         }));
 
-        let body = json!({
+        let mut body = json!({
             "model": model,
             "messages": messages,
             "stream": false,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
             }
         });
+        if let Some(max) = max_tokens {
+            body["options"]["num_predict"] = json!(max);
+        }
 
         let response = self
             .client

@@ -150,7 +150,7 @@ impl LLMResource for StubLLM {
         _prompt: &str,
         _context: &[serde_json::Value],
         _temperature: f64,
-        _max_tokens: u32,
+        _max_tokens: Option<u32>,
     ) -> Result<crate::core::context::LLMResponse, crate::core::context::ResourceError> {
         unimplemented!("stub")
     }

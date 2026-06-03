@@ -166,7 +166,7 @@ impl LLMAdapter for OpenAICompatAdapter {
         prompt: &str,
         context: Option<&str>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let mut messages: Vec<Value> = Vec::new();
         if let Some(ctx) = context {
@@ -174,12 +174,14 @@ impl LLMAdapter for OpenAICompatAdapter {
         }
         messages.push(json!({ "role": "user", "content": prompt }));
 
-        let payload = json!({
+        let mut payload = json!({
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
         });
+        if let Some(max) = max_tokens {
+            payload["max_tokens"] = json!(max);
+        }
 
         let url = format!("{}/chat/completions", self.base_url);
         let resp = self
@@ -242,7 +244,7 @@ impl LLMAdapter for OpenAICompatAdapter {
         messages: Vec<Message>,
         tools: Option<Vec<Value>>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let openai_messages = Self::convert_messages(&messages);
 
@@ -250,8 +252,10 @@ impl LLMAdapter for OpenAICompatAdapter {
             "model": model,
             "messages": openai_messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
         });
+        if let Some(max) = max_tokens {
+            payload["max_tokens"] = json!(max);
+        }
 
         if let Some(tool_defs) = tools {
             payload["tools"] = Value::Array(tool_defs);

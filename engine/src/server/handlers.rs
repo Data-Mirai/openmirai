@@ -608,7 +608,7 @@ pub(crate) async fn groupchat(
             name, personality, topic, if history.is_empty() { "(none yet)".to_string() } else { history }
         );
 
-        match llm.call("", &prompt, &[], 0.7, 256).await {
+        match llm.call("", &prompt, &[], 0.7, Some(256)).await {
             Ok(response) => {
                 transcript.push(json!({
                     "round": round + 1,

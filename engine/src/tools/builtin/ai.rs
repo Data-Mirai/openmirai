@@ -240,7 +240,7 @@ impl Tool for LlmCallTool {
         let max_tokens = config
             .get("max_tokens")
             .and_then(|v| v.as_u64())
-            .unwrap_or(1024) as u32;
+            .map(|v| v as u32);
 
         // Build context as proper message objects for the LLM adapter.
         let mut context_messages = Vec::new();
@@ -775,7 +775,7 @@ impl Tool for TranscribeTool {
 
         let result = context
             .llm()
-            .call(model, prompt, &context_messages, 0.0, 4096)
+            .call(model, prompt, &context_messages, 0.0, Some(4096))
             .await
             .map_err(|e| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),

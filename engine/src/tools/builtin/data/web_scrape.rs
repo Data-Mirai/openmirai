@@ -842,7 +842,7 @@ impl Tool for WebScrapeTool {
                  Return ONLY valid JSON matching this schema: {output_schema}\n\n\
                  Content:\n{body_slice}\n\nJSON output:",
             );
-            if let Ok(llm_resp) = llm.call("", &prompt, &[], 0.0, 2000).await {
+            if let Ok(llm_resp) = llm.call("", &prompt, &[], 0.0, Some(2000)).await {
                 let re = regex::Regex::new(r"\{[^{}]*\}").unwrap();
                 if let Some(m) = re.find(&llm_resp.response) {
                     if let Ok(extracted) = serde_json::from_str::<Value>(m.as_str()) {

@@ -768,7 +768,7 @@ impl Tool for TranscribeTool {
             "transcribe: read media file, sending as multimodal"
         );
 
-        let prompt = "Transcribe this audio literally and faithfully. Include every word exactly as spoken, including filler words (um, uh, like, etc.), false starts, and repetitions. Do not clean up, correct, or interpret anything. Output only the raw transcription text, no timestamps, no speaker labels, no formatting.";
+        let prompt = "Transcribe this audio faithfully. Include every word exactly as spoken, including filler words (um, uh, like, eh, este, etc.), false starts, and repetitions. Add proper punctuation (periods, commas, question marks, exclamation marks, parentheses, dashes) to reflect the speaker's natural pauses and intonation. Use paragraph breaks for topic changes or long pauses. Do not remove, rephrase, or add any words. Output only the transcription.";
 
         // Pass media via __user_media carrier (bridge attaches it to user prompt).
         let media_json = serde_json::to_value(vec![&media]).unwrap_or(json!([]));
@@ -776,7 +776,7 @@ impl Tool for TranscribeTool {
 
         let result = context
             .llm()
-            .call(model, prompt, &context_messages, 0.0, Some(4096))
+            .call(model, prompt, &context_messages, 0.0, None)
             .await
             .map_err(|e| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),

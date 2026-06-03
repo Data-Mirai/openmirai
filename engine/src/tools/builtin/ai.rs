@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use regex::Regex;
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -1011,6 +1012,309 @@ fn detect_claude_cli() -> Result<String, String> {
     )
 }
 
+// ===========================================================================
+// ImageEditTool — PRD-017
+// ===========================================================================
+
+ai_tool! {
+    struct ImageEditTool, factory ImageEditFactory;
+    tool_type = "ai/image_edit",
+    name = "Image Edit",
+    description = "Edit an image using AI inpainting via OpenAI GPT-Image-1. Send an image, an optional mask marking the area to edit (PNG with alpha channel), and a text prompt describing the desired change.",
+    inputs = [
+        field("image_path", FieldType::String, false, "Path or FileRef of the base image (PNG)"),
+        field("mask_path", FieldType::String, false, "Path or FileRef of the mask (PNG with alpha: transparent = area to edit)"),
+        field("prompt", FieldType::String, false, "Description of the desired edit"),
+    ],
+    outputs = [
+        field("result_path", FieldType::Object, true, "FileRef of the edited image (PNG in scratch dir)"),
+        field("revised_prompt", FieldType::String, false, "Prompt as revised by OpenAI, if different"),
+        field("model", FieldType::String, true, "Model used for generation"),
+        field("size", FieldType::String, true, "Size of the generated image"),
+        field("created", FieldType::Number, true, "Unix timestamp of creation"),
+    ],
+    config_fields = [
+        field("image_path", FieldType::String, false, "Image path (fallback if not in inputs)"),
+        field("mask_path", FieldType::String, false, "Mask path (fallback if not in inputs)"),
+        field("prompt", FieldType::String, false, "Prompt (fallback if not in inputs)"),
+        field("model", FieldType::String, false, "OpenAI model: gpt-image-1 (default) or dall-e-2"),
+        field("size", FieldType::String, false, "Output size: 1024x1024, 1536x1024, 1024x1536, auto (default)"),
+        field("quality", FieldType::String, false, "Quality (gpt-image-1 only): low, medium, high (default)"),
+        field("n", FieldType::Number, false, "Number of images to generate (default 1)"),
+        field("api_key", FieldType::String, false, "OpenAI API key (falls back to OPENAI_API_KEY env var)"),
+        field("base_url", FieldType::String, false, "API base URL (default https://api.openai.com)"),
+    ]
+}
+
+#[async_trait]
+impl Tool for ImageEditTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        // --- 1. Resolve inputs (input > config) ---
+        let image_raw = inputs
+            .get("image_path")
+            .or_else(|| config.get("image_path"))
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "input 'image_path' is required (via input or config)".into(),
+            })?;
+        let image_path = crate::llm::media::resolve_file_input(image_raw);
+        if image_path.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "input 'image_path' is required (via input or config)".into(),
+            });
+        }
+
+        let mask_raw = inputs
+            .get("mask_path")
+            .or_else(|| config.get("mask_path"));
+        let mask_path = mask_raw.map(|v| crate::llm::media::resolve_file_input(v));
+
+        let prompt = inputs
+            .get("prompt")
+            .or_else(|| config.get("prompt"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if prompt.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "input 'prompt' is required (via input or config)".into(),
+            });
+        }
+
+        // --- 2. Resolve config ---
+        let api_key = config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "OpenAI API key not found. Set config.api_key or OPENAI_API_KEY env var"
+                    .into(),
+            })?;
+
+        let model = config
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("gpt-image-1");
+        let size = config
+            .get("size")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto");
+        let quality = config
+            .get("quality")
+            .and_then(|v| v.as_str())
+            .unwrap_or("high");
+        let n = config
+            .get("n")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+        let base_url = config
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("https://api.openai.com");
+
+        // --- 3. Read files ---
+        let image_bytes = tokio::fs::read(&image_path).await.map_err(|e| {
+            ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: format!("failed to read image file: {image_path}: {e}"),
+            }
+        })?;
+
+        let mask_bytes = match &mask_path {
+            Some(p) if !p.is_empty() => {
+                Some(tokio::fs::read(p).await.map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/image_edit".into(),
+                        message: format!("failed to read mask file: {p}: {e}"),
+                    }
+                })?)
+            }
+            _ => None,
+        };
+
+        // --- 4. Build multipart form ---
+        let url = format!("{base_url}/v1/images/edits");
+        let client = reqwest::Client::new();
+        let max_retries: u32 = 3;
+        let mut last_error = String::new();
+
+        for attempt in 0..=max_retries {
+            let image_part = reqwest::multipart::Part::bytes(image_bytes.clone())
+                .file_name("image.png")
+                .mime_str("image/png")
+                .unwrap();
+
+            let mut form = reqwest::multipart::Form::new()
+                .part("image", image_part)
+                .text("prompt", prompt.clone())
+                .text("model", model.to_string())
+                .text("n", n.to_string());
+
+            if let Some(ref mb) = mask_bytes {
+                let mask_part = reqwest::multipart::Part::bytes(mb.clone())
+                    .file_name("mask.png")
+                    .mime_str("image/png")
+                    .unwrap();
+                form = form.part("mask", mask_part);
+            }
+
+            if model == "gpt-image-1" {
+                form = form.text("size", size.to_string());
+                form = form.text("quality", quality.to_string());
+            }
+
+            // --- 5. POST to OpenAI ---
+            let resp = client
+                .post(&url)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .multipart(form)
+                .timeout(std::time::Duration::from_secs(120))
+                .send()
+                .await
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        ToolError::ExecutionFailed {
+                            tool_type: "ai/image_edit".into(),
+                            message: "OpenAI request timed out after 120s".into(),
+                        }
+                    } else {
+                        ToolError::ExecutionFailed {
+                            tool_type: "ai/image_edit".into(),
+                            message: format!("HTTP request failed: {e}"),
+                        }
+                    }
+                })?;
+
+            let status = resp.status().as_u16();
+
+            // --- 6. Handle response ---
+            if status == 200 {
+                let body: Value = resp.json().await.map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/image_edit".into(),
+                    message: format!("failed to parse OpenAI response: {e}"),
+                })?;
+
+                let b64 = body
+                    .pointer("/data/0/b64_json")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ToolError::ExecutionFailed {
+                        tool_type: "ai/image_edit".into(),
+                        message: "unexpected OpenAI response format: missing data[0].b64_json"
+                            .into(),
+                    })?;
+
+                let revised = body
+                    .pointer("/data/0/revised_prompt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let created_ts = body
+                    .get("created")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+
+                let decoded = STANDARD.decode(b64).map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/image_edit".into(),
+                        message: format!("failed to decode base64 image: {e}"),
+                    }
+                })?;
+
+                // --- 7. Save to scratch dir (fallback to /tmp) ---
+                let scratch = context
+                    .scratch_dir()
+                    .unwrap_or("/tmp");
+
+                let file_id = uuid::Uuid::new_v4();
+                let out_path = format!("{scratch}/image_edit_{file_id}.png");
+                tokio::fs::write(&out_path, &decoded).await.map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/image_edit".into(),
+                        message: format!("failed to save generated image: {e}"),
+                    }
+                })?;
+
+                info!(
+                    path = %out_path,
+                    model = %model,
+                    size = %size,
+                    revised_prompt_len = revised.len(),
+                    "ai/image_edit: saved result"
+                );
+
+                // --- 8. Build output ---
+                let file_ref = crate::llm::media::create_file_ref(&out_path, None)
+                    .unwrap_or_else(|| json!(out_path));
+
+                let mut out = HashMap::new();
+                out.insert("result_path".to_string(), file_ref);
+                out.insert("revised_prompt".to_string(), json!(revised));
+                out.insert("model".to_string(), json!(model));
+                out.insert("size".to_string(), json!(size));
+                out.insert("created".to_string(), json!(created_ts));
+                return Ok(out);
+            }
+
+            // --- Retriable errors ---
+            if matches!(status, 429 | 500 | 502 | 503 | 504) && attempt < max_retries {
+                let body_text = resp.text().await.unwrap_or_default();
+                last_error = format!("HTTP {status}: {body_text}");
+                let delay = 2u64.pow(attempt + 1);
+                warn!(
+                    status,
+                    attempt = attempt + 1,
+                    delay_secs = delay,
+                    "ai/image_edit: retriable error, backing off"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
+            }
+
+            // --- Non-retriable errors ---
+            let body_text = resp.text().await.unwrap_or_default();
+            let error_msg = serde_json::from_str::<Value>(&body_text)
+                .ok()
+                .and_then(|v| {
+                    v.pointer("/error/message")
+                        .and_then(|m| m.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or(body_text.clone());
+
+            let msg = match status {
+                400 if error_msg.contains("safety") || error_msg.contains("policy") => {
+                    format!("OpenAI content policy violation: {error_msg}")
+                }
+                400 => format!("OpenAI rejected the request: {error_msg}"),
+                401 => "OpenAI API key is invalid or expired".into(),
+                _ => format!("OpenAI error (HTTP {status}): {error_msg}"),
+            };
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: msg,
+            });
+        }
+
+        // All retries exhausted
+        Err(ToolError::ExecutionFailed {
+            tool_type: "ai/image_edit".into(),
+            message: format!(
+                "OpenAI error after {max_retries} retries: {last_error}"
+            ),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -1021,6 +1325,7 @@ pub fn register_ai_tools(registry: &mut ToolRegistry) {
     registry.register("ai/embeddings", Box::new(EmbeddingsFactory::new()));
     registry.register("ai/transcribe", Box::new(TranscribeFactory::new()));
     registry.register("ai/claude_code", Box::new(ClaudeCodeFactory::new()));
+    registry.register("ai/image_edit", Box::new(ImageEditFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,13 +1557,14 @@ mod tests {
     // -- Registration ---------------------------------------------------------
 
     #[test]
-    fn register_ai_tools_adds_four() {
+    fn register_ai_tools_adds_five() {
         let mut reg = ToolRegistry::new();
         register_ai_tools(&mut reg);
         assert!(reg.get("ai/llm_call").is_some());
         assert!(reg.get("ai/embeddings").is_some());
         assert!(reg.get("ai/transcribe").is_some());
         assert!(reg.get("ai/claude_code").is_some());
-        assert_eq!(reg.list_tools().len(), 4);
+        assert!(reg.get("ai/image_edit").is_some());
+        assert_eq!(reg.list_tools().len(), 5);
     }
 }

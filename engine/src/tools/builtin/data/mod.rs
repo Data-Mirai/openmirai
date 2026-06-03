@@ -192,7 +192,7 @@ mod tests {
             _prompt: &str,
             _context: &[Value],
             _temperature: f64,
-            _max_tokens: u32,
+            _max_tokens: Option<u32>,
         ) -> Result<LLMResponse, ResourceError> {
             Ok(LLMResponse {
                 response: "stub".into(),

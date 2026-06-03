@@ -587,7 +587,7 @@ async fn agentic_loop(
                     engine_messages.clone(),
                     tool_defs.clone(),
                     temperature,
-                    max_tokens,
+                    Some(max_tokens),
                     Some(&on_token_fn),
                 )
                 .await;
@@ -611,7 +611,7 @@ async fn agentic_loop(
                             engine_messages,
                             tool_defs,
                             temperature,
-                            max_tokens,
+                            Some(max_tokens),
                         )
                         .await
                     {

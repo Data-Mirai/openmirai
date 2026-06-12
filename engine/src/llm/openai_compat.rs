@@ -526,6 +526,8 @@ mod tests {
                 mime_type: "image/jpeg".into(),
                 data: "dGVzdA==".into(),
                 source_path: None,
+                file_uri: None,
+                pending_upload: false,
             }]),
         }];
         let converted = OpenAICompatAdapter::convert_messages(&msgs);

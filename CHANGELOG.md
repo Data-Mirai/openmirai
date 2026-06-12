@@ -4,6 +4,21 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.7.0 (2026-06-12)
+
+Large media without cuts (PRD-018). No breaking changes — agent YAMLs are untouched; hosts simply stop failing on big files.
+
+### Added
+- **Media over 20MB now works (Gemini): Files API by-reference delivery (PRD-018).** `ai/transcribe` and `ai/llm_call` media above the 20MB inline limit is uploaded via resumable upload, referenced with `file_data{file_uri}`, polled until `ACTIVE`, and **deleted from the remote after the request** (best-effort; the API's 48h auto-expiry is the safety net). Hard cap is now the provider's real limit: **2GB per file** (~9.5h of audio). Providers without upload support keep the explicit 20MB error. Real-world driver: a 2-hour meeting recording (~100-200MB audio) from the Aftrmeet host.
+- **Truncation is now fail-loud (PRD-018).** `finishReason == MAX_TOKENS` returns a new explicit error (`LLMError::Truncated`, with emitted-token count) instead of silently surfacing partial text as success. A transcript that covers only the first 25 minutes of a 2h meeting must be an error, not an "answer".
+- **`ai/image_edit` tool — OpenAI GPT-Image-1 inpainting (PRD-017).** Released in this version (was on main unreleased).
+- **Transcribe prompt: punctuation + paragraph breaks; output cap removed** (was on main unreleased — transcriptions of any length complete fully; `max_tokens` optional across adapters).
+
+### Changed
+- **Gemini client timeout: 60s → 600s.** A 2h transcription generates 25-40k output tokens (~2-4 min) — the old timeout killed any long generation mid-flight. Upload/poll calls share the same generous ceiling (ACTIVE poll capped at 5 min).
+
+---
+
 ## v0.6.2 (2026-06-01)
 
 The visual editor (`mirai edit`) becomes a real local sandbox — design, run and debug agents before production. No breaking changes.

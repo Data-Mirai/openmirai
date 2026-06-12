@@ -609,6 +609,8 @@ mod tests {
                 mime_type: "image/png".into(),
                 data: "dGVzdA==".into(),
                 source_path: None,
+                file_uri: None,
+                pending_upload: false,
             }]),
         }];
 

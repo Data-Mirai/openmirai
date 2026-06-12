@@ -17,10 +17,20 @@ use std::path::Path;
 pub struct MediaContent {
     /// MIME type (e.g. `"audio/mp4"`, `"image/png"`).
     pub mime_type: String,
-    /// Base64-encoded file content.
+    /// Base64-encoded file content. Empty when the file travels by reference
+    /// (`file_uri` set, or `pending_upload` awaiting upload).
     pub data: String,
-    /// Original file path (for logging/debug).
+    /// Original file path (for logging/debug — and the upload source when
+    /// `pending_upload` is true).
     pub source_path: Option<String>,
+    /// Remote file reference (Gemini Files API `file.uri`) once uploaded.
+    /// PRD-018: large media travels by reference, not inline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_uri: Option<String>,
+    /// True when the file exceeds the inline limit and must be uploaded
+    /// (Files API) by the adapter before generating. PRD-018.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending_upload: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -81,8 +91,17 @@ pub fn supported_mimes_for_provider(provider: &str) -> &'static [&'static str] {
     }
 }
 
-/// Max file size in bytes (20 MB).
-const MAX_FILE_SIZE: u64 = 20 * 1024 * 1024;
+/// Max size for inline (base64-in-request) delivery: 20 MB — Gemini's
+/// documented request limit. Larger files go by reference (Files API).
+const INLINE_MAX_FILE_SIZE: u64 = 20 * 1024 * 1024;
+
+/// Hard cap: Gemini Files API limit per file (2 GB). PRD-018.
+const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Providers that support by-reference delivery for files over the inline limit.
+fn provider_supports_file_upload(provider: &str) -> bool {
+    provider == "gemini"
+}
 
 // ---------------------------------------------------------------------------
 // Core function: read_media_file
@@ -109,8 +128,21 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
     }
 
     if metadata.len() > MAX_FILE_SIZE {
+        let size_gb = metadata.len() as f64 / (1024.0 * 1024.0 * 1024.0);
+        return Err(format!(
+            "media file too large: {size_gb:.1}GB (max 2GB — Files API limit)"
+        ));
+    }
+
+    // PRD-018: files over the inline limit travel by reference (Files API).
+    // Defer the upload to the adapter (it owns the API key and HTTP client);
+    // don't read the bytes here — no 200MB base64 blobs in RAM.
+    let needs_upload = metadata.len() > INLINE_MAX_FILE_SIZE;
+    if needs_upload && !provider_supports_file_upload(provider_name) {
         let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
-        return Err(format!("media file too large: {size_mb:.1}MB (max 20MB)"));
+        return Err(format!(
+            "media file too large for inline delivery: {size_mb:.1}MB (max 20MB) — provider '{provider_name}' has no file upload support"
+        ));
     }
 
     // 3. Detect MIME from extension
@@ -151,8 +183,12 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
         ));
     }
 
-    // 5. Read and encode (scope bytes so they drop before MediaContent is built)
-    let b64 = {
+    // 5. Inline path: read and encode (scope bytes so they drop before
+    //    MediaContent is built). Upload path: bytes stay on disk until the
+    //    adapter streams them to the Files API.
+    let b64 = if needs_upload {
+        String::new()
+    } else {
         let bytes = std::fs::read(path)
             .map_err(|e| format!("failed to read media file '{file_path}': {e}"))?;
         STANDARD.encode(&bytes)
@@ -162,6 +198,8 @@ pub fn read_media_file(file_path: &str, provider_name: &str) -> Result<MediaCont
         mime_type: mime_type.to_string(),
         data: b64,
         source_path: Some(file_path.to_string()),
+        file_uri: None,
+        pending_upload: needs_upload,
     })
 }
 
@@ -363,6 +401,79 @@ mod tests {
         let encoded = STANDARD.encode(original);
         let decoded = STANDARD.decode(&encoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    // --- PRD-018: large media travels by reference ---
+
+    #[test]
+    fn read_media_file_small_stays_inline() {
+        let mut tmp = tempfile::Builder::new().suffix(".m4a").tempfile().unwrap();
+        tmp.write_all(b"small audio").unwrap();
+        let result = read_media_file(tmp.path().to_str().unwrap(), "gemini").unwrap();
+        assert!(!result.pending_upload);
+        assert!(result.file_uri.is_none());
+        assert!(!result.data.is_empty());
+    }
+
+    #[test]
+    fn read_media_file_over_20mb_defers_upload_no_bytes_in_ram() {
+        let mut tmp = tempfile::Builder::new().suffix(".m4a").tempfile().unwrap();
+        // 21 MB of zeros — over the inline limit, way under the 2GB cap.
+        let chunk = vec![0u8; 1024 * 1024];
+        for _ in 0..21 {
+            tmp.write_all(&chunk).unwrap();
+        }
+        tmp.flush().unwrap();
+        let result = read_media_file(tmp.path().to_str().unwrap(), "gemini").unwrap();
+        assert!(result.pending_upload);
+        assert!(result.file_uri.is_none());
+        assert!(result.data.is_empty(), "no base64 blob for upload path");
+        assert!(result.source_path.is_some());
+        assert_eq!(result.mime_type, "audio/mp4");
+    }
+
+    #[test]
+    fn read_media_file_over_20mb_rejected_for_provider_without_upload() {
+        let mut tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        let chunk = vec![0u8; 1024 * 1024];
+        for _ in 0..21 {
+            tmp.write_all(&chunk).unwrap();
+        }
+        tmp.flush().unwrap();
+        let result = read_media_file(tmp.path().to_str().unwrap(), "claude");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no file upload support"));
+    }
+
+    #[test]
+    fn media_content_serde_roundtrip_with_upload_fields() {
+        // The carrier (__user_media) serializes MediaContent across the
+        // bridge — upload fields must survive the round trip.
+        let mc = MediaContent {
+            mime_type: "audio/mp4".into(),
+            data: String::new(),
+            source_path: Some("/tmp/big.m4a".into()),
+            file_uri: None,
+            pending_upload: true,
+        };
+        let json = serde_json::to_value(&mc).unwrap();
+        let back: MediaContent = serde_json::from_value(json).unwrap();
+        assert!(back.pending_upload);
+        assert!(back.file_uri.is_none());
+        assert_eq!(back.source_path.as_deref(), Some("/tmp/big.m4a"));
+    }
+
+    #[test]
+    fn media_content_deserializes_legacy_shape_without_upload_fields() {
+        // Old serialized MediaContent (pre PRD-018) must still deserialize.
+        let legacy = serde_json::json!({
+            "mime_type": "audio/ogg",
+            "data": "dGVzdA==",
+            "source_path": "/tmp/a.ogg"
+        });
+        let mc: MediaContent = serde_json::from_value(legacy).unwrap();
+        assert!(!mc.pending_upload);
+        assert!(mc.file_uri.is_none());
     }
 
     // --- PRD-010: FileRef tests ---

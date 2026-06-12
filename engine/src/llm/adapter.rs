@@ -97,6 +97,12 @@ pub enum LLMError {
 
     #[error("Parse error: {0}")]
     ParseError(String),
+
+    /// PRD-018: the provider stopped generating because the output hit the
+    /// token limit (`finishReason == MAX_TOKENS`). Partial text is NEVER
+    /// returned as success — a silent cut is the worst product failure.
+    #[error("Generation truncated by token limit: {0}")]
+    Truncated(String),
 }
 
 // ---------------------------------------------------------------------------

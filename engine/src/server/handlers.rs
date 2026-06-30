@@ -883,6 +883,134 @@ pub(crate) async fn get_session(
     }
 }
 
+fn get_trace_id(session_id: &str) -> String {
+    let cleaned: String = session_id.chars().filter(|c| c.is_alphanumeric()).collect();
+    if cleaned.len() >= 32 {
+        cleaned[..32].to_string()
+    } else {
+        format!("{:0<32}", cleaned)
+    }
+}
+
+fn get_span_id(name: &str) -> String {
+    let cleaned: String = name.chars().filter(|c| c.is_alphanumeric()).collect();
+    if cleaned.len() >= 16 {
+        cleaned[..16].to_string()
+    } else {
+        format!("{:0<16}", cleaned)
+    }
+}
+
+pub(crate) async fn get_session_otel_trace(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let sessions = state.sessions.read().await;
+    match sessions.get(&id) {
+        Some(result) => {
+            let trace_id = get_trace_id(&id);
+            let root_span_id = get_span_id("root");
+
+            let mut total_duration_ms = 0;
+            let mut spans = Vec::new();
+
+            for entry in &result.trace {
+                total_duration_ms += entry.duration_ms;
+
+                let span_id = get_span_id(&entry.node_id);
+
+                let start_time_nano = (total_duration_ms - entry.duration_ms) * 1_000_000;
+                let end_time_nano = total_duration_ms * 1_000_000;
+
+                let status_code = match entry.status {
+                    crate::core::runner::TraceStatus::Ok => "STATUS_CODE_OK",
+                    crate::core::runner::TraceStatus::Error => "STATUS_CODE_ERROR",
+                    crate::core::runner::TraceStatus::Skipped => "STATUS_CODE_UNSET",
+                };
+
+                let mut attributes = vec![
+                    json!({ "key": "openmirai.node.id", "value": { "stringValue": entry.node_id } }),
+                    json!({ "key": "openmirai.tool.type", "value": { "stringValue": entry.tool_type } }),
+                    json!({ "key": "openmirai.retries", "value": { "intValue": entry.retries } }),
+                ];
+
+                if let Some(ref err) = entry.error {
+                    attributes.push(json!({ "key": "openmirai.error", "value": { "stringValue": err.clone() } }));
+                }
+
+                spans.push(json!({
+                    "traceId": trace_id,
+                    "spanId": span_id,
+                    "parentSpanId": root_span_id,
+                    "name": format!("node:{}", entry.node_id),
+                    "kind": "SPAN_KIND_INTERNAL",
+                    "startTimeUnixNano": start_time_nano.to_string(),
+                    "endTimeUnixNano": end_time_nano.to_string(),
+                    "attributes": attributes,
+                    "status": {
+                        "code": status_code
+                    }
+                }));
+            }
+
+            // Add the graph root span
+            let root_span = json!({
+                "traceId": trace_id,
+                "spanId": root_span_id,
+                "name": format!("graph:{}", id),
+                "kind": "SPAN_KIND_SERVER",
+                "startTimeUnixNano": "0",
+                "endTimeUnixNano": (total_duration_ms * 1_000_000).to_string(),
+                "attributes": [
+                    { "key": "openmirai.session.id", "value": { "stringValue": id.clone() } },
+                    { "key": "openmirai.status", "value": { "stringValue": format!("{:?}", result.status) } }
+                ],
+                "status": {
+                    "code": match result.status {
+                        crate::core::runner::ExecutionStatus::Completed => "STATUS_CODE_OK",
+                        _ => "STATUS_CODE_ERROR"
+                    }
+                }
+            });
+
+            let mut all_spans = vec![root_span];
+            all_spans.extend(spans);
+
+            let otel_json = json!({
+                "resourceSpans": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": { "stringValue": "openmirai-engine" }
+                                }
+                            ]
+                        },
+                        "scopeSpans": [
+                            {
+                                "scope": {
+                                    "name": "openmirai.runner",
+                                    "version": "0.6.0"
+                                },
+                                "spans": all_spans
+                            }
+                        ]
+                    }
+                ]
+            });
+
+            Ok(Json(otel_json))
+        }
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Session not found".to_string(),
+            }),
+        )),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Webhooks handler
 // ---------------------------------------------------------------------------

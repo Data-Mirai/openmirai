@@ -18,6 +18,19 @@ open visualizer/mirai-app.html      # macOS  (o doble-click en el Finder)
 - **Abrir desde cualquier ruta:** el botón **“Abrir agente…”** deja cargar un `.yaml` de cualquier carpeta de tu computador; se parsea en el navegador y se asocia a la sesión del visualizador (por seguridad el navegador no expone la ruta absoluta de archivos abiertos así — solo el nombre).
 - **Abrir ubicación:** en el detalle de cada agente del catálogo por defecto hay botones **Copiar ruta / Abrir carpeta / Abrir .yaml** (usan `file://`).
 
+## Fuentes locales extra (agentes fuera del repo)
+
+Para ver de forma **persistente** agentes que viven en otras carpetas del computador (por ejemplo los de otra herramienta), crea `visualizer/sources.local.json` (git-ignorado, es preferencia local de tu máquina) y vuelve a correr el build:
+
+```json
+[
+  { "dir": "/ruta/a/otra/carpeta/agents", "source": "mi-etiqueta" },
+  { "file": "/ruta/a/un/agente.yaml", "source": "mi-etiqueta" }
+]
+```
+
+Esos agentes aparecen en el catálogo con su ruta real y el botón de **Abrir ubicación**. No se comparten en el repo.
+
 ## Vistas
 
 - **Inicio** — agentes abiertos recientemente (por fecha de archivo) y últimas ejecuciones.

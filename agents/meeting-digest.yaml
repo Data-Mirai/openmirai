@@ -1,0 +1,105 @@
+# Meeting Digest — Convierte un audio de reunión en notas estructuradas en español
+#
+# Permutación: transcribe → IA (resumen + decisiones + action items) → escribe markdown.
+# Recibe el audio de una reunión, lo transcribe, destila un acta accionable en español
+# y la guarda como archivo markdown en notes/.
+#
+# Run:
+#   mirai run agents/meeting-digest.yaml --provider gemini \
+#     --api-key $GOOGLE_API_KEY \
+#     --input '{"audio_path": "/path/to/reunion.m4a"}'
+#
+#   # con nombre de archivo de salida personalizado:
+#   mirai run agents/meeting-digest.yaml --provider gemini --api-key $GOOGLE_API_KEY \
+#     --input '{"audio_path": "/path/to/reunion.m4a", "notes_path": "notes/2026-07-01-kickoff.md"}'
+
+name: meeting-digest
+version: v1
+description: "Transcribe un audio de reunión y genera notas accionables en español (markdown)"
+
+inputs:
+  audio_path:
+    type: file
+    required: true
+    description: "Audio de la reunión a procesar (.m4a, .mp3, .wav, .ogg, .flac)"
+  notes_path:
+    type: text
+    required: false
+    default: "notes/reunion-notas.md"
+    description: "Ruta del archivo markdown de salida (se crea notes/ si no existe)"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: transcribe
+      tool_type: ai/transcribe
+      config:
+        # Gemini 2.5 Flash: buena diarización de hablantes para reuniones.
+        model: "gemini-2.5-flash"
+
+    - id: digest
+      tool_type: ai/llm_call
+      config:
+        system_prompt: |
+          Eres un analista de reuniones senior. Trabajas SIEMPRE en español, con tono
+          directo y ejecutivo. Tu única fuente de verdad es la transcripción que recibes:
+          no inventes datos, nombres, fechas ni compromisos que no aparezcan en ella.
+        prompt: |
+          A partir de la transcripción de la reunión (que viene en el contexto), redacta
+          un acta accionable en ESPAÑOL. Devuelve ÚNICAMENTE markdown válido, sin texto
+          antes ni después, con exactamente esta estructura:
+
+          # Notas de reunión
+
+          ## Resumen ejecutivo
+          - 3 a 5 bullets con lo esencial: de qué se habló y a qué se llegó.
+
+          ## Decisiones tomadas
+          - Lista de decisiones acordadas (una por bullet). Si no hubo decisiones
+            explícitas, escribe: "- Sin decisiones formales registradas."
+
+          ## Action items
+          Una tabla markdown con columnas: | Tarea | Responsable | Fecha límite |
+          - Extrae cada compromiso concreto como una fila.
+          - Responsable = la persona nombrada en la reunión; si no se asignó, escribe
+            "(sin responsable asignado)".
+          - Fecha límite = solo si se mencionó explícitamente; si no, escribe "—".
+
+          ## Temas y puntos clave
+          - Bullets con los temas discutidos y contexto relevante (riesgos, dudas abiertas).
+
+          ## Próximos pasos
+          - Bullets con lo que sigue inmediatamente después de esta reunión.
+
+          Reglas: no rellenes secciones con paja; si una sección no tiene contenido real
+          en la transcripción, déjala mínima y sé honesto ("Sin información en el audio").
+        temperature: 0.3
+        max_tokens: 4096
+
+    - id: save
+      tool_type: filesystem/write_file
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: transcribe
+      data_map:
+        file_path: "start.payload.audio_path"
+
+    - source: transcribe
+      target: digest
+      data_map:
+        context: "transcribe.text"
+
+    - source: digest
+      target: save
+      data_map:
+        path: "start.payload.notes_path"
+        content: "digest.response"
+
+    - source: save
+      target: respond

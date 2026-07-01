@@ -1,0 +1,65 @@
+# Doc QA — Pregunta en lenguaje natural sobre un documento local
+#
+# Lee un archivo del filesystem (contrato, README, spec, etc.) y responde una
+# pregunta anclando la respuesta SOLO en el contenido del archivo. Cita el texto
+# y, si la respuesta no esta en el documento, lo dice explicitamente.
+#
+# Permutacion: filesystem -> IA.
+#
+# Run:
+#   mirai run agents/doc-qa.yaml --input '{"file_path": "./README.md", "question": "Como se instala el proyecto?"}'
+name: doc-qa
+version: v1
+description: "Responde preguntas en lenguaje natural sobre un documento local, citando y anclado solo en su contenido"
+inputs:
+  file_path:
+    type: text
+    required: true
+    description: "Ruta del documento local a consultar (contrato, README, spec, .txt, .md...)"
+  question:
+    type: text
+    required: false
+    default: "De que trata este documento? Dame un resumen de sus puntos clave."
+    description: "Pregunta en lenguaje natural sobre el contenido del documento"
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+    - id: read
+      tool_type: filesystem/read_file
+    - id: answer
+      tool_type: ai/llm_call
+      config:
+        prompt: |
+          Eres un asistente de consulta documental. Tu unica fuente de verdad es
+          el DOCUMENTO que se te entrega como contexto. Responde la PREGUNTA del
+          usuario siguiendo estas reglas estrictas:
+
+          1. Respondes UNICAMENTE con informacion presente en el documento. No
+             inventes, no completes con conocimiento externo, no supongas.
+          2. Cita textualmente el fragmento en que te apoyas, entre comillas, para
+             que la respuesta sea verificable.
+          3. Si la respuesta NO esta en el documento, dilo con claridad:
+             "El documento no contiene informacion sobre esto." No intentes
+             adivinar ni rellenar.
+          4. Se preciso y conciso. Espanol. Prioriza el dato exacto sobre el rodeo.
+          5. Si la pregunta es ambigua respecto al documento, senala que parte del
+             documento podria ser relevante y responde con lo que si esta.
+
+          Responde ahora la PREGUNTA con base exclusiva en el DOCUMENTO anterior.
+        temperature: 0.2
+        max_tokens: 4096
+    - id: respond
+      tool_type: output/response
+  edges:
+    - source: start
+      target: read
+      data_map:
+        path: "start.payload.file_path"
+    - source: read
+      target: answer
+      data_map:
+        context: "read.content"
+        prompt: "start.payload.question"
+    - source: answer
+      target: respond

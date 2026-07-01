@@ -1,0 +1,148 @@
+# Research Synthesis — Compara y sintetiza DOS fuentes web sobre un tema
+#
+# Permutacion: fan-in. Dos web_scrape corren en paralelo y convergen en un
+# unico llm_call que sintetiza, contrasta acuerdos/desacuerdos y cita cada fuente.
+# El informe final se guarda como markdown en disco.
+#
+# Flujo: trigger -> [web_scrape A, web_scrape B] -> ai/llm_call -> filesystem/write_file -> output
+#
+# Run:
+#   mirai run agents/research-synthesis.yaml \
+#     --input '{"url_a": "https://es.wikipedia.org/wiki/Energia_solar", "url_b": "https://es.wikipedia.org/wiki/Energia_eolica", "question": "Que ventajas y limitaciones tiene cada tecnologia?"}'
+#
+#   # con ruta de salida propia:
+#   mirai run agents/research-synthesis.yaml \
+#     --input '{"url_a": "https://a.com", "url_b": "https://b.com", "question": "En que difieren?", "output_path": "reports/2026-07-01-sintesis.md"}'
+name: research-synthesis
+version: v1
+description: "Sintetiza y compara dos fuentes web sobre un tema, marcando acuerdos y desacuerdos con citas"
+inputs:
+  url_a:
+    type: text
+    required: true
+    description: "URL de la primera fuente a comparar"
+  url_b:
+    type: text
+    required: true
+    description: "URL de la segunda fuente a comparar"
+  question:
+    type: text
+    required: false
+    default: "En que coinciden y en que difieren ambas fuentes sobre el tema?"
+    description: "Pregunta o eje de comparacion entre las dos fuentes"
+  output_path:
+    type: text
+    required: false
+    default: "reports/research-synthesis-report.md"
+    description: "Ruta del informe markdown a generar (se crea reports/ si no existe)"
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # 1a) Trae el contenido de la primera fuente.
+    - id: scrape_a
+      tool_type: data/web_scrape
+      config:
+        max_content_length: 8000
+        timeout_seconds: 30
+
+    # 1b) Trae el contenido de la segunda fuente (corre en paralelo con scrape_a).
+    - id: scrape_b
+      tool_type: data/web_scrape
+      config:
+        max_content_length: 8000
+        timeout_seconds: 30
+
+    # 2) Fan-in: ambas fuentes convergen aqui. Sintetiza y CONTRASTA, no resume por separado.
+    - id: synthesize
+      tool_type: ai/llm_call
+      config:
+        system_prompt: |
+          Eres un analista de investigacion riguroso. Tu trabajo es COMPARAR y
+          SINTETIZAR fuentes, nunca resumirlas por separado. Reglas innegociables:
+          1. Respondes SIEMPRE en espanol y en formato Markdown.
+          2. Cada afirmacion clave se atribuye a (A), a (B) o a ambas.
+          3. No inventas datos que no esten en el contenido entregado.
+          4. Si una fuente vino vacia o es irrelevante, lo dices explicitamente.
+          5. Eres honesto con lo que no quedo confirmado; no rellenas con paja.
+        prompt: |
+          Recibes en el contexto de sesion tres piezas:
+            - context_a -> FUENTE A (contenido de la primera pagina web)
+            - context_b -> FUENTE B (contenido de la segunda pagina web)
+            - pregunta  -> el eje de comparacion que se te pidio
+
+          Sintetiza y CONTRASTA FUENTE A y FUENTE B respondiendo a `pregunta`.
+          Devuelve UNICAMENTE Markdown con esta estructura exacta:
+
+          # Sintesis comparativa
+
+          ## Pregunta
+          Reformula en una linea el eje de comparacion (`pregunta`).
+
+          ## Resumen ejecutivo
+          Un parrafo con la conclusion principal del contraste entre A y B.
+
+          ## Acuerdos
+          Bullets con los puntos en los que A y B COINCIDEN. En cada bullet cita
+          explicitamente ambas fuentes: "(A) ... / (B) ...".
+
+          ## Desacuerdos y matices
+          Bullets con contradicciones, enfasis distintos o datos que difieren entre
+          A y B. Indica que dice cada una y, si es posible, cual parece mas solida y
+          por que.
+
+          ## Vacios y baja confianza
+          Que afirmaciones NO pudiste verificar por falta de datos, o que aparecen en
+          una sola fuente y no en la otra. Se honesto con lo que no quedo confirmado.
+
+          ## Conclusion
+          Cierre accionable que responda directamente a la pregunta.
+        temperature: 0.4
+        max_tokens: 4096
+        max_context_length: 20000
+
+    # 3) Guarda el informe en la ruta indicada (reports/ por defecto).
+    - id: save_report
+      tool_type: filesystem/write_file
+
+    # 4) Confirma y termina.
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    # Fan-out: el trigger dispara los dos scrapes en paralelo.
+    - source: start
+      target: scrape_a
+      data_map:
+        url: "start.payload.url_a"
+
+    - source: start
+      target: scrape_b
+      data_map:
+        url: "start.payload.url_b"
+
+    # Fan-in: ambos scrapes convergen en synthesize. resolve_inputs une el data_map
+    # de TODAS las aristas entrantes, asi que synthesize recibe context_a, context_b y pregunta.
+    - source: scrape_a
+      target: synthesize
+      data_map:
+        context_a: "scrape_a.text"
+        pregunta: "start.payload.question"
+
+    - source: scrape_b
+      target: synthesize
+      data_map:
+        context_b: "scrape_b.text"
+
+    # El informe generado por el LLM se escribe a disco (path via data_map, no config).
+    - source: synthesize
+      target: save_report
+      data_map:
+        content: "synthesize.response"
+        path: "start.payload.output_path"
+
+    - source: save_report
+      target: respond
+      data_map:
+        informe_guardado_en: "save_report.path"

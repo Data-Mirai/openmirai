@@ -1355,8 +1355,8 @@ const CARTESIA_VERSION: &str = "2026-03-01";
 fn eleven_tts_url(base_url: &str, voice_id: &str) -> String {
     format!("{base_url}/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128")
 }
-fn eleven_tts_body(text: &str, model: &str, stability: f64, similarity: f64, style: f64) -> Value {
-    json!({
+fn eleven_tts_body(text: &str, model: &str, stability: f64, similarity: f64, style: f64, language: Option<&str>) -> Value {
+    let mut body = json!({
         "text": text,
         "model_id": model,
         "voice_settings": {
@@ -1365,7 +1365,12 @@ fn eleven_tts_body(text: &str, model: &str, stability: f64, similarity: f64, sty
             "style": style,
             "use_speaker_boost": true
         }
-    })
+    });
+    // language_code fuerza el idioma para pronunciacion correcta (soportado en flash/turbo v2.5).
+    if let Some(lang) = language {
+        if !lang.is_empty() { body["language_code"] = json!(lang); }
+    }
+    body
 }
 fn cartesia_tts_body(
     text: &str,
@@ -1461,7 +1466,8 @@ impl Tool for TtsTool {
                 let stability = get("stability").and_then(|v| v.as_f64()).unwrap_or(0.5);
                 let similarity = get("similarity_boost").and_then(|v| v.as_f64()).unwrap_or(0.75);
                 let style = get("style").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let body = eleven_tts_body(&text, model, stability, similarity, style);
+                let language = get("language").and_then(|v| v.as_str());
+                let body = eleven_tts_body(&text, model, stability, similarity, style, language);
                 let headers = vec![
                     ("xi-api-key".to_string(), api_key),
                     ("Accept".to_string(), "audio/mpeg".to_string()),
@@ -1826,12 +1832,21 @@ mod tests {
 
     #[test]
     fn eleven_body_shape() {
-        let b = eleven_tts_body("hola", "eleven_flash_v2_5", 0.5, 0.75, 0.1);
+        let b = eleven_tts_body("hola", "eleven_flash_v2_5", 0.5, 0.75, 0.1, None);
         assert_eq!(b["text"], "hola");
         assert_eq!(b["model_id"], "eleven_flash_v2_5");
         assert_eq!(b["voice_settings"]["stability"], 0.5);
         assert_eq!(b["voice_settings"]["similarity_boost"], 0.75);
         assert_eq!(b["voice_settings"]["use_speaker_boost"], true);
+        assert!(b.get("language_code").is_none());
+    }
+
+    #[test]
+    fn eleven_body_includes_language() {
+        let b = eleven_tts_body("hello", "eleven_flash_v2_5", 0.5, 0.75, 0.0, Some("en"));
+        assert_eq!(b["language_code"], "en");
+        let b2 = eleven_tts_body("hi", "eleven_flash_v2_5", 0.5, 0.75, 0.0, Some(""));
+        assert!(b2.get("language_code").is_none());
     }
 
     #[test]

@@ -1,0 +1,67 @@
+# Voice Transcription — audio -> texto via Gemini (LLM multimodal) o ElevenLabs Scribe
+#
+# UN solo agente, espejo de voice-synthesis. El cliente elige el proveedor con el input
+# "provider": "elevenlabs" usa la API Scribe; cualquier otro valor ("gemini", "llm", vacio)
+# usa el LLM provider configurado en el CLI como transcriptor multimodal (la ruta de Aftrmeet).
+# (El branch vive DENTRO de la tool ai/transcribe, no en un logic/condition: mas robusto.)
+#
+# Run:
+#   # Ruta ElevenLabs Scribe (misma key del TTS; no necesita LLM real):
+#   mirai run agents/voice-transcription.yaml --provider claude --api-key dummy \
+#     --input '{"audio_path":"/ruta/grabacion.m4a","provider":"elevenlabs","language":"es"}'
+#
+#   # Ruta Gemini (LLM multimodal — el provider del CLI hace la transcripcion):
+#   mirai run agents/voice-transcription.yaml --provider gemini --api-key $GEMINI_API_KEY \
+#     --input '{"audio_path":"/ruta/grabacion.m4a","provider":"gemini"}'
+#
+# Requiere: ELEVENLABS_API_KEY en el entorno para la ruta elevenlabs (o "api_key" en config).
+
+name: voice-transcription
+version: v1
+description: "Transcribe audio a texto via ElevenLabs Scribe o el LLM multimodal del CLI (Gemini), segun el proveedor elegido por el cliente"
+
+inputs:
+  audio_path:
+    type: text
+    required: true
+    description: "Ruta al archivo de audio a transcribir (m4a, mp3, wav, webm...)"
+  provider:
+    type: text
+    required: false
+    default: "gemini"
+    description: "Proveedor STT: elevenlabs (Scribe) o cualquier otro valor para la ruta LLM multimodal"
+  model:
+    type: text
+    required: false
+    description: "Modelo (elevenlabs: scribe_v1 default | ruta LLM: modelo del provider)"
+  language:
+    type: text
+    required: false
+    description: "Codigo ISO del idioma, ej es (solo elevenlabs; omitir = auto-detect)"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: stt
+      tool_type: ai/transcribe
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: stt
+      data_map:
+        file_path: "start.payload.audio_path"
+        provider: "start.payload.provider"
+        model: "start.payload.model"
+        language: "start.payload.language"
+
+    - source: stt
+      target: respond
+      data_map:
+        text: "stt.text"
+        duration_seconds: "stt.duration_seconds"
+        provider: "stt.provider"

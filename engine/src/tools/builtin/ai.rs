@@ -710,17 +710,63 @@ ai_tool! {
     struct TranscribeTool, factory TranscribeFactory;
     tool_type = "ai/transcribe",
     name = "Transcribe Audio",
-    description = "Transcribes audio content using an LLM to describe/transcribe the file",
+    description = "Transcribes audio to text. Routes by provider: 'elevenlabs' calls the Scribe STT API; any other value uses the CLI's configured LLM provider (e.g. Gemini) as multimodal transcriber.",
     inputs = [
         field("file_path", FieldType::String, true, "Path to the audio file"),
     ],
     outputs = [
         field("text", FieldType::String, true, "Transcription text"),
-        field("duration_seconds", FieldType::Number, true, "Audio duration in seconds"),
+        field("duration_seconds", FieldType::Number, true, "Audio duration in seconds (0 when unknown)"),
+        field("provider", FieldType::String, true, "Provider used (elevenlabs | LLM provider name)"),
     ],
     config_fields = [
-        field("model", FieldType::String, false, "Model to use for transcription"),
+        field("provider", FieldType::String, false, "STT provider: 'elevenlabs' (Scribe API) or anything else for the LLM multimodal route (default)"),
+        field("model", FieldType::String, false, "Model id (LLM route: LLM model; elevenlabs route: default scribe_v1)"),
+        field("api_key", FieldType::String, false, "ElevenLabs API key (falls back to ELEVENLABS_API_KEY env var)"),
+        field("language", FieldType::String, false, "ISO language code hint, e.g. es (elevenlabs language_code; omit for auto-detect)"),
+        field("base_url", FieldType::String, false, "Override API base URL (elevenlabs route)"),
     ]
+}
+
+const SCRIBE_DEFAULT_MODEL: &str = "scribe_v1";
+
+// --- Pure request builders for the ElevenLabs Scribe route (unit-tested without network) ---
+fn eleven_stt_url(base_url: &str) -> String {
+    format!("{base_url}/v1/speech-to-text")
+}
+fn eleven_stt_text_fields(model: &str, language: Option<&str>) -> Vec<(String, String)> {
+    // tag_audio_events off: conversational STT, no "(laughter)"-style markers in the text.
+    let mut fields = vec![
+        ("model_id".to_string(), model.to_string()),
+        ("tag_audio_events".to_string(), "false".to_string()),
+    ];
+    if let Some(lang) = language {
+        if !lang.is_empty() {
+            fields.push(("language_code".to_string(), lang.to_string()));
+        }
+    }
+    fields
+}
+fn audio_mime_for_path(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "mp3" => "audio/mpeg",
+        "m4a" | "mp4" | "aac" => "audio/mp4",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "webm" => "audio/webm",
+        "flac" => "audio/flac",
+        _ => "application/octet-stream",
+    }
+}
+/// Scribe returns word-level timestamps by default; duration = end of the last word.
+fn scribe_duration_seconds(resp: &Value) -> f64 {
+    resp.get("words")
+        .and_then(|w| w.as_array())
+        .and_then(|a| a.last())
+        .and_then(|w| w.get("end"))
+        .and_then(|e| e.as_f64())
+        .unwrap_or(0.0)
 }
 
 #[async_trait]
@@ -747,8 +793,146 @@ impl Tool for TranscribeTool {
             });
         }
 
-        let model = config
-            .get("model")
+        // Route by provider (input > config): "elevenlabs" -> Scribe STT API;
+        // anything else -> multimodal transcription via the CLI's LLM provider.
+        let get = |k: &str| inputs.get(k).or_else(|| config.get(k));
+        let stt_provider = get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("llm")
+            .to_lowercase();
+
+        if stt_provider == "elevenlabs" {
+            let api_key = get("api_key")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| std::env::var("ELEVENLABS_API_KEY").ok())
+                .ok_or_else(|| ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: "ElevenLabs API key not found. Set config.api_key or ELEVENLABS_API_KEY env var".into(),
+                })?;
+            let base = get("base_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://api.elevenlabs.io")
+                .to_string();
+            let model = get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or(SCRIBE_DEFAULT_MODEL)
+                .to_string();
+            let language = get("language").and_then(|v| v.as_str()).map(String::from);
+
+            let bytes = tokio::fs::read(&file_path).await.map_err(|e| {
+                ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: format!("failed to read audio file '{file_path}': {e}"),
+                }
+            })?;
+            if bytes.is_empty() {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: format!("audio file '{file_path}' is empty"),
+                });
+            }
+            let file_name = std::path::Path::new(&file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("audio")
+                .to_string();
+            let mime = audio_mime_for_path(&file_path);
+            let url = eleven_stt_url(&base);
+            let text_fields = eleven_stt_text_fields(&model, language.as_deref());
+
+            info!(
+                file_path = %file_path,
+                model = %model,
+                bytes = bytes.len(),
+                "ai/transcribe: sending audio to ElevenLabs Scribe"
+            );
+
+            let client = reqwest::Client::new();
+            let max_retries: u32 = 3;
+            let mut last_error = String::new();
+
+            for attempt in 0..=max_retries {
+                // multipart::Form is consumed by the request -> rebuild per attempt.
+                let part = reqwest::multipart::Part::bytes(bytes.clone())
+                    .file_name(file_name.clone())
+                    .mime_str(mime)
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "ai/transcribe".into(),
+                        message: format!("invalid mime type '{mime}': {e}"),
+                    })?;
+                let mut form = reqwest::multipart::Form::new().part("file", part);
+                for (k, v) in &text_fields {
+                    form = form.text(k.clone(), v.clone());
+                }
+
+                let resp = client
+                    .post(&url)
+                    .header("xi-api-key", &api_key)
+                    .timeout(std::time::Duration::from_secs(120))
+                    .multipart(form)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        if e.is_timeout() {
+                            ToolError::ExecutionFailed {
+                                tool_type: "ai/transcribe".into(),
+                                message: "elevenlabs STT request timed out after 120s".into(),
+                            }
+                        } else {
+                            ToolError::ExecutionFailed {
+                                tool_type: "ai/transcribe".into(),
+                                message: format!("HTTP request failed: {e}"),
+                            }
+                        }
+                    })?;
+
+                let status = resp.status().as_u16();
+
+                if (200..300).contains(&status) {
+                    let body: Value = resp.json().await.map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "ai/transcribe".into(),
+                        message: format!("failed to parse Scribe response JSON: {e}"),
+                    })?;
+                    let text = body.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                    let duration = scribe_duration_seconds(&body);
+
+                    info!(chars = text.chars().count(), duration, "ai/transcribe: Scribe transcription ok");
+
+                    let mut out = HashMap::new();
+                    out.insert("text".to_string(), json!(text));
+                    out.insert("duration_seconds".to_string(), json!(duration));
+                    out.insert("provider".to_string(), json!("elevenlabs"));
+                    return Ok(out);
+                }
+
+                if matches!(status, 429 | 500 | 502 | 503 | 504) && attempt < max_retries {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    last_error = format!("HTTP {status}: {body_text}");
+                    let delay = 2u64.pow(attempt + 1);
+                    warn!(status, attempt = attempt + 1, delay_secs = delay, "ai/transcribe: retriable error, backing off");
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    continue;
+                }
+
+                let body_text = resp.text().await.unwrap_or_default();
+                let msg = match status {
+                    401 | 403 => format!("elevenlabs API key is invalid or unauthorized (HTTP {status})"),
+                    _ => format!("elevenlabs STT error (HTTP {status}): {body_text}"),
+                };
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: msg,
+                });
+            }
+
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: format!("elevenlabs STT failed after {max_retries} retries: {last_error}"),
+            });
+        }
+
+        let model = get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("default");
 
@@ -786,6 +970,7 @@ impl Tool for TranscribeTool {
         let mut out = HashMap::new();
         out.insert("text".to_string(), json!(result.response));
         out.insert("duration_seconds".to_string(), json!(0.0));
+        out.insert("provider".to_string(), json!(provider_name));
         Ok(out)
     }
 }
@@ -1867,5 +2052,54 @@ mod tests {
         let b = cartesia_tts_body("hi", "sonic-3.5", "v", None, None);
         assert!(b.get("language").is_none());
         assert!(b.get("generation_config").is_none());
+    }
+
+    // -- ai/transcribe (ElevenLabs Scribe route) --------------------------------
+
+    #[test]
+    fn scribe_url_format() {
+        assert_eq!(
+            eleven_stt_url("https://api.elevenlabs.io"),
+            "https://api.elevenlabs.io/v1/speech-to-text"
+        );
+    }
+
+    #[test]
+    fn scribe_fields_default_and_language() {
+        let f = eleven_stt_text_fields(SCRIBE_DEFAULT_MODEL, None);
+        assert!(f.contains(&("model_id".to_string(), "scribe_v1".to_string())));
+        assert!(f.contains(&("tag_audio_events".to_string(), "false".to_string())));
+        assert!(!f.iter().any(|(k, _)| k == "language_code"));
+
+        let f = eleven_stt_text_fields("scribe_v2", Some("es"));
+        assert!(f.contains(&("model_id".to_string(), "scribe_v2".to_string())));
+        assert!(f.contains(&("language_code".to_string(), "es".to_string())));
+
+        let f = eleven_stt_text_fields("scribe_v1", Some(""));
+        assert!(!f.iter().any(|(k, _)| k == "language_code"));
+    }
+
+    #[test]
+    fn scribe_audio_mime_mapping() {
+        assert_eq!(audio_mime_for_path("/tmp/a.m4a"), "audio/mp4");
+        assert_eq!(audio_mime_for_path("/tmp/a.WAV"), "audio/wav");
+        assert_eq!(audio_mime_for_path("/tmp/a.mp3"), "audio/mpeg");
+        assert_eq!(audio_mime_for_path("/tmp/a.webm"), "audio/webm");
+        assert_eq!(audio_mime_for_path("/tmp/noext"), "application/octet-stream");
+    }
+
+    #[test]
+    fn scribe_duration_from_last_word() {
+        let body = json!({
+            "text": "hola mundo",
+            "words": [
+                { "text": "hola", "start": 0.1, "end": 0.5, "type": "word" },
+                { "text": " ", "start": 0.5, "end": 0.6, "type": "spacing" },
+                { "text": "mundo", "start": 0.6, "end": 1.2, "type": "word" }
+            ]
+        });
+        assert!((scribe_duration_seconds(&body) - 1.2).abs() < 1e-9);
+        assert_eq!(scribe_duration_seconds(&json!({ "text": "x" })), 0.0);
+        assert_eq!(scribe_duration_seconds(&json!({ "text": "x", "words": [] })), 0.0);
     }
 }

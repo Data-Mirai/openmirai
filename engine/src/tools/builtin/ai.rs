@@ -1315,6 +1315,251 @@ impl Tool for ImageEditTool {
     }
 }
 
+// ===========================================================================
+// TtsTool — text-to-speech via ElevenLabs or Cartesia (returns MP3 path)
+// ===========================================================================
+
+ai_tool! {
+    struct TtsTool, factory TtsFactory;
+    tool_type = "ai/tts",
+    name = "Text to Speech",
+    description = "Synthesize natural speech (MP3) from text via ElevenLabs or Cartesia Sonic. Returns the path to the generated audio file. Provider is selected by config.provider.",
+    inputs = [
+        field("text", FieldType::String, true, "Text to synthesize into speech"),
+    ],
+    outputs = [
+        field("audio_path", FieldType::Object, true, "FileRef of the generated MP3 in the scratch dir"),
+        field("provider", FieldType::String, true, "TTS provider used (elevenlabs | cartesia)"),
+        field("format", FieldType::String, true, "Audio format (mp3)"),
+        field("characters", FieldType::Number, true, "Number of characters synthesized"),
+    ],
+    config_fields = [
+        field("provider", FieldType::String, false, "TTS provider: elevenlabs (default) or cartesia"),
+        field("voice_id", FieldType::String, false, "Voice id. ElevenLabs: goes in URL path. Cartesia: goes in body. Falls back to a provider default."),
+        field("model", FieldType::String, false, "Model id (default: eleven_flash_v2_5 / sonic-3.5)"),
+        field("api_key", FieldType::String, false, "API key (falls back to ELEVENLABS_API_KEY / CARTESIA_API_KEY env var)"),
+        field("language", FieldType::String, false, "ISO language code, e.g. es (Cartesia; optional)"),
+        field("stability", FieldType::Number, false, "ElevenLabs voice stability 0-1 (default 0.5)"),
+        field("similarity_boost", FieldType::Number, false, "ElevenLabs similarity 0-1 (default 0.75)"),
+        field("style", FieldType::Number, false, "ElevenLabs style exaggeration 0-1 (default 0.0)"),
+        field("speed", FieldType::Number, false, "Speaking speed (Cartesia generation_config.speed, 0.6-1.5)"),
+        field("base_url", FieldType::String, false, "Override API base URL"),
+    ]
+}
+
+const ELEVEN_DEFAULT_VOICE: &str = "21m00Tcm4TlvDq8ikWAM"; // Rachel (ElevenLabs default library voice)
+const CARTESIA_DEFAULT_VOICE: &str = "a0e99841-438c-4a64-b679-ae501e7d6091";
+const CARTESIA_VERSION: &str = "2026-03-01";
+
+// --- Pure request builders (unit-tested without network) ---
+fn eleven_tts_url(base_url: &str, voice_id: &str) -> String {
+    format!("{base_url}/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128")
+}
+fn eleven_tts_body(text: &str, model: &str, stability: f64, similarity: f64, style: f64) -> Value {
+    json!({
+        "text": text,
+        "model_id": model,
+        "voice_settings": {
+            "stability": stability,
+            "similarity_boost": similarity,
+            "style": style,
+            "use_speaker_boost": true
+        }
+    })
+}
+fn cartesia_tts_body(
+    text: &str,
+    model: &str,
+    voice_id: &str,
+    language: Option<&str>,
+    speed: Option<f64>,
+) -> Value {
+    let mut body = json!({
+        "model_id": model,
+        "transcript": text,
+        "voice": { "mode": "id", "id": voice_id },
+        "output_format": { "container": "mp3", "sample_rate": 44100, "bit_rate": 128000 }
+    });
+    if let Some(lang) = language {
+        body["language"] = json!(lang);
+    }
+    if let Some(sp) = speed {
+        body["generation_config"] = json!({ "speed": sp });
+    }
+    body
+}
+
+#[async_trait]
+impl Tool for TtsTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        // --- Resolve text (input > config) ---
+        let text = inputs
+            .get("text")
+            .or_else(|| config.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/tts".into(),
+                message: "input 'text' is required (via input or config)".into(),
+            });
+        }
+
+        // Resolve runtime params from inputs first, then node config (input > config),
+        // so the client can parameterize the call via --input.
+        let get = |k: &str| inputs.get(k).or_else(|| config.get(k));
+
+        // Provider from input (or node config) — the client picks elevenlabs | cartesia per call.
+        let provider = get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("elevenlabs")
+            .to_lowercase();
+
+        // --- Build the provider-specific request (url, headers, json body) ---
+        let (url, headers, body): (String, Vec<(String, String)>, Value) = match provider.as_str() {
+            "cartesia" => {
+                let api_key = get("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| std::env::var("CARTESIA_API_KEY").ok())
+                    .ok_or_else(|| ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: "Cartesia API key not found. Set config.api_key or CARTESIA_API_KEY env var".into(),
+                    })?;
+                let base = get("base_url").and_then(|v| v.as_str()).unwrap_or("https://api.cartesia.ai");
+                let voice = get("voice_id").and_then(|v| v.as_str()).unwrap_or(CARTESIA_DEFAULT_VOICE);
+                let model = get("model").and_then(|v| v.as_str()).unwrap_or("sonic-3.5");
+                let language = get("language").and_then(|v| v.as_str());
+                let speed = get("speed").and_then(|v| v.as_f64());
+                let body = cartesia_tts_body(&text, model, voice, language, speed);
+                let headers = vec![
+                    ("X-API-Key".to_string(), api_key),
+                    ("Cartesia-Version".to_string(), CARTESIA_VERSION.to_string()),
+                ];
+                (format!("{base}/tts/bytes"), headers, body)
+            }
+            // elevenlabs (default for anything not explicitly "cartesia")
+            _ => {
+                let api_key = get("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| std::env::var("ELEVENLABS_API_KEY").ok())
+                    .ok_or_else(|| ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: "ElevenLabs API key not found. Set config.api_key or ELEVENLABS_API_KEY env var".into(),
+                    })?;
+                let base = get("base_url").and_then(|v| v.as_str()).unwrap_or("https://api.elevenlabs.io");
+                let voice = get("voice_id").and_then(|v| v.as_str()).unwrap_or(ELEVEN_DEFAULT_VOICE);
+                let model = get("model").and_then(|v| v.as_str()).unwrap_or("eleven_flash_v2_5");
+                let stability = get("stability").and_then(|v| v.as_f64()).unwrap_or(0.5);
+                let similarity = get("similarity_boost").and_then(|v| v.as_f64()).unwrap_or(0.75);
+                let style = get("style").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let body = eleven_tts_body(&text, model, stability, similarity, style);
+                let headers = vec![
+                    ("xi-api-key".to_string(), api_key),
+                    ("Accept".to_string(), "audio/mpeg".to_string()),
+                ];
+                (eleven_tts_url(base, voice), headers, body)
+            }
+        };
+
+        let scratch = context.scratch_dir().unwrap_or("/tmp");
+        let out_path = format!("{scratch}/tts_{}.mp3", uuid::Uuid::new_v4());
+
+        let client = reqwest::Client::new();
+        let max_retries: u32 = 3;
+        let mut last_error = String::new();
+
+        for attempt in 0..=max_retries {
+            let mut req = client
+                .post(&url)
+                .timeout(std::time::Duration::from_secs(120))
+                .json(&body);
+            for (k, v) in &headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
+
+            let resp = req.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("{provider} TTS request timed out after 120s"),
+                    }
+                } else {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("HTTP request failed: {e}"),
+                    }
+                }
+            })?;
+
+            let status = resp.status().as_u16();
+
+            if (200..300).contains(&status) {
+                let bytes = resp.bytes().await.map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/tts".into(),
+                    message: format!("failed to read audio bytes: {e}"),
+                })?;
+                if bytes.is_empty() {
+                    return Err(ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("{provider} returned empty audio"),
+                    });
+                }
+                tokio::fs::write(&out_path, &bytes).await.map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/tts".into(),
+                    message: format!("failed to save audio: {e}"),
+                })?;
+
+                info!(path = %out_path, provider = %provider, bytes = bytes.len(), "ai/tts: saved audio");
+
+                let file_ref = crate::llm::media::create_file_ref(&out_path, None)
+                    .unwrap_or_else(|| json!(out_path));
+
+                let mut out = HashMap::new();
+                out.insert("audio_path".to_string(), file_ref);
+                out.insert("provider".to_string(), json!(provider));
+                out.insert("format".to_string(), json!("mp3"));
+                out.insert("characters".to_string(), json!(text.chars().count()));
+                return Ok(out);
+            }
+
+            // Retriable errors
+            if matches!(status, 429 | 500 | 502 | 503 | 504) && attempt < max_retries {
+                let body_text = resp.text().await.unwrap_or_default();
+                last_error = format!("HTTP {status}: {body_text}");
+                let delay = 2u64.pow(attempt + 1);
+                warn!(status, attempt = attempt + 1, delay_secs = delay, "ai/tts: retriable error, backing off");
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
+            }
+
+            // Non-retriable
+            let body_text = resp.text().await.unwrap_or_default();
+            let msg = match status {
+                401 | 403 => format!("{provider} API key is invalid or unauthorized (HTTP {status})"),
+                _ => format!("{provider} TTS error (HTTP {status}): {body_text}"),
+            };
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/tts".into(),
+                message: msg,
+            });
+        }
+
+        Err(ToolError::ExecutionFailed {
+            tool_type: "ai/tts".into(),
+            message: format!("{provider} TTS failed after {max_retries} retries: {last_error}"),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -1326,6 +1571,7 @@ pub fn register_ai_tools(registry: &mut ToolRegistry) {
     registry.register("ai/transcribe", Box::new(TranscribeFactory::new()));
     registry.register("ai/claude_code", Box::new(ClaudeCodeFactory::new()));
     registry.register("ai/image_edit", Box::new(ImageEditFactory::new()));
+    registry.register("ai/tts", Box::new(TtsFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1557,7 +1803,7 @@ mod tests {
     // -- Registration ---------------------------------------------------------
 
     #[test]
-    fn register_ai_tools_adds_five() {
+    fn register_ai_tools_adds_six() {
         let mut reg = ToolRegistry::new();
         register_ai_tools(&mut reg);
         assert!(reg.get("ai/llm_call").is_some());
@@ -1565,6 +1811,46 @@ mod tests {
         assert!(reg.get("ai/transcribe").is_some());
         assert!(reg.get("ai/claude_code").is_some());
         assert!(reg.get("ai/image_edit").is_some());
-        assert_eq!(reg.list_tools().len(), 5);
+        assert!(reg.get("ai/tts").is_some());
+        assert_eq!(reg.list_tools().len(), 6);
+    }
+
+    // -- ai/tts request builders ----------------------------------------------
+
+    #[test]
+    fn eleven_url_has_voice_and_mp3() {
+        let u = eleven_tts_url("https://api.elevenlabs.io", "abc123");
+        assert!(u.contains("/v1/text-to-speech/abc123"));
+        assert!(u.contains("output_format=mp3_44100_128"));
+    }
+
+    #[test]
+    fn eleven_body_shape() {
+        let b = eleven_tts_body("hola", "eleven_flash_v2_5", 0.5, 0.75, 0.1);
+        assert_eq!(b["text"], "hola");
+        assert_eq!(b["model_id"], "eleven_flash_v2_5");
+        assert_eq!(b["voice_settings"]["stability"], 0.5);
+        assert_eq!(b["voice_settings"]["similarity_boost"], 0.75);
+        assert_eq!(b["voice_settings"]["use_speaker_boost"], true);
+    }
+
+    #[test]
+    fn cartesia_body_shape() {
+        let b = cartesia_tts_body("hola", "sonic-3.5", "voice-xyz", Some("es"), Some(1.0));
+        assert_eq!(b["model_id"], "sonic-3.5");
+        assert_eq!(b["transcript"], "hola");
+        assert_eq!(b["voice"]["mode"], "id");
+        assert_eq!(b["voice"]["id"], "voice-xyz");
+        assert_eq!(b["output_format"]["container"], "mp3");
+        assert_eq!(b["output_format"]["sample_rate"], 44100);
+        assert_eq!(b["language"], "es");
+        assert_eq!(b["generation_config"]["speed"], 1.0);
+    }
+
+    #[test]
+    fn cartesia_body_omits_optional() {
+        let b = cartesia_tts_body("hi", "sonic-3.5", "v", None, None);
+        assert!(b.get("language").is_none());
+        assert!(b.get("generation_config").is_none());
     }
 }

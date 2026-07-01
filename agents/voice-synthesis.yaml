@@ -1,0 +1,88 @@
+# Voice Synthesis — texto -> voz (MP3) via ElevenLabs o Cartesia
+#
+# UN solo agente. El cliente elige el proveedor con el input "provider" (elevenlabs | cartesia);
+# el nodo ai/tts enruta internamente a la API correspondiente, sintetiza el MP3 y devuelve su ruta.
+# (El branch vive en la tool ai/tts, no en un logic/condition: mas robusto y un solo archivo.)
+#
+# Run:
+#   mirai run agents/voice-synthesis.yaml --input '{"text":"Hola, soy tu asistente.","provider":"elevenlabs","voice_id":"21m00Tcm4TlvDq8ikWAM"}'
+#   mirai run agents/voice-synthesis.yaml --input '{"text":"Hola, soy tu asistente.","provider":"cartesia","voice_id":"a0e99841-438c-4a64-b679-ae501e7d6091"}'
+#
+# Requiere: ELEVENLABS_API_KEY o CARTESIA_API_KEY en el entorno (o pasar "api_key" en el input).
+
+name: voice-synthesis
+version: v1
+description: "Sintetiza voz (MP3) desde texto via ElevenLabs o Cartesia, segun el proveedor elegido por el cliente"
+
+inputs:
+  text:
+    type: text
+    required: true
+    description: "Texto a convertir en voz"
+  provider:
+    type: text
+    required: false
+    default: "elevenlabs"
+    description: "Proveedor TTS: elevenlabs o cartesia"
+  voice_id:
+    type: text
+    required: false
+    description: "ID de la voz (ElevenLabs = de su libreria; Cartesia = UUID)"
+  model:
+    type: text
+    required: false
+    description: "Modelo TTS (default: eleven_flash_v2_5 / sonic-3.5)"
+  stability:
+    type: number
+    required: false
+    description: "ElevenLabs: estabilidad 0-1"
+  similarity_boost:
+    type: number
+    required: false
+    description: "ElevenLabs: similitud 0-1"
+  style:
+    type: number
+    required: false
+    description: "ElevenLabs: exageracion de estilo 0-1"
+  language:
+    type: text
+    required: false
+    description: "Cartesia: codigo ISO del idioma (ej es, en)"
+  speed:
+    type: number
+    required: false
+    description: "Cartesia: velocidad de habla 0.6-1.5"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: synth
+      tool_type: ai/tts
+      config:
+        provider: elevenlabs   # default; el input "provider" lo sobreescribe por llamada
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: synth
+      data_map:
+        text: "start.payload.text"
+        provider: "start.payload.provider"
+        voice_id: "start.payload.voice_id"
+        model: "start.payload.model"
+        stability: "start.payload.stability"
+        similarity_boost: "start.payload.similarity_boost"
+        style: "start.payload.style"
+        language: "start.payload.language"
+        speed: "start.payload.speed"
+
+    - source: synth
+      target: respond
+      data_map:
+        audio_path: "synth.audio_path"
+        provider: "synth.provider"
+        format: "synth.format"

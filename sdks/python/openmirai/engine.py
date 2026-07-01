@@ -148,7 +148,7 @@ class Engine:
 
         # Write spec to temp file.
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
+            mode="w", suffix=".yaml", delete=False
         ) as f:
             json.dump(agent.spec, f)
             temp_path = f.name

@@ -20,6 +20,7 @@ pub mod server;
 pub mod soul;
 pub mod streaming;
 pub mod templates;
+#[macro_use]
 pub mod tools;
 pub mod triggers;
 pub mod universe;

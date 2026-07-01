@@ -66,6 +66,7 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/v1/sessions", get(list_sessions))
         .route("/api/v1/sessions/{id}", get(get_session))
+        .route("/api/v1/sessions/{id}/otel-trace", get(get_session_otel_trace))
         // Universe
         .route("/api/v1/universe/message", post(universe_message))
         .route("/api/v1/universe/groupchat", post(groupchat))

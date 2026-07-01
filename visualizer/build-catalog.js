@@ -23,7 +23,7 @@ function collect(dir, source) {
       return {
         id: f.replace(/\.(ya?ml)$/i, ''),
         path: p,
-        relpath: path.relative(REPO, p),
+        relpath: (function(){ var r = path.relative(REPO, p); return r.indexOf('..') === 0 ? p : r; })(),
         source,
         mtimeMin: Math.round((Date.now() - st.mtimeMs) / 60000),
         yaml: fs.readFileSync(p, 'utf8')
@@ -35,6 +35,23 @@ const sources = [].concat(
   collect(path.join(REPO, 'agents'), 'agents'),
   collect(path.join(REPO, 'examples'), 'examples')
 );
+
+// Fuentes locales extra (agentes fuera del repo), git-ignoradas — NO se comparten en el repo.
+// visualizer/sources.local.json = [ { "dir": "/ruta/a/agents", "source": "etiqueta" }, { "file": "/ruta/agente.yaml", "source": "etiqueta" } ]
+try {
+  const localCfg = path.join(VIS, 'sources.local.json');
+  if (fs.existsSync(localCfg)) {
+    const extra = JSON.parse(fs.readFileSync(localCfg, 'utf8'));
+    (Array.isArray(extra) ? extra : []).forEach(function (e) {
+      if (e && e.dir) {
+        sources.push.apply(sources, collect(e.dir, e.source || 'externo'));
+      } else if (e && e.file && fs.existsSync(e.file)) {
+        const st = fs.statSync(e.file);
+        sources.push({ id: path.basename(e.file).replace(/\.(ya?ml)$/i, ''), path: e.file, relpath: e.file, source: e.source || 'externo', mtimeMin: Math.round((Date.now() - st.mtimeMs) / 60000), yaml: fs.readFileSync(e.file, 'utf8') });
+      }
+    });
+  }
+} catch (e) { console.error('AVISO: sources.local.json invalido, se ignora:', e.message); }
 
 if (!fs.existsSync(JSYAML)) { console.error('ERROR: falta ' + JSYAML + ' (copia js-yaml.min.js ahi).'); process.exit(1); }
 const jsyaml = fs.readFileSync(JSYAML, 'utf8');

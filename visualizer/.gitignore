@@ -1,0 +1,3 @@
+# Fuentes locales extra del visualizador (rutas de agentes fuera del repo).
+# Es una preferencia LOCAL de cada maquina — no se comparte.
+sources.local.json

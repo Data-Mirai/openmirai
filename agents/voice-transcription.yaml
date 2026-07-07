@@ -33,7 +33,8 @@ inputs:
   model:
     type: text
     required: false
-    description: "Modelo (elevenlabs: scribe_v1 default | ruta LLM: modelo del provider)"
+    default: "gemini-2.5-flash"
+    description: "Modelo (elevenlabs: scribe_v1 default | ruta LLM: modelo del provider; default gemini-2.5-flash — la app no manda modelo y Gemini rechaza 'default')"
   language:
     type: text
     required: false

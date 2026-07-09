@@ -12,6 +12,7 @@
 mod adapter_factory;
 mod colors;
 mod session_storage;
+mod sessions_cmd;
 mod setup_wizard;
 mod terminal;
 
@@ -57,6 +58,7 @@ async fn main() {
         Some("eval") => cmd_eval(&args[1..]).await,
         Some("rag") => cmd_rag(&args[1..]).await,
         Some("agent") => handle_agent_subcommand(&args[1..]),
+        Some("sessions") => sessions_cmd::cmd_sessions(&args[1..]).await,
         Some("help" | "--help" | "-h") => print_help(),
         Some(other) => {
             eprintln!(

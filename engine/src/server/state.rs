@@ -13,6 +13,7 @@ use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
+use crate::sessions::{SessionManager, TmuxBackend};
 use crate::tools::registry::{RegistryExecutor, ToolRegistry};
 /// Shared application state passed to all handlers via axum's `State`.
 ///
@@ -49,6 +50,13 @@ pub struct AppState {
     pub memory_store: AgentMemoryStore,
     /// Background scheduler for live agent cycles (PRD-008).
     pub scheduler: Arc<Scheduler>,
+    /// Orchestrated Claude sessions over tmux (PRD-013).
+    ///
+    /// Created with the real [`TmuxBackend`] by default; `serve()` loads and
+    /// reconciles the persistent registry and starts polling. Tests replace
+    /// this field with a manager over a fake backend before building the
+    /// router.
+    pub orchestrator: Arc<SessionManager>,
 }
 
 impl AppState {
@@ -75,6 +83,10 @@ impl AppState {
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             memory_store: AgentMemoryStore::new(),
             scheduler: Arc::new(Scheduler::new()),
+            orchestrator: Arc::new(SessionManager::new(
+                Arc::new(TmuxBackend::new()),
+                SessionManager::default_registry_path(),
+            )),
         }
     }
 

@@ -168,8 +168,17 @@ pub(crate) async fn orchestrator_stop(
 ///
 /// Forwards only the four PRD-013 event types from the manager's emitter:
 /// `session_created`, `session_status_changed`, `session_output`,
-/// `session_stopped`. Event name and JSON payload follow
-/// [`crate::core::events::ExecutionEvent::to_sse`].
+/// `session_stopped`.
+///
+/// The `data:` payload is the event's data object DIRECTLY (not the internal
+/// ExecutionEvent envelope) — exact shapes the web UI parses:
+/// - `session_created` → the full session record
+/// - `session_status_changed` → `{id, status, last_activity}`
+/// - `session_output` → `{id, lines}` (only the NEW lines)
+/// - `session_stopped` → `{id}`
+///
+/// Auth: besides the X-API-Key header, this endpoint accepts the key as a
+/// `?api_key=` query param (EventSource cannot set headers).
 pub(crate) async fn orchestrator_events(State(state): State<AppState>) -> impl IntoResponse {
     use axum::body::Body;
     use tokio_stream::wrappers::ReceiverStream;
@@ -195,7 +204,10 @@ pub(crate) async fn orchestrator_events(State(state): State<AppState>) -> impl I
                     if !relevant {
                         continue;
                     }
-                    if tx.send(Ok(event.to_sse())).await.is_err() {
+                    let payload =
+                        serde_json::to_string(&event.data).unwrap_or_else(|_| "{}".into());
+                    let frame = format!("event: {}\ndata: {}\n\n", event.event_type, payload);
+                    if tx.send(Ok(frame)).await.is_err() {
                         break; // client disconnected
                     }
                 }
@@ -548,8 +560,72 @@ mod tests {
             .unwrap();
         let text = String::from_utf8_lossy(&frame);
         assert!(text.starts_with("event: session_created\n"), "got: {text}");
-        assert!(text.contains("\"tmux_session\":\"mirai-"));
+
+        // The data payload is the session record DIRECTLY (contract shape),
+        // not the internal ExecutionEvent envelope.
+        let data_line = text
+            .lines()
+            .find_map(|l| l.strip_prefix("data: "))
+            .expect("data line");
+        let payload: Value = serde_json::from_str(data_line).unwrap();
+        assert!(payload["id"].is_string());
+        assert_eq!(payload["status"], "starting");
+        assert!(payload["tmux_session"]
+            .as_str()
+            .unwrap()
+            .starts_with("mirai-"));
+        assert!(payload.get("event_type").is_none(), "envelope leaked");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn events_accepts_api_key_via_query_param() {
+        let backend = Arc::new(FakeBackend::new());
+        let registry_path =
+            std::env::temp_dir().join(format!("mirai-orch-sse-auth-{}.json", short_id()));
+        let mut state = AppState::new(
+            ToolRegistry::new(),
+            test_llm_factory(),
+            Some("secret".into()),
+        );
+        state.orchestrator = Arc::new(SessionManager::new(backend, registry_path.clone()));
+        let app = create_router(state);
+
+        // No key at all → 401.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/orchestrator/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Wrong query key → 401.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/orchestrator/events?api_key=nope")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Correct key via query param (EventSource cannot set headers) → 200.
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/orchestrator/events?api_key=secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let _ = std::fs::remove_file(registry_path);
     }
 
     #[tokio::test]

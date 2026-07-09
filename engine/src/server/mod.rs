@@ -136,8 +136,21 @@ async fn auth_middleware(
 
     let provided = req.headers().get("X-API-Key").and_then(|v| v.to_str().ok());
 
+    // PRD-013: EventSource cannot set headers, so the orchestrator SSE
+    // endpoint also accepts the key as a `?api_key=` query param.
+    let query_key: Option<String> = if path == "/api/v1/orchestrator/events" {
+        req.uri().query().and_then(|q| {
+            url::form_urlencoded::parse(q.as_bytes())
+                .find(|(k, _)| k == "api_key")
+                .map(|(_, v)| v.into_owned())
+        })
+    } else {
+        None
+    };
+    let provided = provided.map(str::to_string).or(query_key);
+
     match provided {
-        Some(key) if key == expected => next.run(req).await,
+        Some(key) if key == *expected => next.run(req).await,
         _ => (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "unauthorized"})),

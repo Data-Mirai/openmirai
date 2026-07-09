@@ -20,9 +20,6 @@ use super::{SessionBackend, SessionError, SessionStatus};
 /// How many pane lines are captured for status detection / output events.
 const POLL_CAPTURE_LINES: usize = 40;
 
-/// Tail lines included in `session_output` events and the detail endpoint.
-const OUTPUT_TAIL_LINES: usize = 15;
-
 /// Poll interval while there are active sessions.
 pub const POLL_INTERVAL_SECS: u64 = 2;
 
@@ -109,8 +106,8 @@ pub struct SessionManager {
     registry_path: PathBuf,
     sessions: RwLock<HashMap<String, SessionRecord>>,
     events: EventEmitter,
-    /// Last seen output tail per session (fingerprint for session_output events).
-    output_seen: Mutex<HashMap<String, u64>>,
+    /// Last captured pane per session, to diff NEW lines for session_output.
+    last_pane: Mutex<HashMap<String, Vec<String>>>,
     polling_started: AtomicBool,
 }
 
@@ -121,7 +118,7 @@ impl SessionManager {
             registry_path,
             sessions: RwLock::new(HashMap::new()),
             events: EventEmitter::new(256),
-            output_seen: Mutex::new(HashMap::new()),
+            last_pane: Mutex::new(HashMap::new()),
             polling_started: AtomicBool::new(false),
         }
     }
@@ -310,11 +307,8 @@ impl SessionManager {
         };
         self.persist().await?;
 
-        self.emit(
-            EventType::SessionStopped,
-            id,
-            json!({ "id": id, "status": SessionStatus::Stopped }),
-        );
+        // Contract shape (PRD-013 UI): session_stopped → {id}.
+        self.emit(EventType::SessionStopped, id, json!({ "id": id }));
         Ok(updated)
     }
 
@@ -351,24 +345,25 @@ impl SessionManager {
         for (id, tmux_session, current) in active {
             // Died outside of us (claude exited, manual kill) → stopped.
             if !self.backend.session_exists(&tmux_session) {
+                let last_activity = now_rfc3339();
                 {
                     let mut sessions = self.sessions.write().await;
                     if let Some(rec) = sessions.get_mut(&id) {
                         rec.status = SessionStatus::Stopped;
-                        rec.last_activity = now_rfc3339();
+                        rec.last_activity = last_activity.clone();
                     }
                 }
                 dirty = true;
                 self.emit(
                     EventType::SessionStatusChanged,
                     &id,
-                    json!({ "id": id, "status": SessionStatus::Stopped, "previous": current }),
+                    json!({
+                        "id": id,
+                        "status": SessionStatus::Stopped,
+                        "last_activity": last_activity,
+                    }),
                 );
-                self.emit(
-                    EventType::SessionStopped,
-                    &id,
-                    json!({ "id": id, "status": SessionStatus::Stopped }),
-                );
+                self.emit(EventType::SessionStopped, &id, json!({ "id": id }));
                 continue;
             }
 
@@ -379,42 +374,38 @@ impl SessionManager {
             // Status transition from UI heuristics.
             if let Some(new_status) = detect_status(&pane) {
                 if new_status != current {
+                    let last_activity = now_rfc3339();
                     {
                         let mut sessions = self.sessions.write().await;
                         if let Some(rec) = sessions.get_mut(&id) {
                             rec.status = new_status;
-                            rec.last_activity = now_rfc3339();
+                            rec.last_activity = last_activity.clone();
                         }
                     }
                     dirty = true;
                     self.emit(
                         EventType::SessionStatusChanged,
                         &id,
-                        json!({ "id": id, "status": new_status, "previous": current }),
+                        json!({
+                            "id": id,
+                            "status": new_status,
+                            "last_activity": last_activity,
+                        }),
                     );
                 }
             }
 
-            // Output tail changed → session_output event.
-            let tail: Vec<String> = pane
-                .iter()
-                .rev()
-                .take(OUTPUT_TAIL_LINES)
-                .rev()
-                .cloned()
-                .collect();
-            let fingerprint = {
-                use std::hash::{Hash, Hasher};
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                tail.hash(&mut h);
-                h.finish()
+            // NEW output lines only (contract: session_output → {id, lines}).
+            let new_lines = {
+                let mut last = self.last_pane.lock().await;
+                let previous = last.insert(id.clone(), pane.clone()).unwrap_or_default();
+                diff_new_lines(&previous, &pane)
             };
-            let mut seen = self.output_seen.lock().await;
-            if seen.insert(id.clone(), fingerprint) != Some(fingerprint) {
+            if !new_lines.is_empty() {
                 self.emit(
                     EventType::SessionOutput,
                     &id,
-                    json!({ "id": id, "lines": tail }),
+                    json!({ "id": id, "lines": new_lines }),
                 );
             }
         }
@@ -453,6 +444,43 @@ impl SessionManager {
             .emit(event_type, session_id.to_string(), None, map);
     }
 }
+
+/// Compute the NEW lines between two consecutive pane captures.
+///
+/// Two situations to cover:
+/// - **Scroll**: the new capture starts with a suffix of the previous one
+///   (old lines scrolled off the top) — new lines are what follows the
+///   overlap.
+/// - **In-place rewrite**: the last line(s) changed (spinner, streaming
+///   token) — new lines are what follows the common prefix.
+///
+/// We take whichever interpretation explains more of the new capture
+/// (largest overlap), so only genuinely new/changed lines are emitted.
+fn diff_new_lines(previous: &[String], current: &[String]) -> Vec<String> {
+    if previous == current {
+        return Vec::new();
+    }
+
+    // Longest suffix of `previous` that is a prefix of `current` (scroll).
+    let max_overlap = previous.len().min(current.len());
+    let mut overlap = 0;
+    for k in (1..=max_overlap).rev() {
+        if previous[previous.len() - k..] == current[..k] {
+            overlap = k;
+            break;
+        }
+    }
+
+    // Longest common prefix (in-place rewrite of the tail).
+    let common_prefix = previous
+        .iter()
+        .zip(current.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    current[overlap.max(common_prefix)..].to_vec()
+}
+
 
 // ---------------------------------------------------------------------------
 // Tests (fake backend — no tmux required)
@@ -691,6 +719,9 @@ mod tests {
         let ev = rx.recv().await.unwrap();
         assert_eq!(ev.event_type, EventType::SessionStatusChanged);
         assert_eq!(ev.data["status"], serde_json::json!("waiting"));
+        // Contract shape: {id, status, last_activity}.
+        assert_eq!(ev.data["id"], serde_json::json!(rec.id));
+        assert!(ev.data["last_activity"].is_string());
         // The pane change also produces a session_output event.
         let ev = rx.recv().await.unwrap();
         assert_eq!(ev.event_type, EventType::SessionOutput);
@@ -733,6 +764,9 @@ mod tests {
         assert_eq!(ev.event_type, EventType::SessionStatusChanged);
         let ev = rx.recv().await.unwrap();
         assert_eq!(ev.event_type, EventType::SessionStopped);
+        // Contract shape: session_stopped → {id}.
+        assert_eq!(ev.data["id"], serde_json::json!(rec.id));
+        assert_eq!(ev.data.len(), 1);
         let _ = std::fs::remove_file(path);
     }
 
@@ -749,17 +783,45 @@ mod tests {
         manager.poll_once().await;
         assert!(rx.try_recv().is_err());
 
-        // Changed pane → output event.
+        // Changed pane → output event with ONLY the new lines.
         backend.set_pane(&rec.tmux_session, &["hello", "world", "│ > "]);
         manager.poll_once().await;
         let ev = rx.recv().await.unwrap();
         assert_eq!(ev.event_type, EventType::SessionOutput);
-        assert!(ev.data["lines"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|l| l == "world"));
+        let lines = ev.data["lines"].as_array().unwrap();
+        assert!(lines.iter().any(|l| l == "world"));
+        // "hello" was already seen in the previous capture → not re-emitted.
+        assert!(!lines.iter().any(|l| l == "hello"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn diff_new_lines_covers_scroll_rewrite_and_noop() {
+        let l = |v: &[&str]| -> Vec<String> { v.iter().map(|s| s.to_string()).collect() };
+
+        // No change → nothing new.
+        assert!(diff_new_lines(&l(&["a", "b"]), &l(&["a", "b"])).is_empty());
+
+        // Append at the bottom.
+        assert_eq!(
+            diff_new_lines(&l(&["a", "b"]), &l(&["a", "b", "c"])),
+            l(&["c"])
+        );
+
+        // Scroll: old top lines fell off the window.
+        assert_eq!(
+            diff_new_lines(&l(&["a", "b", "c"]), &l(&["b", "c", "d"])),
+            l(&["d"])
+        );
+
+        // In-place rewrite of the last line (spinner / streaming).
+        assert_eq!(
+            diff_new_lines(&l(&["a", "spinner1"]), &l(&["a", "spinner2"])),
+            l(&["spinner2"])
+        );
+
+        // First capture: everything is new.
+        assert_eq!(diff_new_lines(&[], &l(&["x", "y"])), l(&["x", "y"]));
     }
 
     #[tokio::test]

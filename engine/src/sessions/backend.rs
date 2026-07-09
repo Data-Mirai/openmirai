@@ -43,7 +43,10 @@ pub trait SessionBackend: Send + Sync {
 /// Real backend: one tmux session per orchestrated session.
 ///
 /// The user can always attach manually: `tmux attach -t mirai-<id>`.
-/// Targets are passed as `=name` so tmux does exact (not prefix) matching.
+/// Targets are passed as `=name` so tmux does exact (not prefix) matching;
+/// pane-level commands (send-keys, capture-pane) need the trailing colon
+/// (`=name:` → the session's current window/active pane) — verified against
+/// tmux 3.6b, where `capture-pane -t =name` fails with "can't find pane".
 #[derive(Debug, Default, Clone)]
 pub struct TmuxBackend;
 
@@ -90,7 +93,7 @@ impl SessionBackend for TmuxBackend {
     }
 
     fn send_text(&self, tmux_session: &str, text: &str) -> Result<(), SessionError> {
-        let target = format!("={tmux_session}");
+        let target = format!("={tmux_session}:");
         // `-l` sends the text literally (no key-name interpretation).
         self.tmux(&["send-keys", "-t", &target, "-l", "--", text])?;
         // Enter goes as a key name in a second call.
@@ -102,7 +105,7 @@ impl SessionBackend for TmuxBackend {
         tmux_session: &str,
         lines: usize,
     ) -> Result<Vec<String>, SessionError> {
-        let target = format!("={tmux_session}");
+        let target = format!("={tmux_session}:");
         let start = format!("-{lines}");
         let out = self.tmux(&["capture-pane", "-p", "-t", &target, "-S", &start])?;
         let mut captured: Vec<String> = out.lines().map(|l| l.to_string()).collect();

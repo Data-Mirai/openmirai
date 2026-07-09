@@ -40,3 +40,17 @@ send → working → stop; reconciliación tras reinicio del server; SSE con sha
 Commits: 4f5dcb1 (M1 módulo sessions), 99c3475 (M2 API HTTP+SSE), 596efec (alineación contrato UI +
 fix tmux), + M3 CLI `mirai sessions`. Suite completa en verde: 781 tests engine + 1 CLI, release limpio.
 NO se hizo push (regla del repo: el PM pushea). Pendiente: M5 (E2E con sesión orquestadora + skill).
+
+**Extensión (mismo día, COMPLETADO)**: requerimiento nuevo de Gabriel — paridad terminal↔UI:
+`mirai sessions watch`, dashboard de terminal en vivo (SSE + fallback polling 2s con retry del
+stream, tabla con colores por estado y permission destacada arriba, panel de actividad con los
+últimos 10 eventos, alternate screen sin parpadeo con redraw in-place, resize tolerante, salir
+con q/Esc/Ctrl-C con guard de restauración incluso en panic).
+- CREADO `cli/src/sessions_watch.rs` — el dashboard (ANSI + crossterm, ya era dep del CLI); 9 tests
+- MODIFICADO `cli/src/sessions_cmd.rs` — subcomando `watch` + help
+- MODIFICADO `cli/src/main.rs` — módulo nuevo
+- MODIFICADO `cli/Cargo.toml` — dep `chrono` (ya compilaba en el workspace vía engine)
+Validado en vivo bajo pty (`script`): transición polling→live, tabla con sesiones reales (incluidas
+las del E2E M5 de otro agente corriendo en paralelo), eventos SSE en el panel, restauración del
+terminal al salir. NOTA para agentes paralelos: hay un `mirai serve` en :3777 con sesiones del E2E
+M5 — no matarlo ni borrar `~/.openmirai/orchestrator_sessions.json`.

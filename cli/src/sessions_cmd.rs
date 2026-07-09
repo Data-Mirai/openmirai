@@ -9,6 +9,7 @@
 //! mirai sessions send <id> <text…>
 //! mirai sessions output <id> [--lines N]
 //! mirai sessions stop <id>
+//! mirai sessions watch
 //! ```
 //!
 //! Server location: `--host` / `--port` flags, or `MIRAI_HOST` / `MIRAI_PORT`
@@ -28,6 +29,7 @@ pub async fn cmd_sessions(args: &[String]) {
         Some("send") => send(&args[1..]).await,
         Some("output") => output(&args[1..]).await,
         Some("stop") => stop(&args[1..]).await,
+        Some("watch") => crate::sessions_watch::run(&args[1..]).await,
         Some("help" | "--help" | "-h") => print_sessions_help(),
         Some(other) => {
             eprintln!(
@@ -266,6 +268,7 @@ fn print_sessions_help() {
     mirai sessions send <id> <text…>             Send a prompt to a session
     mirai sessions output <id> [--lines N]       Show the session's pane output
     mirai sessions stop <id>                     Kill the session
+    mirai sessions watch                         Live full-screen dashboard (SSE)
 
 {bold}SERVER:{reset}
     --host <h> / --port <p>   Where mirai serve runs (default 127.0.0.1:3000)

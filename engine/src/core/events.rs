@@ -45,6 +45,12 @@ pub enum EventType {
     CycleStarted,
     CycleCompleted,
     CycleFailed,
+
+    // PRD-013: Orchestrated Claude sessions (tmux)
+    SessionCreated,
+    SessionStatusChanged,
+    SessionOutput,
+    SessionStopped,
 }
 
 impl std::fmt::Display for EventType {
@@ -74,6 +80,10 @@ impl std::fmt::Display for EventType {
             Self::CycleStarted => "cycle_started",
             Self::CycleCompleted => "cycle_completed",
             Self::CycleFailed => "cycle_failed",
+            Self::SessionCreated => "session_created",
+            Self::SessionStatusChanged => "session_status_changed",
+            Self::SessionOutput => "session_output",
+            Self::SessionStopped => "session_stopped",
         };
         f.write_str(s)
     }

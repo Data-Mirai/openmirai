@@ -13,6 +13,7 @@ mod adapter_factory;
 mod colors;
 mod session_storage;
 mod sessions_cmd;
+mod sessions_watch;
 mod setup_wizard;
 mod terminal;
 

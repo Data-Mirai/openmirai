@@ -8,6 +8,7 @@
 pub mod editor;
 pub mod handlers;
 pub mod helpers;
+pub mod orchestrator;
 pub mod state;
 
 #[cfg(test)]
@@ -29,6 +30,10 @@ use crate::tools::registry::ToolRegistry;
 
 use self::handlers::*;
 use self::helpers::rag_search;
+use self::orchestrator::{
+    orchestrator_create_session, orchestrator_events, orchestrator_get_session,
+    orchestrator_list_sessions, orchestrator_output, orchestrator_send, orchestrator_stop,
+};
 
 // ---------------------------------------------------------------------------
 // Router factory
@@ -70,6 +75,28 @@ pub fn create_router(state: AppState) -> Router {
         // Universe
         .route("/api/v1/universe/message", post(universe_message))
         .route("/api/v1/universe/groupchat", post(groupchat))
+        // Orchestrated Claude sessions over tmux (PRD-013)
+        .route(
+            "/api/v1/orchestrator/sessions",
+            post(orchestrator_create_session).get(orchestrator_list_sessions),
+        )
+        .route(
+            "/api/v1/orchestrator/sessions/{id}",
+            get(orchestrator_get_session),
+        )
+        .route(
+            "/api/v1/orchestrator/sessions/{id}/send",
+            post(orchestrator_send),
+        )
+        .route(
+            "/api/v1/orchestrator/sessions/{id}/output",
+            get(orchestrator_output),
+        )
+        .route(
+            "/api/v1/orchestrator/sessions/{id}/stop",
+            post(orchestrator_stop),
+        )
+        .route("/api/v1/orchestrator/events", get(orchestrator_events))
         // Metrics
         .route("/api/v1/metrics", get(get_metrics))
         // RAG + Eval
@@ -138,6 +165,14 @@ pub async fn serve(
     let mut registry = ToolRegistry::new();
     register_all_builtin_tools(&mut registry);
     let state = AppState::new(registry, llm_factory, api_key);
+
+    // PRD-013: load the persistent session registry, reconcile against real
+    // tmux state, and start the ~2s status poll (no-op without active sessions).
+    if let Err(e) = state.orchestrator.initialize().await {
+        tracing::warn!("orchestrator: failed to load session registry: {e}");
+    }
+    state.orchestrator.start_polling();
+
     let app = create_router(state);
 
     let addr = format!("{host}:{port}");

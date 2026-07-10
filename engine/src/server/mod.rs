@@ -33,7 +33,8 @@ use self::helpers::rag_search;
 use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
     orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
-    orchestrator_record_activity, orchestrator_send, orchestrator_stop, serve_ui, serve_ui_index,
+    orchestrator_list_projects, orchestrator_record_activity, orchestrator_send, orchestrator_stop,
+    serve_ui, serve_ui_index,
 };
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,11 @@ pub fn create_router(state: AppState) -> Router {
             post(orchestrator_record_activity).get(orchestrator_get_activity),
         )
         .route("/api/v1/orchestrator/events", get(orchestrator_events))
+        // Known projects for the create-session picker (PRD-013 M7)
+        .route(
+            "/api/v1/orchestrator/projects",
+            get(orchestrator_list_projects),
+        )
         // Static web UI served by the engine (PRD-013 M6) — no auth (localhost)
         .route("/ui", get(serve_ui_index))
         .route("/ui/{*path}", get(serve_ui))
@@ -187,6 +193,7 @@ pub async fn serve(
     llm_factory: state::LLMFactory,
     api_key: Option<String>,
     ui_dir: Option<String>,
+    projects_dirs: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if api_key.is_none() {
         tracing::warn!("No API key configured. Server is running without authentication.");
@@ -197,6 +204,25 @@ pub async fn serve(
     register_all_builtin_tools(&mut registry);
     let mut state = AppState::new(registry, llm_factory, api_key);
     state.ui_dir = ui_dir.map(std::path::PathBuf::from);
+    // M7: roots for the /projects scan — colon-separated, `~` expanded.
+    state.projects_dirs = projects_dirs
+        .as_deref()
+        .unwrap_or_default()
+        .split(':')
+        .filter(|p| !p.trim().is_empty())
+        .map(expand_home)
+        .collect();
+    if !state.projects_dirs.is_empty() {
+        tracing::info!(
+            "projects scan roots: {}",
+            state
+                .projects_dirs
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     if let Some(dir) = &state.ui_dir {
         if dir.is_dir() {
             tracing::info!("serving web UI at /ui from {}", dir.display());
@@ -224,6 +250,17 @@ pub async fn serve(
         .await?;
     tracing::info!("Server stopped.");
     Ok(())
+}
+
+/// Expand a leading `~` / `~/` to $HOME (M7 projects roots).
+fn expand_home(path: &str) -> std::path::PathBuf {
+    let path = path.trim();
+    if path == "~" || path.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return std::path::Path::new(&home).join(path.trim_start_matches("~/").trim_start_matches('~'));
+        }
+    }
+    std::path::PathBuf::from(path)
 }
 
 async fn shutdown_signal() {

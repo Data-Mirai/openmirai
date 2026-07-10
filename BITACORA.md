@@ -74,3 +74,15 @@ E2E real validado en server aislado (:3799, HOME en /tmp): hook manual + hook RE
 claude escribiendo hola.txt (permission → aprobar → session_activity por SSE en <2s + GET + watch);
 auto-parent verificado; /ui sirviendo. Server :4321 de Gabriel intacto (PID verificado antes de
 matar solo el :3799). Suite completa: 796 engine + 13 cli, release limpio.
+
+**M7 lado Engine (10-jul, COMPLETADO)** — picker de proyectos + create_dir:
+- `GET /api/v1/orchestrator/projects` → `{projects: [{path, name, source: "session"|"scan", exists}]}`:
+  unión de project_dirs del registry + subdirs de primer nivel de `--projects-dirs a:b:c` /
+  `MIRAI_PROJECTS_DIRS` (`~` expandido; excluye ocultos, node_modules y no-directorios);
+  dedup por path (session gana); orden: sessions primero, luego scan, alfabético por grupo.
+- `POST /sessions` acepta `create_dir` (default false): true → mkdir -p antes del spawn;
+  false + dir inexistente → 400 claro. HALLAZGO documentado: antes tmux aceptaba `-c` inexistente
+  en silencio (exit 0) y claude arrancaba en el dir equivocado — el 400 corrige un bug silencioso.
+- CLI: `mirai sessions spawn --create-dir`; `mirai serve --projects-dirs`.
+Encima del commit 0e9fc8e del coordinador (acción net) sin tocarlo. Smoke aislado en :3798 (HOME
+de prueba, server :4321 intacto). Suite: 803 engine + 13 cli, release limpio.

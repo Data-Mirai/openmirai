@@ -60,6 +60,10 @@ pub struct AppState {
     /// Directory served as the static web UI under `/ui` (PRD-013 M6).
     /// `None` → `/ui` answers 404 with a clear message.
     pub ui_dir: Option<std::path::PathBuf>,
+    /// Roots scanned for first-level project directories (PRD-013 M7,
+    /// `--projects-dirs a:b:c` or MIRAI_PROJECTS_DIRS). Empty → /projects
+    /// lists session dirs only.
+    pub projects_dirs: Vec<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -91,6 +95,7 @@ impl AppState {
                 SessionManager::default_registry_path(),
             )),
             ui_dir: None,
+            projects_dirs: Vec::new(),
         }
     }
 

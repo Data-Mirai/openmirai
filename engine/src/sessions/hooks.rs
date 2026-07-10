@@ -5,7 +5,8 @@
 //! 1. `report-activity.py` — a pure-stdlib python3 script registered as a
 //!    PostToolUse hook. It reads the hook JSON from stdin, maps the tool to
 //!    an action (`Read|Glob|Grep → read`, `Write|Edit|NotebookEdit → write`,
-//!    `Bash → exec`) and POSTs to the engine's activity endpoint using the
+//!    `Bash → exec`, `WebFetch|WebSearch → net`) and POSTs to the engine's
+//!    activity endpoint using the
 //!    `MIRAI_SESSION_ID` / `MIRAI_PORT` env vars the TmuxBackend injects.
 //!    EVERY failure is silent (exit 0 always) — the hook must never block or
 //!    slow down the Claude session.
@@ -19,7 +20,7 @@ use std::path::{Path, PathBuf};
 use super::SessionError;
 
 /// Tools reported by the hook (used as the PostToolUse matcher).
-pub const HOOK_MATCHER: &str = "Read|Glob|Grep|Write|Edit|NotebookEdit|Bash";
+pub const HOOK_MATCHER: &str = "Read|Glob|Grep|Write|Edit|NotebookEdit|Bash|WebFetch|WebSearch";
 
 /// The PostToolUse reporter script. Pure python3 stdlib, fails silent.
 pub const HOOK_SCRIPT: &str = r#"#!/usr/bin/env python3
@@ -43,6 +44,8 @@ ACTIONS = {
     "Edit": "write",
     "NotebookEdit": "write",
     "Bash": "exec",
+    "WebFetch": "net",
+    "WebSearch": "net",
 }
 
 
@@ -63,6 +66,8 @@ def main():
         tool_input.get("file_path")
         or tool_input.get("notebook_path")
         or tool_input.get("path")
+        or tool_input.get("url")
+        or tool_input.get("query")
         or None
     )
 

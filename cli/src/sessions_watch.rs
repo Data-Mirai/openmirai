@@ -106,7 +106,34 @@ fn apply_event(state: &mut WatchState, event: &str, data: &Value) {
                 .unwrap_or(0);
             push_activity(state, event, format!("{id} (+{n} lines)"));
         }
+        // M6: resource activity from the Claude Code hooks — terminal parity:
+        // you SEE who reads/writes/executes what.
+        "session_activity" => {
+            let action = data.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+            let target = data
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(abbrev_path)
+                .unwrap_or_else(|| {
+                    data.get("tool")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string()
+                });
+            push_activity(state, event, format!("{id} {action}\u{2192}{target}"));
+        }
         _ => {}
+    }
+}
+
+/// Abbreviate a filesystem path for the activity feed: keep the last two
+/// components ("…/src/main.rs").
+fn abbrev_path(path: &str) -> String {
+    let parts: Vec<&str> = path.trim_end_matches('/').split('/').filter(|p| !p.is_empty()).collect();
+    match parts.len() {
+        0 => path.to_string(),
+        1 => parts[0].to_string(),
+        n => format!("\u{2026}/{}/{}", parts[n - 2], parts[n - 1]),
     }
 }
 
@@ -508,6 +535,7 @@ fn build_frame(
         let kind_color = match entry.kind.as_str() {
             "session_created" => colors::GREEN,
             "session_status_changed" => colors::CYAN,
+            "session_activity" => colors::MAGENTA,
             "session_stopped" => GRAY,
             _ => colors::DIM,
         };
@@ -718,6 +746,35 @@ mod tests {
         apply_event(&mut st, "session_stopped", &json!({"id": "abc"}));
         assert_eq!(st.sessions["abc"]["status"], "stopped");
         assert_eq!(st.activity.len(), 4);
+    }
+
+    #[test]
+    fn session_activity_enters_the_feed_abbreviated() {
+        let mut st = WatchState::default();
+        apply_event(
+            &mut st,
+            "session_activity",
+            &json!({"id": "abc123", "tool": "Write", "action": "write",
+                    "path": "/home/user/proj/src/main.rs", "ts": "2026-07-10T10:00:00Z"}),
+        );
+        assert_eq!(st.activity.len(), 1);
+        assert_eq!(st.activity[0].kind, "session_activity");
+        assert_eq!(st.activity[0].detail, "abc123 write\u{2192}\u{2026}/src/main.rs");
+
+        // Bash without path falls back to the tool name.
+        apply_event(
+            &mut st,
+            "session_activity",
+            &json!({"id": "abc123", "tool": "Bash", "action": "exec", "path": null}),
+        );
+        assert_eq!(st.activity[0].detail, "abc123 exec\u{2192}Bash");
+    }
+
+    #[test]
+    fn abbrev_path_keeps_last_two_components() {
+        assert_eq!(abbrev_path("/a/b/c/d.rs"), "\u{2026}/c/d.rs");
+        assert_eq!(abbrev_path("file.md"), "file.md");
+        assert_eq!(abbrev_path("/x"), "x");
     }
 
     #[test]

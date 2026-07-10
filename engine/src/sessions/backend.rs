@@ -12,12 +12,15 @@ pub const TMUX_SESSION_PREFIX: &str = "mirai-";
 /// without tmux installed.
 pub trait SessionBackend: Send + Sync {
     /// Spawn a detached session named `tmux_session`, with `project_dir` as
-    /// cwd, running `command` (e.g. `claude --model opus`).
+    /// cwd, running `command` (e.g. `claude --model opus`). `env` pairs are
+    /// injected into the session's environment (PRD-013 M6: the spawned
+    /// claude — and its hook subprocesses — see MIRAI_SESSION_ID/MIRAI_PORT).
     fn spawn(
         &self,
         tmux_session: &str,
         project_dir: &str,
         command: &str,
+        env: &[(String, String)],
     ) -> Result<(), SessionError>;
 
     /// Type `text` into the session and press Enter.
@@ -79,17 +82,18 @@ impl SessionBackend for TmuxBackend {
         tmux_session: &str,
         project_dir: &str,
         command: &str,
+        env: &[(String, String)],
     ) -> Result<(), SessionError> {
-        self.tmux(&[
-            "new-session",
-            "-d",
-            "-s",
-            tmux_session,
-            "-c",
-            project_dir,
-            command,
-        ])
-        .map(|_| ())
+        // `-e KEY=VAL` (tmux ≥ 3.2) sets the session environment at creation,
+        // so claude and every subprocess it spawns (hooks included) see it.
+        let env_args: Vec<String> = env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let mut args: Vec<&str> = vec!["new-session", "-d", "-s", tmux_session, "-c", project_dir];
+        for pair in &env_args {
+            args.push("-e");
+            args.push(pair);
+        }
+        args.push(command);
+        self.tmux(&args).map(|_| ())
     }
 
     fn send_text(&self, tmux_session: &str, text: &str) -> Result<(), SessionError> {
@@ -159,8 +163,9 @@ pub(crate) mod fake {
         pub panes: Mutex<HashMap<String, Vec<String>>>,
         /// (session name, text) pairs, in send order
         pub sent: Mutex<Vec<(String, String)>>,
-        /// (session, project_dir, command) spawn calls
-        pub spawned: Mutex<Vec<(String, String, String)>>,
+        /// (session, project_dir, command, env) spawn calls
+        #[allow(clippy::type_complexity)]
+        pub spawned: Mutex<Vec<(String, String, String, Vec<(String, String)>)>>,
     }
 
     impl FakeBackend {
@@ -188,11 +193,13 @@ pub(crate) mod fake {
             tmux_session: &str,
             project_dir: &str,
             command: &str,
+            env: &[(String, String)],
         ) -> Result<(), SessionError> {
             self.spawned.lock().unwrap().push((
                 tmux_session.to_string(),
                 project_dir.to_string(),
                 command.to_string(),
+                env.to_vec(),
             ));
             self.panes
                 .lock()

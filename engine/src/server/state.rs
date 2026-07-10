@@ -57,6 +57,9 @@ pub struct AppState {
     /// this field with a manager over a fake backend before building the
     /// router.
     pub orchestrator: Arc<SessionManager>,
+    /// Directory served as the static web UI under `/ui` (PRD-013 M6).
+    /// `None` → `/ui` answers 404 with a clear message.
+    pub ui_dir: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -87,6 +90,7 @@ impl AppState {
                 Arc::new(TmuxBackend::new()),
                 SessionManager::default_registry_path(),
             )),
+            ui_dir: None,
         }
     }
 

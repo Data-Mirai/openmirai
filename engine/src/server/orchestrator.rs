@@ -164,11 +164,58 @@ pub(crate) async fn orchestrator_stop(
     Ok(Json(json!({ "id": record.id, "status": record.status })))
 }
 
+/// POST /api/v1/orchestrator/sessions/{id}/activity — resource activity
+/// reported by the Claude Code PostToolUse hook (M6). → 202.
+pub(crate) async fn orchestrator_record_activity(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ActivityRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
+    let entry = state
+        .orchestrator
+        .record_activity(&id, &req.tool, &req.action, req.path.as_deref())
+        .await
+        .map_err(session_error_response)?;
+
+    Ok((StatusCode::ACCEPTED, Json(entry)))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ActivityRequest {
+    pub tool: String,
+    pub action: String,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ActivityQuery {
+    pub limit: Option<usize>,
+}
+
+/// GET /api/v1/orchestrator/sessions/{id}/activity?limit=50 — recent activity
+/// (in-memory ring buffer) as `{events: [...]}` in CHRONOLOGICAL order
+/// (canonical envelope fixed by the M6 web UI).
+pub(crate) async fn orchestrator_get_activity(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ActivityQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    let entries = state
+        .orchestrator
+        .get_activity(&id, limit)
+        .await
+        .map_err(session_error_response)?;
+
+    Ok(Json(json!({ "events": entries })))
+}
+
 /// GET /api/v1/orchestrator/events — SSE stream of orchestrator events.
 ///
-/// Forwards only the four PRD-013 event types from the manager's emitter:
+/// Forwards only the PRD-013 event types from the manager's emitter:
 /// `session_created`, `session_status_changed`, `session_output`,
-/// `session_stopped`.
+/// `session_stopped`, `session_activity`.
 ///
 /// The `data:` payload is the event's data object DIRECTLY (not the internal
 /// ExecutionEvent envelope) — exact shapes the web UI parses:
@@ -176,6 +223,7 @@ pub(crate) async fn orchestrator_stop(
 /// - `session_status_changed` → `{id, status, last_activity}`
 /// - `session_output` → `{id, lines}` (only the NEW lines)
 /// - `session_stopped` → `{id}`
+/// - `session_activity` → `{id, tool, action, path, ts}` (M6)
 ///
 /// Auth: besides the X-API-Key header, this endpoint accepts the key as a
 /// `?api_key=` query param (EventSource cannot set headers).
@@ -200,6 +248,7 @@ pub(crate) async fn orchestrator_events(State(state): State<AppState>) -> impl I
                             | EventType::SessionStatusChanged
                             | EventType::SessionOutput
                             | EventType::SessionStopped
+                            | EventType::SessionActivity
                     );
                     if !relevant {
                         continue;
@@ -227,6 +276,76 @@ pub(crate) async fn orchestrator_events(State(state): State<AppState>) -> impl I
         ],
         Body::from_stream(ReceiverStream::new(rx)),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Static web UI under /ui (PRD-013 M6)
+// ---------------------------------------------------------------------------
+
+/// GET /ui → index.html of the configured UI directory.
+pub(crate) async fn serve_ui_index(State(state): State<AppState>) -> axum::response::Response {
+    serve_ui_file(&state, "index.html")
+}
+
+/// GET /ui/{*path} → static file from the configured UI directory.
+pub(crate) async fn serve_ui(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> axum::response::Response {
+    serve_ui_file(&state, &path)
+}
+
+fn serve_ui_file(state: &AppState, rel_path: &str) -> axum::response::Response {
+    let Some(ui_dir) = &state.ui_dir else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "UI not configured: start the server with --ui-dir <path> (or set MIRAI_UI_DIR) pointing at the web UI directory"
+            })),
+        )
+            .into_response();
+    };
+
+    // No traversal: reject any `..` component (and absolute paths).
+    let rel = std::path::Path::new(rel_path);
+    if rel.is_absolute()
+        || rel
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid path" })),
+        )
+            .into_response();
+    }
+
+    let mut file = ui_dir.join(rel);
+    if file.is_dir() {
+        file = file.join("index.html");
+    }
+
+    match std::fs::read(&file) {
+        Ok(bytes) => {
+            let content_type = match file.extension().and_then(|e| e.to_str()) {
+                Some("html") => "text/html; charset=utf-8",
+                Some("js") => "text/javascript; charset=utf-8",
+                Some("css") => "text/css; charset=utf-8",
+                Some("json") | Some("map") => "application/json",
+                Some("svg") => "image/svg+xml",
+                Some("png") => "image/png",
+                Some("ico") => "image/x-icon",
+                Some("txt") | Some("md") => "text/plain; charset=utf-8",
+                _ => "application/octet-stream",
+            };
+            (StatusCode::OK, [("content-type", content_type)], bytes).into_response()
+        }
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("not found: /ui/{rel_path}") })),
+        )
+            .into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +405,8 @@ mod tests {
             "model": "claude-opus-4-8",
             "effort": "high",
             "ultracode": true,
+            // Hook wiring has dedicated tests; keep the command deterministic here.
+            "no_hooks": true,
         });
         let resp = app
             .clone()
@@ -364,11 +485,53 @@ mod tests {
             "tmux_session",
             "created_at",
             "last_activity",
+            "parent_id",
         ] {
             assert!(rec.get(key).is_some(), "missing contract field {key}");
         }
         assert_eq!(rec["status"], "starting");
         assert_eq!(rec["ultracode"], true);
+        assert_eq!(rec["parent_id"], Value::Null);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_accepts_parent_id() {
+        let (app, _backend, path) = test_app();
+        let parent = spawn_session(&app).await;
+        let parent_id = parent["id"].as_str().unwrap();
+
+        let body = json!({
+            "project_dir": "/tmp/proj",
+            "objective": "child work",
+            "parent_id": parent_id,
+            "no_hooks": true,
+        });
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orchestrator/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let child = body_json(resp.into_body()).await;
+        let child_id = child["id"].as_str().unwrap();
+
+        // Visible in the listing (M6: the canvas draws the parent→child edge).
+        let resp = app
+            .oneshot(
+                Request::get(format!("/api/v1/orchestrator/sessions/{child_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail = body_json(resp.into_body()).await;
+        assert_eq!(detail["parent_id"], parent_id);
         let _ = std::fs::remove_file(path);
     }
 
@@ -549,6 +712,8 @@ mod tests {
                 model: None,
                 effort: None,
                 ultracode: false,
+                parent_id: None,
+                no_hooks: true,
             })
             .await
             .unwrap();
@@ -664,6 +829,256 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let _ = std::fs::remove_file(registry_path);
+    }
+
+    // -- M6: resource activity endpoints -------------------------------------
+
+    #[tokio::test]
+    async fn post_activity_returns_202_and_get_lists_it() {
+        let (app, _backend, path) = test_app();
+        let created = spawn_session(&app).await;
+        let id = created["id"].as_str().unwrap();
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/orchestrator/sessions/{id}/activity"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(
+                            &json!({"tool": "Edit", "action": "write", "path": "/tmp/a.rs"}),
+                        )
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let entry = body_json(resp.into_body()).await;
+        assert_eq!(entry["action"], "write");
+        assert!(entry["ts"].is_string());
+
+        // Second event without path (Bash).
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/orchestrator/sessions/{id}/activity"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({"tool": "Bash", "action": "exec"})).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+        // GET with limit.
+        let resp = app
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/orchestrator/sessions/{id}/activity?limit=1"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp.into_body()).await;
+        // Canonical envelope {events} in chronological order; limit keeps
+        // the most recent.
+        let activity = body["events"].as_array().unwrap();
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0]["tool"], "Bash");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn post_activity_validates_input() {
+        let (app, _backend, path) = test_app();
+        let created = spawn_session(&app).await;
+        let id = created["id"].as_str().unwrap();
+
+        // Bad action → 400.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/orchestrator/sessions/{id}/activity"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({"tool": "Edit", "action": "delete"})).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // Unknown session → 404.
+        let resp = app
+            .oneshot(
+                Request::post("/api/v1/orchestrator/sessions/ghost/activity")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({"tool": "Edit", "action": "write"})).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn activity_flows_through_sse() {
+        let (state, _backend, path) = test_state();
+        let app = create_router(state.clone());
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/orchestrator/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let mut body = resp.into_body().into_data_stream();
+
+        use futures_util::StreamExt;
+        let first = body.next().await.unwrap().unwrap();
+        assert_eq!(String::from_utf8_lossy(&first), ": connected\n\n");
+
+        // Spawn + report activity through the manager.
+        let rec = state
+            .orchestrator
+            .spawn(crate::sessions::SpawnParams {
+                name: None,
+                project_dir: "/tmp/p".into(),
+                objective: "o".into(),
+                model: None,
+                effort: None,
+                ultracode: false,
+                parent_id: None,
+                no_hooks: true,
+            })
+            .await
+            .unwrap();
+        state
+            .orchestrator
+            .record_activity(&rec.id, "Write", "write", Some("/tmp/x.md"))
+            .await
+            .unwrap();
+
+        // First frame: session_created; second: session_activity.
+        let mut saw_activity = false;
+        for _ in 0..2 {
+            let frame = tokio::time::timeout(std::time::Duration::from_secs(2), body.next())
+                .await
+                .expect("timed out")
+                .unwrap()
+                .unwrap();
+            let text = String::from_utf8_lossy(&frame).to_string();
+            if text.starts_with("event: session_activity\n") {
+                let data_line = text.lines().find_map(|l| l.strip_prefix("data: ")).unwrap();
+                let payload: Value = serde_json::from_str(data_line).unwrap();
+                assert_eq!(payload["id"], rec.id.as_str());
+                assert_eq!(payload["tool"], "Write");
+                assert_eq!(payload["action"], "write");
+                assert_eq!(payload["path"], "/tmp/x.md");
+                assert!(payload["ts"].is_string());
+                saw_activity = true;
+            }
+        }
+        assert!(saw_activity, "session_activity frame not seen");
+        let _ = std::fs::remove_file(path);
+    }
+
+    // -- M6: /ui static serving -----------------------------------------------
+
+    #[tokio::test]
+    async fn ui_unconfigured_returns_clear_404() {
+        let (app, _backend, path) = test_app();
+        let resp = app
+            .oneshot(Request::get("/ui").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = body_json(resp.into_body()).await;
+        let msg = body["error"].as_str().unwrap();
+        assert!(msg.contains("--ui-dir"), "clear message: {msg}");
+        assert!(msg.contains("MIRAI_UI_DIR"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn ui_serves_index_and_assets_without_auth() {
+        // UI dir with an index + an asset.
+        let ui_dir = std::env::temp_dir().join(format!("mirai-ui-test-{}", short_id()));
+        std::fs::create_dir_all(&ui_dir).unwrap();
+        std::fs::write(ui_dir.join("index.html"), "<!doctype html><title>UI</title>").unwrap();
+        std::fs::write(ui_dir.join("app.js"), "console.log(1)").unwrap();
+
+        // Server WITH api key: /ui must still be public.
+        let backend = Arc::new(FakeBackend::new());
+        let registry_path =
+            std::env::temp_dir().join(format!("mirai-ui-reg-{}.json", short_id()));
+        let mut state = AppState::new(
+            ToolRegistry::new(),
+            test_llm_factory(),
+            Some("secret".into()),
+        );
+        state.orchestrator = Arc::new(SessionManager::new(backend, registry_path.clone()));
+        state.ui_dir = Some(ui_dir.clone());
+        let app = create_router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/ui").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        assert!(String::from_utf8_lossy(&bytes).contains("<title>UI</title>"));
+
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/ui/app.js").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/javascript; charset=utf-8"
+        );
+
+        // Missing file → 404; traversal → 400.
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/ui/nope.css").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let resp = app
+            .oneshot(
+                Request::get("/ui/..%2F..%2Fetc%2Fpasswd")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let _ = std::fs::remove_dir_all(ui_dir);
         let _ = std::fs::remove_file(registry_path);
     }
 }

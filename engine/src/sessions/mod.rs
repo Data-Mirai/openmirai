@@ -16,6 +16,7 @@
 //! A human can always take over manually with `tmux attach -t mirai-<id>`.
 
 mod backend;
+pub mod hooks;
 mod manager;
 mod status;
 

@@ -550,8 +550,19 @@ async fn run_serve(args: &[String]) {
     // PRD-013 M6: directory served as the web UI under /ui.
     let ui_dir = parse_flag(args, "--ui-dir").or_else(|| std::env::var("MIRAI_UI_DIR").ok());
 
-    if let Err(e) =
-        openmirai_engine::server::serve(&host, port, llm_factory, server_api_key, ui_dir).await
+    // PRD-013 M7: colon-separated roots scanned for the /projects picker.
+    let projects_dirs = parse_flag(args, "--projects-dirs")
+        .or_else(|| std::env::var("MIRAI_PROJECTS_DIRS").ok());
+
+    if let Err(e) = openmirai_engine::server::serve(
+        &host,
+        port,
+        llm_factory,
+        server_api_key,
+        ui_dir,
+        projects_dirs,
+    )
+    .await
     {
         eprintln!("{}Server error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);

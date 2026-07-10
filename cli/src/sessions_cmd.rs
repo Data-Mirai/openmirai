@@ -152,6 +152,7 @@ async fn spawn(args: &[String]) {
         "objective": objective,
         "ultracode": super::has_flag(args, "--ultracode"),
         "no_hooks": super::has_flag(args, "--no-hooks"),
+        "create_dir": super::has_flag(args, "--create-dir"),
     });
     if let Some(name) = super::parse_flag(args, "--name") {
         payload["name"] = json!(name);
@@ -281,7 +282,7 @@ fn print_sessions_help() {
     mirai sessions list                          List sessions (live directory)
     mirai sessions spawn --project <dir> --objective \"…\"
                          [--name N] [--model M] [--effort E] [--ultracode]
-                         [--parent <id>] [--no-hooks]
+                         [--parent <id>] [--no-hooks] [--create-dir]
     mirai sessions send <id> <text…>             Send a prompt to a session
     mirai sessions output <id> [--lines N]       Show the session's pane output
     mirai sessions stop <id>                     Kill the session

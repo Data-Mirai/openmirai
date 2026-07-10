@@ -278,6 +278,16 @@ pub(crate) async fn orchestrator_events(State(state): State<AppState>) -> impl I
     )
 }
 
+/// GET /api/v1/orchestrator/projects — known projects for the create-session
+/// picker (M7). Shape: `{projects: [{path, name, source, exists}]}` — union
+/// of session project_dirs (source "session") and first-level subdirs of the
+/// configured roots (source "scan"); dedup by path, session wins; session
+/// entries first, then scan, alphabetical within each group.
+pub(crate) async fn orchestrator_list_projects(State(state): State<AppState>) -> Json<Value> {
+    let projects = state.orchestrator.list_projects(&state.projects_dirs).await;
+    Json(json!({ "projects": projects }))
+}
+
 // ---------------------------------------------------------------------------
 // Static web UI under /ui (PRD-013 M6)
 // ---------------------------------------------------------------------------
@@ -400,7 +410,7 @@ mod tests {
     async fn spawn_session(app: &Router) -> Value {
         let body = json!({
             "name": "worker",
-            "project_dir": "/tmp/proj",
+            "project_dir": "/tmp",
             "objective": "build the thing",
             "model": "claude-opus-4-8",
             "effort": "high",
@@ -502,7 +512,7 @@ mod tests {
         let parent_id = parent["id"].as_str().unwrap();
 
         let body = json!({
-            "project_dir": "/tmp/proj",
+            "project_dir": "/tmp",
             "objective": "child work",
             "parent_id": parent_id,
             "no_hooks": true,
@@ -707,13 +717,14 @@ mod tests {
             .orchestrator
             .spawn(crate::sessions::SpawnParams {
                 name: None,
-                project_dir: "/tmp/p".into(),
+                project_dir: "/tmp".into(),
                 objective: "o".into(),
                 model: None,
                 effort: None,
                 ultracode: false,
                 parent_id: None,
                 no_hooks: true,
+                create_dir: false,
             })
             .await
             .unwrap();
@@ -958,13 +969,14 @@ mod tests {
             .orchestrator
             .spawn(crate::sessions::SpawnParams {
                 name: None,
-                project_dir: "/tmp/p".into(),
+                project_dir: "/tmp".into(),
                 objective: "o".into(),
                 model: None,
                 effort: None,
                 ultracode: false,
                 parent_id: None,
                 no_hooks: true,
+                create_dir: false,
             })
             .await
             .unwrap();
@@ -995,6 +1007,103 @@ mod tests {
             }
         }
         assert!(saw_activity, "session_activity frame not seen");
+        let _ = std::fs::remove_file(path);
+    }
+
+    // -- M7: /projects + create_dir --------------------------------------------
+
+    #[tokio::test]
+    async fn projects_returns_contract_shape_with_union() {
+        let (state, _backend, path) = test_state();
+        // Scan root with one project.
+        let root = std::env::temp_dir().join(format!("mirai-m7-http-root-{}", short_id()));
+        std::fs::create_dir_all(root.join("scanned-app")).unwrap();
+        let mut state = state;
+        state.projects_dirs = vec![root.clone()];
+        let app = create_router(state.clone());
+
+        // One session (source: session).
+        spawn_session(&app).await;
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/orchestrator/projects")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp.into_body()).await;
+        let projects = body["projects"].as_array().unwrap();
+        assert_eq!(projects.len(), 2);
+
+        // Exact contract shape per entry.
+        for p in projects {
+            let obj = p.as_object().unwrap();
+            assert_eq!(obj.len(), 4, "exactly path/name/source/exists: {obj:?}");
+            for key in ["path", "name", "source", "exists"] {
+                assert!(obj.contains_key(key), "missing {key}");
+            }
+        }
+        // Session entry first, then scan.
+        assert_eq!(projects[0]["source"], "session");
+        assert_eq!(projects[0]["path"], "/tmp");
+        assert_eq!(projects[1]["source"], "scan");
+        assert_eq!(projects[1]["name"], "scanned-app");
+        assert_eq!(projects[1]["exists"], true);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_missing_dir_is_400_and_create_dir_fixes_it() {
+        let (app, _backend, path) = test_app();
+        let missing = std::env::temp_dir().join(format!("mirai-m7-http-dir-{}", short_id()));
+
+        // Without create_dir → 400 with a clear message.
+        let body = json!({
+            "project_dir": missing.to_str().unwrap(),
+            "objective": "x",
+            "no_hooks": true,
+        });
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orchestrator/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let err = body_json(resp.into_body()).await;
+        let msg = err["error"].as_str().unwrap();
+        assert!(msg.contains("does not exist"), "clear: {msg}");
+        assert!(msg.contains("create_dir"), "hints the fix: {msg}");
+
+        // With create_dir → 201 and the dir exists.
+        let body = json!({
+            "project_dir": missing.to_str().unwrap(),
+            "objective": "x",
+            "no_hooks": true,
+            "create_dir": true,
+        });
+        let resp = app
+            .oneshot(
+                Request::post("/api/v1/orchestrator/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        assert!(missing.is_dir());
+
+        let _ = std::fs::remove_dir_all(missing);
         let _ = std::fs::remove_file(path);
     }
 

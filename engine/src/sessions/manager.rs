@@ -94,6 +94,12 @@ pub struct SpawnParams {
     /// Opt out of the activity-reporting Claude Code hooks (M6).
     #[serde(default)]
     pub no_hooks: bool,
+    /// M7: create the project_dir (`mkdir -p`) before spawning. When false
+    /// and the dir does not exist, spawn fails with a clear error (before
+    /// this, tmux silently accepted a bad `-c` and claude started in the
+    /// wrong directory).
+    #[serde(default)]
+    pub create_dir: bool,
 }
 
 fn now_rfc3339() -> String {
@@ -218,6 +224,24 @@ impl SessionManager {
         }
         if params.objective.trim().is_empty() {
             return Err(SessionError::Invalid("objective is required".into()));
+        }
+
+        // M7: the project dir must exist (tmux silently accepts a bad `-c`,
+        // leaving claude in the wrong directory). `create_dir` opts into
+        // creating it.
+        let project_path = Path::new(params.project_dir.trim());
+        if params.create_dir {
+            std::fs::create_dir_all(project_path).map_err(|e| {
+                SessionError::Invalid(format!(
+                    "could not create project_dir '{}': {e}",
+                    params.project_dir
+                ))
+            })?;
+        } else if !project_path.is_dir() {
+            return Err(SessionError::Invalid(format!(
+                "project_dir '{}' does not exist (pass create_dir: true to create it)",
+                params.project_dir
+            )));
         }
 
         // Unknown parent → normalized to None (contract: never reject on it).
@@ -438,6 +462,65 @@ impl SessionManager {
             .unwrap_or_default())
     }
 
+    // -- projects (M7) ---------------------------------------------------------
+
+    /// Union of known projects (contract pineado M7):
+    /// (a) distinct `project_dir`s of registry sessions (`source: "session"`),
+    /// (b) first-level subdirectories of the configured scan roots
+    ///     (`source: "scan"`) — hidden dirs, `node_modules` and non-dirs
+    ///     excluded.
+    /// Dedup by path (session wins). Order: session entries first, then scan,
+    /// each group alphabetical by path.
+    pub async fn list_projects(&self, scan_roots: &[PathBuf]) -> Vec<serde_json::Value> {
+        let mut seen = std::collections::HashSet::new();
+        let mut session_entries: Vec<(String, serde_json::Value)> = Vec::new();
+        let mut scan_entries: Vec<(String, serde_json::Value)> = Vec::new();
+
+        let entry = |path: &str, source: &str| -> serde_json::Value {
+            let p = Path::new(path);
+            json!({
+                "path": path,
+                "name": p.file_name().and_then(|n| n.to_str()).unwrap_or(path),
+                "source": source,
+                "exists": p.is_dir(),
+            })
+        };
+
+        for rec in self.sessions.read().await.values() {
+            let dir = rec.project_dir.trim_end_matches('/').to_string();
+            if !dir.is_empty() && seen.insert(dir.clone()) {
+                session_entries.push((dir.clone(), entry(&dir, "session")));
+            }
+        }
+
+        for root in scan_roots {
+            let Ok(read) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for item in read.flatten() {
+                let name = item.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') || name == "node_modules" {
+                    continue;
+                }
+                if !item.path().is_dir() {
+                    continue;
+                }
+                let dir = item.path().to_string_lossy().trim_end_matches('/').to_string();
+                if seen.insert(dir.clone()) {
+                    scan_entries.push((dir.clone(), entry(&dir, "scan")));
+                }
+            }
+        }
+
+        session_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        scan_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        session_entries
+            .into_iter()
+            .chain(scan_entries)
+            .map(|(_, v)| v)
+            .collect()
+    }
+
     // -- status polling ------------------------------------------------------
 
     /// Number of sessions whose tmux session should still be alive.
@@ -631,7 +714,7 @@ mod tests {
     fn spawn_params() -> SpawnParams {
         SpawnParams {
             name: Some("test".into()),
-            project_dir: "/tmp/project".into(),
+            project_dir: "/tmp".into(),
             objective: "do the thing".into(),
             model: Some("claude-opus-4-8".into()),
             effort: Some("high".into()),
@@ -639,6 +722,7 @@ mod tests {
             parent_id: None,
             // Most tests assert the bare command; hook wiring has its own tests.
             no_hooks: true,
+            create_dir: false,
         }
     }
 
@@ -654,7 +738,7 @@ mod tests {
         assert_eq!(spawned.len(), 1);
         let (session, dir, command, env) = &spawned[0];
         assert_eq!(session, &rec.tmux_session);
-        assert_eq!(dir, "/tmp/project");
+        assert_eq!(dir, "/tmp");
         assert_eq!(command, "claude --model claude-opus-4-8 --effort high");
         // M6: identity + engine port injected into the tmux session env.
         assert!(env.contains(&("MIRAI_SESSION_ID".to_string(), rec.id.clone())));
@@ -1076,6 +1160,115 @@ mod tests {
     }
 
     // -- M6: resource activity ------------------------------------------------
+
+    #[tokio::test]
+    async fn spawn_rejects_missing_project_dir_without_create_dir() {
+        let (manager, _backend, path) = manager_with_fake();
+        let missing = std::env::temp_dir().join(format!("mirai-m7-missing-{}", short_id()));
+
+        let mut params = spawn_params();
+        params.project_dir = missing.to_string_lossy().into_owned();
+        let err = manager.spawn(params).await.unwrap_err();
+        match err {
+            SessionError::Invalid(msg) => {
+                assert!(msg.contains("does not exist"), "clear message: {msg}");
+                assert!(msg.contains("create_dir"), "hints the fix: {msg}");
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_with_create_dir_makes_the_directory() {
+        let (manager, _backend, path) = manager_with_fake();
+        let target = std::env::temp_dir()
+            .join(format!("mirai-m7-new-{}", short_id()))
+            .join("nested");
+
+        let mut params = spawn_params();
+        params.project_dir = target.to_string_lossy().into_owned();
+        params.create_dir = true;
+        let rec = manager.spawn(params).await.unwrap();
+
+        assert!(target.is_dir(), "mkdir -p happened");
+        assert_eq!(rec.project_dir, target.to_string_lossy());
+        let _ = std::fs::remove_dir_all(target.parent().unwrap());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn list_projects_unions_sessions_and_scan_with_dedup() {
+        let (manager, _backend, path) = manager_with_fake();
+
+        // Scan root with: two real projects, a hidden dir, node_modules, a file.
+        let root = std::env::temp_dir().join(format!("mirai-m7-root-{}", short_id()));
+        for sub in ["beta-app", "alpha-app", ".hidden", "node_modules"] {
+            std::fs::create_dir_all(root.join(sub)).unwrap();
+        }
+        std::fs::write(root.join("not-a-dir.txt"), "x").unwrap();
+
+        // One session in a scanned project (dedup: session wins), one outside
+        // whose dir does NOT exist on disk.
+        let mut in_scan = spawn_params();
+        in_scan.project_dir = root.join("beta-app").to_string_lossy().into_owned();
+        manager.spawn(in_scan).await.unwrap();
+
+        let ghost_dir = std::env::temp_dir().join(format!("mirai-m7-ghost-{}", short_id()));
+        let mut ghost = spawn_params();
+        ghost.project_dir = ghost_dir.to_string_lossy().into_owned();
+        ghost.create_dir = true;
+        manager.spawn(ghost).await.unwrap();
+        std::fs::remove_dir_all(&ghost_dir).unwrap(); // dir vanished after spawn
+
+        let projects = manager.list_projects(&[root.clone()]).await;
+
+        // session entries first (alphabetical), then scan (alphabetical).
+        let sources: Vec<&str> = projects
+            .iter()
+            .map(|p| p["source"].as_str().unwrap())
+            .collect();
+        assert_eq!(sources, vec!["session", "session", "scan"]);
+
+        let paths: Vec<&str> = projects
+            .iter()
+            .map(|p| p["path"].as_str().unwrap())
+            .collect();
+        // beta-app deduped into the session group; only alpha-app from scan.
+        assert!(paths.contains(&root.join("beta-app").to_str().unwrap()));
+        assert_eq!(paths[2], root.join("alpha-app").to_str().unwrap());
+        assert!(!paths.iter().any(|p| p.contains(".hidden")));
+        assert!(!paths.iter().any(|p| p.contains("node_modules")));
+        assert!(!paths.iter().any(|p| p.contains("not-a-dir")));
+
+        // exists reflects disk truth; name = basename.
+        let ghost_entry = projects
+            .iter()
+            .find(|p| p["path"] == ghost_dir.to_str().unwrap())
+            .unwrap();
+        assert_eq!(ghost_entry["exists"], false);
+        let alpha = &projects[2];
+        assert_eq!(alpha["name"], "alpha-app");
+        assert_eq!(alpha["exists"], true);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn list_projects_without_roots_uses_sessions_only() {
+        let (manager, _backend, path) = manager_with_fake();
+        manager.spawn(spawn_params()).await.unwrap();
+        let projects = manager.list_projects(&[]).await;
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0]["source"], "session");
+        assert_eq!(projects[0]["path"], "/tmp");
+        // Missing scan root is tolerated silently.
+        let bogus = std::env::temp_dir().join("mirai-m7-no-root-xyz");
+        let projects = manager.list_projects(&[bogus]).await;
+        assert_eq!(projects.len(), 1);
+        let _ = std::fs::remove_file(path);
+    }
 
     #[tokio::test]
     async fn unknown_parent_id_is_normalized_to_null() {

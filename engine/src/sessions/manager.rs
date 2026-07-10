@@ -49,6 +49,9 @@ pub struct SessionRecord {
     /// Internal: whether the first prompt was already sent (ultracode gate).
     #[serde(default)]
     pub first_prompt_sent: bool,
+    /// Session that spawned this one (M6: orchestrator→child edges). Nullable.
+    #[serde(default)]
+    pub parent_id: Option<String>,
 }
 
 impl SessionRecord {
@@ -67,6 +70,7 @@ impl SessionRecord {
             "tmux_session": self.tmux_session,
             "created_at": self.created_at,
             "last_activity": self.last_activity,
+            "parent_id": self.parent_id,
         })
     }
 }
@@ -84,6 +88,12 @@ pub struct SpawnParams {
     pub effort: Option<String>,
     #[serde(default)]
     pub ultracode: bool,
+    /// Parent session id (M6). The CLI fills it from MIRAI_SESSION_ID.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Opt out of the activity-reporting Claude Code hooks (M6).
+    #[serde(default)]
+    pub no_hooks: bool,
 }
 
 fn now_rfc3339() -> String {
@@ -109,7 +119,15 @@ pub struct SessionManager {
     /// Last captured pane per session, to diff NEW lines for session_output.
     last_pane: Mutex<HashMap<String, Vec<String>>>,
     polling_started: AtomicBool,
+    /// Port `mirai serve` listens on — injected as MIRAI_PORT at spawn so the
+    /// activity hook knows where to report. Set by `serve()`.
+    server_port: std::sync::atomic::AtomicU16,
+    /// Recent resource activity per session (M6). Ring buffer, in-memory only.
+    activity: Mutex<HashMap<String, std::collections::VecDeque<serde_json::Value>>>,
 }
+
+/// Max entries kept per session in the activity ring buffer.
+const ACTIVITY_RING_MAX: usize = 200;
 
 impl SessionManager {
     pub fn new(backend: Arc<dyn SessionBackend>, registry_path: PathBuf) -> Self {
@@ -120,7 +138,22 @@ impl SessionManager {
             events: EventEmitter::new(256),
             last_pane: Mutex::new(HashMap::new()),
             polling_started: AtomicBool::new(false),
+            server_port: std::sync::atomic::AtomicU16::new(3000),
+            activity: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record the real server port (used for the MIRAI_PORT env injection).
+    pub fn set_server_port(&self, port: u16) {
+        self.server_port.store(port, Ordering::SeqCst);
+    }
+
+    /// Base dir for hook artifacts: the registry's directory (`~/.openmirai`).
+    fn hooks_base(&self) -> PathBuf {
+        self.registry_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
     /// Default registry location, following the engine's `~/.openmirai/`
@@ -187,6 +220,12 @@ impl SessionManager {
             return Err(SessionError::Invalid("objective is required".into()));
         }
 
+        // Unknown parent → normalized to None (contract: never reject on it).
+        let parent_id = match params.parent_id {
+            Some(p) if self.sessions.read().await.contains_key(&p) => Some(p),
+            _ => None,
+        };
+
         let id = short_id();
         let tmux_session = format!("{TMUX_SESSION_PREFIX}{id}");
 
@@ -198,8 +237,31 @@ impl SessionManager {
             command.push_str(&format!(" --effort {effort}"));
         }
 
+        // M6: register the activity-reporting hook unless opted out. Failure
+        // to write the hook files must not block the spawn — log and continue.
+        if !params.no_hooks {
+            match super::hooks::write_session_settings(&self.hooks_base(), &id) {
+                Ok(settings) => {
+                    command.push_str(&format!(" --settings '{}'", settings.display()));
+                }
+                Err(e) => {
+                    tracing::warn!("orchestrator: could not write hook settings: {e}");
+                }
+            }
+        }
+
+        // M6: the session (and its hook subprocesses) must know who it is and
+        // where the engine listens.
+        let env = [
+            ("MIRAI_SESSION_ID".to_string(), id.clone()),
+            (
+                "MIRAI_PORT".to_string(),
+                self.server_port.load(Ordering::SeqCst).to_string(),
+            ),
+        ];
+
         self.backend
-            .spawn(&tmux_session, &params.project_dir, &command)?;
+            .spawn(&tmux_session, &params.project_dir, &command, &env)?;
 
         let now = now_rfc3339();
         let record = SessionRecord {
@@ -215,6 +277,7 @@ impl SessionManager {
             created_at: now.clone(),
             last_activity: now,
             first_prompt_sent: false,
+            parent_id,
         };
 
         self.sessions
@@ -310,6 +373,69 @@ impl SessionManager {
         // Contract shape (PRD-013 UI): session_stopped → {id}.
         self.emit(EventType::SessionStopped, id, json!({ "id": id }));
         Ok(updated)
+    }
+
+    // -- resource activity (M6) ----------------------------------------------
+
+    /// Record a resource-activity event reported by a Claude Code hook and
+    /// emit `session_activity` → `{id, tool, action, path, ts}`.
+    ///
+    /// Kept in an in-memory ring buffer (~200 entries per session) — activity
+    /// is ephemeral visualization data, it does NOT persist to the registry.
+    pub async fn record_activity(
+        &self,
+        id: &str,
+        tool: &str,
+        action: &str,
+        path: Option<&str>,
+    ) -> Result<serde_json::Value, SessionError> {
+        if !matches!(action, "read" | "write" | "exec") {
+            return Err(SessionError::Invalid(format!(
+                "action must be read|write|exec, got '{action}'"
+            )));
+        }
+        if tool.trim().is_empty() {
+            return Err(SessionError::Invalid("tool is required".into()));
+        }
+        if self.get(id).await.is_none() {
+            return Err(SessionError::NotFound(id.to_string()));
+        }
+
+        let entry = json!({
+            "id": id,
+            "tool": tool,
+            "action": action,
+            "path": path,
+            "ts": now_rfc3339(),
+        });
+
+        {
+            let mut activity = self.activity.lock().await;
+            let ring = activity.entry(id.to_string()).or_default();
+            ring.push_back(entry.clone());
+            while ring.len() > ACTIVITY_RING_MAX {
+                ring.pop_front();
+            }
+        }
+
+        self.emit(EventType::SessionActivity, id, entry.clone());
+        Ok(entry)
+    }
+
+    /// Recent activity for a session: the last `limit` entries in
+    /// CHRONOLOGICAL order (contract fixed by the M6 web UI).
+    pub async fn get_activity(&self, id: &str, limit: usize) -> Result<Vec<serde_json::Value>, SessionError> {
+        if self.get(id).await.is_none() {
+            return Err(SessionError::NotFound(id.to_string()));
+        }
+        let activity = self.activity.lock().await;
+        Ok(activity
+            .get(id)
+            .map(|ring| {
+                let skip = ring.len().saturating_sub(limit);
+                ring.iter().skip(skip).cloned().collect()
+            })
+            .unwrap_or_default())
     }
 
     // -- status polling ------------------------------------------------------
@@ -510,6 +636,9 @@ mod tests {
             model: Some("claude-opus-4-8".into()),
             effort: Some("high".into()),
             ultracode: false,
+            parent_id: None,
+            // Most tests assert the bare command; hook wiring has its own tests.
+            no_hooks: true,
         }
     }
 
@@ -523,10 +652,78 @@ mod tests {
 
         let spawned = backend.spawned.lock().unwrap();
         assert_eq!(spawned.len(), 1);
-        let (session, dir, command) = &spawned[0];
+        let (session, dir, command, env) = &spawned[0];
         assert_eq!(session, &rec.tmux_session);
         assert_eq!(dir, "/tmp/project");
         assert_eq!(command, "claude --model claude-opus-4-8 --effort high");
+        // M6: identity + engine port injected into the tmux session env.
+        assert!(env.contains(&("MIRAI_SESSION_ID".to_string(), rec.id.clone())));
+        assert!(env.contains(&("MIRAI_PORT".to_string(), "3000".to_string())));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_injects_configured_server_port() {
+        let (manager, backend, path) = manager_with_fake();
+        manager.set_server_port(4321);
+        manager.spawn(spawn_params()).await.unwrap();
+
+        let spawned = backend.spawned.lock().unwrap();
+        assert!(spawned[0]
+            .3
+            .contains(&("MIRAI_PORT".to_string(), "4321".to_string())));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_with_hooks_appends_settings_and_writes_files() {
+        let (manager, backend, path) = manager_with_fake();
+        let mut params = spawn_params();
+        params.no_hooks = false;
+        let rec = manager.spawn(params).await.unwrap();
+
+        let spawned = backend.spawned.lock().unwrap();
+        let command = &spawned[0].2;
+        assert!(
+            command.contains("--settings '"),
+            "hooks on → --settings in command: {command}"
+        );
+        assert!(command.contains(&format!("{}-settings.json", rec.id)));
+
+        // Both artifacts exist under <registry dir>/hooks/.
+        let base = path.parent().unwrap();
+        assert!(base.join("hooks/report-activity.py").exists());
+        let settings_path = base.join(format!("hooks/{}-settings.json", rec.id));
+        assert!(settings_path.exists());
+        let _ = std::fs::remove_file(&settings_path);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn parent_id_round_trips_registry_and_api_json() {
+        let backend = Arc::new(FakeBackend::new());
+        let path = temp_registry();
+        let manager = SessionManager::new(backend.clone(), path.clone());
+
+        let parent = manager.spawn(spawn_params()).await.unwrap();
+        let mut child_params = spawn_params();
+        child_params.parent_id = Some(parent.id.clone());
+        let child = manager.spawn(child_params).await.unwrap();
+
+        assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
+        assert_eq!(
+            child.to_api_json()["parent_id"],
+            serde_json::json!(parent.id)
+        );
+        assert_eq!(parent.to_api_json()["parent_id"], serde_json::Value::Null);
+
+        // Survives a registry reload.
+        let manager2 = SessionManager::new(backend, path.clone());
+        manager2.initialize().await.unwrap();
+        assert_eq!(
+            manager2.get(&child.id).await.unwrap().parent_id.as_deref(),
+            Some(parent.id.as_str())
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -852,6 +1049,7 @@ mod tests {
             created_at: "2026-07-09T00:00:00Z".into(),
             last_activity: "2026-07-09T00:00:00Z".into(),
             first_prompt_sent: true,
+            parent_id: Some("root".into()),
         };
         let v = rec.to_api_json();
         let obj = v.as_object().unwrap();
@@ -867,6 +1065,7 @@ mod tests {
             "tmux_session",
             "created_at",
             "last_activity",
+            "parent_id",
         ];
         assert_eq!(obj.len(), expected.len());
         for key in expected {
@@ -874,5 +1073,108 @@ mod tests {
         }
         // Internal bookkeeping must NOT leak into the API shape.
         assert!(!obj.contains_key("first_prompt_sent"));
+    }
+
+    // -- M6: resource activity ------------------------------------------------
+
+    #[tokio::test]
+    async fn unknown_parent_id_is_normalized_to_null() {
+        let (manager, _backend, path) = manager_with_fake();
+        let mut params = spawn_params();
+        params.parent_id = Some("no-such-session".into());
+        let rec = manager.spawn(params).await.unwrap();
+        assert_eq!(rec.parent_id, None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn record_activity_stores_emits_and_lists_newest_first() {
+        let (manager, _backend, path) = manager_with_fake();
+        let rec = manager.spawn(spawn_params()).await.unwrap();
+        let mut rx = manager.subscribe();
+
+        let entry = manager
+            .record_activity(&rec.id, "Write", "write", Some("/tmp/foo.rs"))
+            .await
+            .unwrap();
+        assert_eq!(entry["action"], "write");
+        assert_eq!(entry["path"], "/tmp/foo.rs");
+        assert!(entry["ts"].is_string());
+
+        // SSE event with the contract shape {id, tool, action, path, ts}.
+        // (skip the session_created event from the spawn — we subscribed after,
+        // so the first event IS the activity one)
+        let ev = rx.recv().await.unwrap();
+        assert_eq!(ev.event_type, EventType::SessionActivity);
+        assert_eq!(ev.data["id"], serde_json::json!(rec.id));
+        assert_eq!(ev.data["tool"], serde_json::json!("Write"));
+        assert_eq!(ev.data["action"], serde_json::json!("write"));
+        assert_eq!(ev.data["path"], serde_json::json!("/tmp/foo.rs"));
+        assert!(ev.data["ts"].is_string());
+
+        // Bash without a path → path null.
+        manager
+            .record_activity(&rec.id, "Bash", "exec", None)
+            .await
+            .unwrap();
+
+        let recent = manager.get_activity(&rec.id, 10).await.unwrap();
+        assert_eq!(recent.len(), 2);
+        // Chronological order (contract fixed by the M6 web UI).
+        assert_eq!(recent[0]["tool"], "Write");
+        assert_eq!(recent[1]["tool"], "Bash");
+        assert_eq!(recent[1]["path"], serde_json::Value::Null);
+
+        // Limit keeps the MOST RECENT entries (still chronological).
+        let limited = manager.get_activity(&rec.id, 1).await.unwrap();
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0]["tool"], "Bash");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn activity_ring_buffer_caps_at_max() {
+        let (manager, _backend, path) = manager_with_fake();
+        let rec = manager.spawn(spawn_params()).await.unwrap();
+
+        for i in 0..(ACTIVITY_RING_MAX + 50) {
+            manager
+                .record_activity(&rec.id, "Read", "read", Some(&format!("/f/{i}")))
+                .await
+                .unwrap();
+        }
+        let all = manager.get_activity(&rec.id, usize::MAX).await.unwrap();
+        assert_eq!(all.len(), ACTIVITY_RING_MAX);
+        // Oldest entries were evicted; chronological → the LAST is the newest.
+        assert_eq!(
+            all[ACTIVITY_RING_MAX - 1]["path"],
+            format!("/f/{}", ACTIVITY_RING_MAX + 49)
+        );
+        assert_eq!(all[0]["path"], format!("/f/{}", 50));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn activity_validates_action_and_session() {
+        let (manager, _backend, path) = manager_with_fake();
+        let rec = manager.spawn(spawn_params()).await.unwrap();
+
+        assert!(matches!(
+            manager.record_activity(&rec.id, "Write", "delete", None).await,
+            Err(SessionError::Invalid(_))
+        ));
+        assert!(matches!(
+            manager.record_activity(&rec.id, " ", "read", None).await,
+            Err(SessionError::Invalid(_))
+        ));
+        assert!(matches!(
+            manager.record_activity("ghost", "Write", "write", None).await,
+            Err(SessionError::NotFound(_))
+        ));
+        assert!(matches!(
+            manager.get_activity("ghost", 10).await,
+            Err(SessionError::NotFound(_))
+        ));
+        let _ = std::fs::remove_file(path);
     }
 }

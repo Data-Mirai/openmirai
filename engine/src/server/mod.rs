@@ -31,8 +31,9 @@ use crate::tools::registry::ToolRegistry;
 use self::handlers::*;
 use self::helpers::rag_search;
 use self::orchestrator::{
-    orchestrator_create_session, orchestrator_events, orchestrator_get_session,
-    orchestrator_list_sessions, orchestrator_output, orchestrator_send, orchestrator_stop,
+    orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
+    orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
+    orchestrator_record_activity, orchestrator_send, orchestrator_stop, serve_ui, serve_ui_index,
 };
 
 // ---------------------------------------------------------------------------
@@ -96,7 +97,14 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/orchestrator/sessions/{id}/stop",
             post(orchestrator_stop),
         )
+        .route(
+            "/api/v1/orchestrator/sessions/{id}/activity",
+            post(orchestrator_record_activity).get(orchestrator_get_activity),
+        )
         .route("/api/v1/orchestrator/events", get(orchestrator_events))
+        // Static web UI served by the engine (PRD-013 M6) — no auth (localhost)
+        .route("/ui", get(serve_ui_index))
+        .route("/ui/{*path}", get(serve_ui))
         // Metrics
         .route("/api/v1/metrics", get(get_metrics))
         // RAG + Eval
@@ -133,6 +141,11 @@ async fn auth_middleware(
     if path == "/health" || path == "/version" {
         return next.run(req).await;
     }
+    // PRD-013 M6: the static UI is public (localhost convenience); the API
+    // it talks to keeps its auth.
+    if path == "/ui" || path.starts_with("/ui/") {
+        return next.run(req).await;
+    }
 
     let provided = req.headers().get("X-API-Key").and_then(|v| v.to_str().ok());
 
@@ -164,11 +177,16 @@ async fn auth_middleware(
 // ---------------------------------------------------------------------------
 
 /// Start the HTTP server. Supports graceful shutdown on SIGTERM / SIGINT.
+///
+/// `ui_dir` (PRD-013 M6): directory served as static files under `/ui`
+/// (`--ui-dir` flag or `MIRAI_UI_DIR` env). `None` → `/ui` answers 404 with
+/// a clear message.
 pub async fn serve(
     host: &str,
     port: u16,
     llm_factory: state::LLMFactory,
     api_key: Option<String>,
+    ui_dir: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if api_key.is_none() {
         tracing::warn!("No API key configured. Server is running without authentication.");
@@ -177,13 +195,23 @@ pub async fn serve(
 
     let mut registry = ToolRegistry::new();
     register_all_builtin_tools(&mut registry);
-    let state = AppState::new(registry, llm_factory, api_key);
+    let mut state = AppState::new(registry, llm_factory, api_key);
+    state.ui_dir = ui_dir.map(std::path::PathBuf::from);
+    if let Some(dir) = &state.ui_dir {
+        if dir.is_dir() {
+            tracing::info!("serving web UI at /ui from {}", dir.display());
+        } else {
+            tracing::warn!("--ui-dir {} is not a directory; /ui will 404", dir.display());
+        }
+    }
 
     // PRD-013: load the persistent session registry, reconcile against real
     // tmux state, and start the ~2s status poll (no-op without active sessions).
     if let Err(e) = state.orchestrator.initialize().await {
         tracing::warn!("orchestrator: failed to load session registry: {e}");
     }
+    // M6: sessions must report activity to THIS port.
+    state.orchestrator.set_server_port(port);
     state.orchestrator.start_polling();
 
     let app = create_router(state);

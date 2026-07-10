@@ -547,7 +547,11 @@ async fn run_serve(args: &[String]) {
     let server_api_key =
         parse_flag(args, "--api-key").or_else(|| std::env::var("MIRAI_API_KEY").ok());
 
-    if let Err(e) = openmirai_engine::server::serve(&host, port, llm_factory, server_api_key).await
+    // PRD-013 M6: directory served as the web UI under /ui.
+    let ui_dir = parse_flag(args, "--ui-dir").or_else(|| std::env::var("MIRAI_UI_DIR").ok());
+
+    if let Err(e) =
+        openmirai_engine::server::serve(&host, port, llm_factory, server_api_key, ui_dir).await
     {
         eprintln!("{}Server error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);
@@ -1458,7 +1462,7 @@ fn print_help() {
     mirai                                    Interactive setup wizard + terminal
     mirai run <file> [options]               Execute agent from JSON/YAML file
     mirai validate <file>                    Validate agent spec
-    mirai serve [--port N]                   Start HTTP server
+    mirai serve [--port N] [--ui-dir <dir>]  Start HTTP server (+ web UI at /ui)
     mirai version                            Show version
     mirai agent load <file>                  Import agent from YAML
     mirai agent list                         List agents

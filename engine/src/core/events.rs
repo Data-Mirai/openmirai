@@ -51,6 +51,7 @@ pub enum EventType {
     SessionStatusChanged,
     SessionOutput,
     SessionStopped,
+    SessionActivity,
 }
 
 impl std::fmt::Display for EventType {
@@ -84,6 +85,7 @@ impl std::fmt::Display for EventType {
             Self::SessionStatusChanged => "session_status_changed",
             Self::SessionOutput => "session_output",
             Self::SessionStopped => "session_stopped",
+            Self::SessionActivity => "session_activity",
         };
         f.write_str(s)
     }

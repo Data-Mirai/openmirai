@@ -5,7 +5,8 @@
 //!
 //! ```text
 //! mirai sessions list
-//! mirai sessions spawn --project <dir> --objective "…" [--name N] [--model M] [--effort E] [--ultracode]
+//! mirai sessions spawn --project <dir> --objective "…" [--name N] [--model M] [--effort E]
+//!                      [--ultracode] [--parent <id>] [--no-hooks]
 //! mirai sessions send <id> <text…>
 //! mirai sessions output <id> [--lines N]
 //! mirai sessions stop <id>
@@ -134,7 +135,7 @@ async fn spawn(args: &[String]) {
         super::parse_flag(args, "--objective").or_else(|| super::parse_flag(args, "-o"));
     let (Some(project), Some(objective)) = (project, objective) else {
         eprintln!(
-            "{}Usage: mirai sessions spawn --project <dir> --objective \"…\" [--name N] [--model M] [--effort E] [--ultracode]{}",
+            "{}Usage: mirai sessions spawn --project <dir> --objective \"…\" [--name N] [--model M] [--effort E] [--ultracode] [--parent <id>] [--no-hooks]{}",
             colors::RED,
             colors::RESET
         );
@@ -150,6 +151,7 @@ async fn spawn(args: &[String]) {
         "project_dir": project,
         "objective": objective,
         "ultracode": super::has_flag(args, "--ultracode"),
+        "no_hooks": super::has_flag(args, "--no-hooks"),
     });
     if let Some(name) = super::parse_flag(args, "--name") {
         payload["name"] = json!(name);
@@ -159,6 +161,12 @@ async fn spawn(args: &[String]) {
     }
     if let Some(effort) = super::parse_flag(args, "--effort") {
         payload["effort"] = json!(effort);
+    }
+    // M6 auto-parent: a session spawning another passes itself as parent —
+    // MIRAI_SESSION_ID is injected into every orchestrated session's env,
+    // so parent->child edges appear at any depth. `--parent` overrides.
+    if let Some(parent) = resolve_parent_id(args, std::env::var("MIRAI_SESSION_ID").ok()) {
+        payload["parent_id"] = json!(parent);
     }
 
     let client = Client::from_args(args);
@@ -256,6 +264,14 @@ async fn stop(args: &[String]) {
     println!("{}Session {id} stopped.{}", colors::GREEN, colors::RESET);
 }
 
+/// `--parent <id>` flag wins; otherwise the MIRAI_SESSION_ID env var
+/// (present when this CLI runs INSIDE an orchestrated session).
+fn resolve_parent_id(args: &[String], env_session_id: Option<String>) -> Option<String> {
+    super::parse_flag(args, "--parent")
+        .or(env_session_id)
+        .filter(|s| !s.trim().is_empty())
+}
+
 fn print_sessions_help() {
     println!(
         "\
@@ -265,6 +281,7 @@ fn print_sessions_help() {
     mirai sessions list                          List sessions (live directory)
     mirai sessions spawn --project <dir> --objective \"…\"
                          [--name N] [--model M] [--effort E] [--ultracode]
+                         [--parent <id>] [--no-hooks]
     mirai sessions send <id> <text…>             Send a prompt to a session
     mirai sessions output <id> [--lines N]       Show the session's pane output
     mirai sessions stop <id>                     Kill the session
@@ -278,7 +295,9 @@ fn print_sessions_help() {
 {bold}NOTES:{reset}
     Every session is a tmux session (mirai-<id>); take over manually with
     `tmux attach -t mirai-<id>`. With --ultracode the keyword is prepended
-    to the first prompt sent to the session.
+    to the first prompt sent to the session. Inside an orchestrated session,
+    spawn auto-links the child to its parent (MIRAI_SESSION_ID from the env;
+    --parent overrides). --no-hooks skips the activity-reporting hooks.
 ",
         bold = colors::BOLD,
         reset = colors::RESET,
@@ -343,6 +362,24 @@ fn cell(v: &Value, key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_parent_flag_beats_env_and_blank_env_is_ignored() {
+        let args = |v: &[&str]| -> Vec<String> { v.iter().map(|s| s.to_string()).collect() };
+        // Flag wins.
+        assert_eq!(
+            resolve_parent_id(&args(&["--parent", "p1"]), Some("env1".into())),
+            Some("p1".to_string())
+        );
+        // Env fallback (running inside an orchestrated session).
+        assert_eq!(
+            resolve_parent_id(&args(&[]), Some("env1".into())),
+            Some("env1".to_string())
+        );
+        // Nothing → no parent.
+        assert_eq!(resolve_parent_id(&args(&[]), None), None);
+        assert_eq!(resolve_parent_id(&args(&[]), Some("  ".into())), None);
+    }
 
     #[test]
     fn table_renders_headers_and_rows_aligned() {

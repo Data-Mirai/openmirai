@@ -54,3 +54,23 @@ Validado en vivo bajo pty (`script`): transición polling→live, tabla con sesi
 las del E2E M5 de otro agente corriendo en paralelo), eventos SSE en el panel, restauración del
 terminal al salir. NOTA para agentes paralelos: hay un `mirai serve` en :3777 con sesiones del E2E
 M5 — no matarlo ni borrar `~/.openmirai/orchestrator_sessions.json`.
+
+**M6 lado Engine (10-jul, COMPLETADO)** — canvas espacial vivo, datos nuevos:
+1. `parent_id` nullable en sesión (registry + GET + POST spawn); TmuxBackend inyecta
+   `MIRAI_SESSION_ID`/`MIRAI_PORT` con `tmux new-session -e`; el CLI spawn auto-manda parent_id
+   desde MIRAI_SESSION_ID (override `--parent`).
+2. Activity: POST/GET `/sessions/{id}/activity` (ring en memoria, 200/sesión, no persiste) +
+   SSE `session_activity` → `{id, tool, action, path, ts}`.
+3. Hooks reales de Claude Code: el engine escribe `~/.openmirai/hooks/report-activity.py`
+   (python3 stdlib, exit 0 SIEMPRE) + `<id>-settings.json` por sesión (PostToolUse, formato
+   verificado contra ~/.claude/settings.json real) y lanza `claude --settings <archivo>`;
+   `--no-hooks` para optar fuera (API + CLI).
+4. `/ui` estáticos desde `--ui-dir`/`MIRAI_UI_DIR` (sin auth, 404 claro si no está configurado,
+   anti-traversal, content-types básicos).
+5. `watch`: `session_activity` en el panel ACTIVITY (hora + id corto + action→path abreviado).
+Archivos: CREADO `engine/src/sessions/hooks.rs`; MODIFICADOS backend.rs/manager.rs/mod.rs (sessions),
+events.rs, server/{mod,state,orchestrator}.rs, cli/{main,sessions_cmd,sessions_watch}.rs.
+E2E real validado en server aislado (:3799, HOME en /tmp): hook manual + hook REAL disparado por
+claude escribiendo hola.txt (permission → aprobar → session_activity por SSE en <2s + GET + watch);
+auto-parent verificado; /ui sirviendo. Server :4321 de Gabriel intacto (PID verificado antes de
+matar solo el :3799). Suite completa: 796 engine + 13 cli, release limpio.

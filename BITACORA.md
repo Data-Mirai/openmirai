@@ -86,3 +86,24 @@ matar solo el :3799). Suite completa: 796 engine + 13 cli, release limpio.
 - CLI: `mirai sessions spawn --create-dir`; `mirai serve --projects-dirs`.
 Encima del commit 0e9fc8e del coordinador (acción net) sin tocarlo. Smoke aislado en :3798 (HOME
 de prueba, server :4321 intacto). Suite: 803 engine + 13 cli, release limpio.
+
+**M9 lado Engine (10-jul, COMPLETADO)** — selector de carpetas nativo:
+- `POST /api/v1/orchestrator/pick-folder` body `{start?}` → abre el diálogo NATIVO del host y
+  devuelve la ruta. macOS: `osascript` con `tell System Events to activate` + `choose folder`
+  (`default location` si `start` es un dir existente). Linux: `zenity --file-selection --directory`
+  (+ `--filename` si `start`); zenity ausente → 501. Otro OS → 501.
+- Respuestas: 200 `{path}` (POSIX path sin trailing slash) · 200 `{cancelled: true}` (osascript -128 /
+  zenity exit 1 / timeout 120s que mata el proceso) · 409 si ya hay diálogo abierto (AtomicBool +
+  RAII guard, un solo diálogo a la vez) · 501 sin soporte · 500 fallo inesperado.
+- Runner inyectable (`DialogRunner` trait; real = `TokioRunner` con `tokio::process` + timeout + kill,
+  NO bloquea el runtime). Archivos: CREADO `engine/src/sessions/picker.rs`; MODIFICADOS mod.rs
+  (sessions), server/{state,orchestrator,mod}.rs.
+- Tests: 11 unit (build_command mac/linux/otro, parseo picked/cancel/timeout/501/failed, busy flag
+  concurrente con release) + 4 HTTP (200 path, cancel+timeout 200, 501, 409 concurrente real).
+- PRUEBA MANUAL REAL en server aislado :3797: el diálogo Finder REAL se abrió (osascript al frente),
+  un 2º request devolvió 409 `{error: already open}` en vivo, cerrar/matar el diálogo → 200
+  `{cancelled: true}` (verificado dos veces), y osascript `POSIX path of` devuelve `/Users/gabo/`
+  con exit 0 (formato exacto que el parser recorta a `/Users/gabo`). El click-through interactivo
+  para el 200 `{path}` no se pudo automatizar (accesibilidad de computer-use no concedida en la
+  sesión + osascript sin permiso de keystrokes), pero está cubierto por test HTTP con el stdout real.
+  Server :4321 de Gabriel intacto (PID verificado antes de matar solo :3797). Suite: 818 engine + 13 cli.

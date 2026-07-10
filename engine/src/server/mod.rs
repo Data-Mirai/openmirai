@@ -33,8 +33,8 @@ use self::helpers::rag_search;
 use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
     orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
-    orchestrator_list_projects, orchestrator_record_activity, orchestrator_send, orchestrator_stop,
-    serve_ui, serve_ui_index,
+    orchestrator_list_projects, orchestrator_pick_folder, orchestrator_record_activity,
+    orchestrator_send, orchestrator_stop, serve_ui, serve_ui_index,
 };
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,11 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/orchestrator/projects",
             get(orchestrator_list_projects),
+        )
+        // Native host folder picker (PRD-013 M9)
+        .route(
+            "/api/v1/orchestrator/pick-folder",
+            post(orchestrator_pick_folder),
         )
         // Static web UI served by the engine (PRD-013 M6) — no auth (localhost)
         .route("/ui", get(serve_ui_index))

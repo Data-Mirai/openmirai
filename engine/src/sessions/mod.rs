@@ -18,6 +18,7 @@
 mod backend;
 pub mod hooks;
 mod manager;
+pub mod picker;
 mod status;
 
 pub use backend::{SessionBackend, TmuxBackend};

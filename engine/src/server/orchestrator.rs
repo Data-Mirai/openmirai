@@ -288,6 +288,47 @@ pub(crate) async fn orchestrator_list_projects(State(state): State<AppState>) ->
     Json(json!({ "projects": projects }))
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct PickFolderRequest {
+    #[serde(default)]
+    pub start: Option<String>,
+}
+
+/// POST /api/v1/orchestrator/pick-folder — open the HOST's native folder
+/// dialog (M9). 200 `{path}` on choose, 200 `{cancelled: true}` on cancel or
+/// ~120s timeout, 409 while another dialog is open, 501 without a native
+/// picker on this host. Runs async — the server keeps serving while the
+/// dialog is open.
+pub(crate) async fn orchestrator_pick_folder(
+    State(state): State<AppState>,
+    Json(req): Json<PickFolderRequest>,
+) -> axum::response::Response {
+    use crate::sessions::picker::PickOutcome;
+
+    let outcome = state
+        .folder_picker
+        .pick(std::env::consts::OS, req.start.as_deref())
+        .await;
+
+    match outcome {
+        PickOutcome::Picked(path) => (StatusCode::OK, Json(json!({ "path": path }))).into_response(),
+        PickOutcome::Cancelled => {
+            (StatusCode::OK, Json(json!({ "cancelled": true }))).into_response()
+        }
+        PickOutcome::Busy => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "a folder dialog is already open on the host" })),
+        )
+            .into_response(),
+        PickOutcome::Unsupported(msg) => {
+            (StatusCode::NOT_IMPLEMENTED, Json(json!({ "error": msg }))).into_response()
+        }
+        PickOutcome::Failed(msg) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": msg }))).into_response()
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Static web UI under /ui (PRD-013 M6)
 // ---------------------------------------------------------------------------
@@ -1104,6 +1145,134 @@ mod tests {
         assert!(missing.is_dir());
 
         let _ = std::fs::remove_dir_all(missing);
+        let _ = std::fs::remove_file(path);
+    }
+
+    // -- M9: native folder picker ------------------------------------------------
+
+    /// Minimal scripted runner for HTTP-level tests.
+    struct HttpFakeRunner {
+        outcome: crate::sessions::picker::RunOutcome,
+        hold_ms: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::sessions::picker::DialogRunner for HttpFakeRunner {
+        async fn run(
+            &self,
+            _program: &str,
+            _args: &[String],
+            _timeout: std::time::Duration,
+        ) -> crate::sessions::picker::RunOutcome {
+            if self.hold_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.hold_ms)).await;
+            }
+            self.outcome.clone()
+        }
+    }
+
+    fn app_with_picker(outcome: crate::sessions::picker::RunOutcome, hold_ms: u64) -> (Router, std::path::PathBuf) {
+        let (mut state, _backend, path) = test_state();
+        state.folder_picker = Arc::new(crate::sessions::picker::FolderPicker::with_runner(
+            Box::new(HttpFakeRunner { outcome, hold_ms }),
+            std::time::Duration::from_secs(2),
+        ));
+        (create_router(state), path)
+    }
+
+    async fn post_pick(app: &Router, body: Value) -> (StatusCode, Value) {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orchestrator/pick-folder")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        (status, body_json(resp.into_body()).await)
+    }
+
+    #[tokio::test]
+    async fn pick_folder_returns_chosen_path() {
+        use crate::sessions::picker::RunOutcome;
+        let (app, path) = app_with_picker(
+            RunOutcome::Completed {
+                code: Some(0),
+                stdout: "/Users/gabo/proyecto/
+".into(),
+                stderr: String::new(),
+            },
+            0,
+        );
+        let (status, body) = post_pick(&app, json!({"start": "/tmp"})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"path": "/Users/gabo/proyecto"}));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn pick_folder_cancel_and_timeout_are_cancelled_200() {
+        use crate::sessions::picker::RunOutcome;
+        // User cancel (osascript -128).
+        let (app, path) = app_with_picker(
+            RunOutcome::Completed {
+                code: Some(1),
+                stdout: String::new(),
+                stderr: "execution error: User canceled. (-128)".into(),
+            },
+            0,
+        );
+        let (status, body) = post_pick(&app, json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"cancelled": true}));
+        let _ = std::fs::remove_file(path);
+
+        // Timeout → also cancelled.
+        let (app, path) = app_with_picker(RunOutcome::TimedOut, 0);
+        let (status, body) = post_pick(&app, json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"cancelled": true}));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn pick_folder_unsupported_is_501() {
+        use crate::sessions::picker::RunOutcome;
+        let (app, path) = app_with_picker(RunOutcome::SpawnNotFound, 0);
+        let (status, body) = post_pick(&app, json!({})).await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+        assert!(body["error"].as_str().unwrap().len() > 5);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn pick_folder_second_concurrent_request_is_409() {
+        use crate::sessions::picker::RunOutcome;
+        let (app, path) = app_with_picker(
+            RunOutcome::Completed {
+                code: Some(0),
+                stdout: "/tmp/a
+".into(),
+                stderr: String::new(),
+            },
+            300,
+        );
+
+        let app1 = app.clone();
+        let first =
+            tokio::spawn(async move { post_pick(&app1, json!({})).await });
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+        let (status, body) = post_pick(&app, json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().unwrap().contains("already open"));
+
+        let (status, body) = first.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["path"], "/tmp/a");
         let _ = std::fs::remove_file(path);
     }
 

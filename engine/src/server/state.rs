@@ -64,6 +64,8 @@ pub struct AppState {
     /// `--projects-dirs a:b:c` or MIRAI_PROJECTS_DIRS). Empty → /projects
     /// lists session dirs only.
     pub projects_dirs: Vec<std::path::PathBuf>,
+    /// Native host folder picker (PRD-013 M9). One dialog at a time.
+    pub folder_picker: Arc<crate::sessions::picker::FolderPicker>,
 }
 
 impl AppState {
@@ -96,6 +98,7 @@ impl AppState {
             )),
             ui_dir: None,
             projects_dirs: Vec::new(),
+            folder_picker: Arc::new(crate::sessions::picker::FolderPicker::new()),
         }
     }
 

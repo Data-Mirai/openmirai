@@ -389,9 +389,9 @@ impl SessionManager {
         action: &str,
         path: Option<&str>,
     ) -> Result<serde_json::Value, SessionError> {
-        if !matches!(action, "read" | "write" | "exec") {
+        if !matches!(action, "read" | "write" | "exec" | "net") {
             return Err(SessionError::Invalid(format!(
-                "action must be read|write|exec, got '{action}'"
+                "action must be read|write|exec|net, got '{action}'"
             )));
         }
         if tool.trim().is_empty() {
@@ -1163,6 +1163,10 @@ mod tests {
             manager.record_activity(&rec.id, "Write", "delete", None).await,
             Err(SessionError::Invalid(_))
         ));
+        assert!(manager
+            .record_activity(&rec.id, "WebFetch", "net", Some("https://example.com"))
+            .await
+            .is_ok());
         assert!(matches!(
             manager.record_activity(&rec.id, " ", "read", None).await,
             Err(SessionError::Invalid(_))

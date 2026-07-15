@@ -18,19 +18,19 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
-            asset: mirai-darwin-arm64
+            platform: darwin-arm64
           - os: macos-13
             target: x86_64-apple-darwin
-            asset: mirai-darwin-x86_64
+            platform: darwin-x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset: mirai-linux-x86_64
+            platform: linux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            asset: mirai-linux-arm64
+            platform: linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset: mirai-windows-x86_64.exe
+            platform: windows-x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -42,27 +42,38 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Build metadata (timestamp)
+        shell: bash
+        run: echo "MIRAI_BUILD_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Build release binary
+        env:
+          MIRAI_BUILD_NUMBER: ${{ github.run_number }}
         run: cargo build --release --target ${{ matrix.target }} --bin mirai
 
       - name: Prepare artifact (unix)
         if: matrix.os != 'windows-latest'
+        shell: bash
         run: |
+          VER="$(tr -d '[:space:]' < VERSION)"   # fuente única de la versión
+          NAME="mirai-v${VER}+build.${{ github.run_number }}-${{ matrix.platform }}"
           mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/mirai artifacts/${{ matrix.asset }}
-          chmod +x artifacts/${{ matrix.asset }}
+          cp "target/${{ matrix.target }}/release/mirai" "artifacts/${NAME}"
+          chmod +x "artifacts/${NAME}"
 
       - name: Prepare artifact (windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
+          VER="$(tr -d '[:space:]' < VERSION)"
+          NAME="mirai-v${VER}+build.${{ github.run_number }}-${{ matrix.platform }}.exe"
           mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/mirai.exe artifacts/${{ matrix.asset }}
+          cp "target/${{ matrix.target }}/release/mirai.exe" "artifacts/${NAME}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: artifacts/${{ matrix.asset }}
+          name: ${{ matrix.platform }}
+          path: artifacts/*
 
   release:
     name: publish release

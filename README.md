@@ -34,6 +34,10 @@ rustup update stable
 ```
 
 ```bash
+# Install requirements
+sudo apt  install rustup
+rustup update stable
+
 # Build from source
 cargo build --release
 

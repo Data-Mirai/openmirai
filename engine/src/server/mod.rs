@@ -244,6 +244,10 @@ pub async fn serve(
     }
     // M6: sessions must report activity to THIS port.
     state.orchestrator.set_server_port(port);
+    // M6 fix (code review): with --api-key the activity hook must authenticate
+    // too — inject the key into spawned sessions (MIRAI_API_KEY) or every hook
+    // POST dies with a silent 401 at the auth middleware.
+    state.orchestrator.set_api_key(state.api_key.clone());
     state.orchestrator.start_polling();
 
     let app = create_router(state);

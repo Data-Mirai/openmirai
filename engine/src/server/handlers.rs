@@ -889,22 +889,33 @@ pub(crate) async fn get_session(
     }
 }
 
-fn get_trace_id(session_id: &str) -> String {
-    let cleaned: String = session_id.chars().filter(|c| c.is_alphanumeric()).collect();
-    if cleaned.len() >= 32 {
-        cleaned[..32].to_string()
-    } else {
-        format!("{:0<32}", cleaned)
-    }
+/// Hash determinista de 64 bits, nunca cero.
+///
+/// Los IDs OTel deben ser hex y NUNCA all-zero (la spec los declara inválidos
+/// y los collectors descartan la traza). Hasheamos en vez de truncar/rellenar
+/// el nombre crudo: truncar node_ids parecidos colisionaba (rompía el árbol
+/// de spans) y rellenar con ceros podía producir un ID all-zero.
+/// Determinista a propósito: GETs repetidos del mismo trace devuelven los
+/// mismos IDs.
+fn otel_hash64(input: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    // `.max(1)` garantiza que nunca sea 0 (all-zero = inválido por spec).
+    hasher.finish().max(1)
 }
 
-fn get_span_id(name: &str) -> String {
-    let cleaned: String = name.chars().filter(|c| c.is_alphanumeric()).collect();
-    if cleaned.len() >= 16 {
-        cleaned[..16].to_string()
-    } else {
-        format!("{:0<16}", cleaned)
-    }
+/// trace_id OTel: 16 bytes (32 hex) derivados del session_id.
+fn get_trace_id(session_id: &str) -> String {
+    let hi = otel_hash64(session_id);
+    let lo = otel_hash64(&format!("{session_id}#lo"));
+    format!("{hi:016x}{lo:016x}")
+}
+
+/// span_id OTel: 8 bytes (16 hex) derivados de name + índice en el trace.
+/// El índice evita colisiones entre entradas con el mismo node_id.
+fn get_span_id(name: &str, index: usize) -> String {
+    format!("{:016x}", otel_hash64(&format!("{name}#{index}")))
 }
 
 pub(crate) async fn get_session_otel_trace(
@@ -915,16 +926,24 @@ pub(crate) async fn get_session_otel_trace(
     match sessions.get(&id) {
         Some(result) => {
             let trace_id = get_trace_id(&id);
-            let root_span_id = get_span_id("root");
+            // usize::MAX como índice reservado para el root: nunca colisiona
+            // con los índices reales del trace (0..len).
+            let root_span_id = get_span_id("root", usize::MAX);
 
             let mut total_duration_ms = 0;
             let mut spans = Vec::new();
 
-            for entry in &result.trace {
+            for (index, entry) in result.trace.iter().enumerate() {
                 total_duration_ms += entry.duration_ms;
 
-                let span_id = get_span_id(&entry.node_id);
+                let span_id = get_span_id(&entry.node_id, index);
 
+                // Limitación conocida: TraceEntry solo guarda duration_ms (no
+                // hay timestamps reales de inicio/fin), así que los spans se
+                // fabrican en serie desde t=0. En grafos con nodos paralelos
+                // esto infla el wall-time aparente y aplana el DAG a una
+                // secuencia. Para timings fieles habría que capturar
+                // start/end reales en el runner y usarlos aquí.
                 let start_time_nano = (total_duration_ms - entry.duration_ms) * 1_000_000;
                 let end_time_nano = total_duration_ms * 1_000_000;
 
@@ -997,7 +1016,9 @@ pub(crate) async fn get_session_otel_trace(
                             {
                                 "scope": {
                                     "name": "openmirai.runner",
-                                    "version": "0.6.0"
+                                    // Versión real del build (VERSION en la raíz),
+                                    // no un literal que se desactualiza.
+                                    "version": env!("MIRAI_VERSION")
                                 },
                                 "spans": all_spans
                             }

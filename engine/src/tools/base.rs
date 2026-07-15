@@ -10,9 +10,6 @@ use serde_json::Value;
 /// Build a `ToolField` with the given name, type, required flag, and description.
 /// This is the canonical constructor — every tool module imports it instead of
 /// defining a local copy.
-/// Build a `ToolField` with the given name, type, required flag, and description.
-/// This is the canonical constructor — every tool module imports it instead of
-/// defining a local copy.
 pub fn field(name: &str, field_type: FieldType, required: bool, desc: &str) -> ToolField {
     ToolField {
         name: name.into(),
@@ -175,22 +172,58 @@ impl ToolField {
             }
         }
 
-        // 3. String regex format
+        // 3. String regex format — FAIL-CLOSED: an invalid pattern is a spec
+        // bug and must reject the value with the compile error, never let the
+        // input pass validation silently.
         if let Some(ref pattern) = self.regex_format {
             if let Some(s) = value.as_str() {
-                if let Ok(re) = regex::Regex::new(pattern) {
-                    if !re.is_match(s) {
-                        return Err(format!(
-                            "{}: does not match format pattern '{}'",
-                            context_label, pattern
-                        ));
-                    }
+                let re = compiled_regex(pattern).map_err(|e| {
+                    format!(
+                        "{}: invalid format pattern '{}': {}",
+                        context_label, pattern, e
+                    )
+                })?;
+                if !re.is_match(s) {
+                    return Err(format!(
+                        "{}: does not match format pattern '{}'",
+                        context_label, pattern
+                    ));
                 }
             }
         }
 
         Ok(())
     }
+}
+
+/// Process-wide cache of compiled `regex_format` patterns.
+///
+/// Patterns come from tool specs (a small, static set) and are re-validated on
+/// every node execution, so compiling once per pattern instead of once per
+/// invocation avoids repeated compile cost. Compile *errors* are cached too so
+/// an invalid pattern fails fast — and fail-closed — on every use.
+fn compiled_regex(pattern: &str) -> Result<std::sync::Arc<regex::Regex>, String> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    type Cache = Mutex<HashMap<String, Result<Arc<regex::Regex>, String>>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(cached) = guard.get(pattern) {
+        return cached.clone();
+    }
+    // size_limit bounds the compiled program size so a pathological pattern
+    // (e.g. huge bounded repetitions) cannot exhaust memory — matching itself
+    // is already linear-time in the `regex` crate (no backtracking/ReDoS).
+    let result = regex::RegexBuilder::new(pattern)
+        .size_limit(1 << 20) // 1 MiB compiled-program budget
+        .build()
+        .map(Arc::new)
+        .map_err(|e| e.to_string());
+    guard.insert(pattern.to_string(), result.clone());
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +442,20 @@ mod tests {
         assert!(re_field.validate_value(&json!("ABC-123"), "test").is_ok());
         assert!(re_field.validate_value(&json!("abc-123"), "test").is_err());
         assert!(re_field.validate_value(&json!("ABCD-123"), "test").is_err());
+    }
+
+    #[test]
+    fn test_invalid_regex_pattern_fails_closed() {
+        // An invalid pattern must REJECT the input with the compile error
+        // (fail-closed), not silently let it pass validation.
+        let bad = field("code", FieldType::String, true, "").regex_format(r"[unclosed");
+        let err = bad.validate_value(&json!("anything"), "test").unwrap_err();
+        assert!(err.contains("invalid format pattern"), "got: {err}");
+
+        // A pattern whose compiled program blows past size_limit must also be
+        // rejected instead of exhausting memory.
+        let huge = field("code", FieldType::String, true, "").regex_format(r"(a{1000}){1000}");
+        assert!(huge.validate_value(&json!("a"), "test").is_err());
     }
 
     #[test]

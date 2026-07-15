@@ -62,6 +62,9 @@ impl DialogRunner for TokioRunner {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            // Code review: if this future is dropped (client disconnected,
+            // task aborted), don't leave an orphan osascript/zenity dialog.
+            .kill_on_drop(true)
             .spawn()
         {
             Ok(c) => c,

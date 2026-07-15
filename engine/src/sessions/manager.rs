@@ -128,6 +128,11 @@ pub struct SessionManager {
     /// Port `mirai serve` listens on — injected as MIRAI_PORT at spawn so the
     /// activity hook knows where to report. Set by `serve()`.
     server_port: std::sync::atomic::AtomicU16,
+    /// API key of `mirai serve` (if auth is on) — injected as MIRAI_API_KEY at
+    /// spawn so the activity hook can authenticate (it sends X-API-Key when the
+    /// var exists; without it the POST dies with a silent 401). Set by `serve()`.
+    /// std Mutex (not tokio): only short lock in setters/spawn, never across await.
+    api_key: std::sync::Mutex<Option<String>>,
     /// Recent resource activity per session (M6). Ring buffer, in-memory only.
     activity: Mutex<HashMap<String, std::collections::VecDeque<serde_json::Value>>>,
 }
@@ -145,6 +150,7 @@ impl SessionManager {
             last_pane: Mutex::new(HashMap::new()),
             polling_started: AtomicBool::new(false),
             server_port: std::sync::atomic::AtomicU16::new(3000),
+            api_key: std::sync::Mutex::new(None),
             activity: Mutex::new(HashMap::new()),
         }
     }
@@ -152,6 +158,12 @@ impl SessionManager {
     /// Record the real server port (used for the MIRAI_PORT env injection).
     pub fn set_server_port(&self, port: u16) {
         self.server_port.store(port, Ordering::SeqCst);
+    }
+
+    /// Record the server's API key (used for the MIRAI_API_KEY env injection,
+    /// so the M6 activity hook can pass the auth middleware). `None` = no auth.
+    pub fn set_api_key(&self, key: Option<String>) {
+        *self.api_key.lock().expect("api_key mutex poisoned") = key;
     }
 
     /// Base dir for hook artifacts: the registry's directory (`~/.openmirai`).
@@ -301,13 +313,20 @@ impl SessionManager {
 
         // M6: the session (and its hook subprocesses) must know who it is and
         // where the engine listens.
-        let env = [
+        let mut env = vec![
             ("MIRAI_SESSION_ID".to_string(), id.clone()),
             (
                 "MIRAI_PORT".to_string(),
                 self.server_port.load(Ordering::SeqCst).to_string(),
             ),
         ];
+        // M6 fix (code review): when the server runs with --api-key, the
+        // activity hook must authenticate too — without MIRAI_API_KEY in the
+        // session env the hook's POST hits the auth middleware and dies with
+        // a silent 401 (the hook never fails loudly by design).
+        if let Some(key) = self.api_key.lock().expect("api_key mutex poisoned").clone() {
+            env.push(("MIRAI_API_KEY".to_string(), key));
+        }
 
         self.backend
             .spawn(&tmux_session, &params.project_dir, &command, &env)?;
@@ -333,7 +352,15 @@ impl SessionManager {
             .write()
             .await
             .insert(id.clone(), record.clone());
-        self.persist().await?;
+        if let Err(e) = self.persist().await {
+            // Code review: if the registry write fails right after spawning,
+            // don't leak an orphan tmux session that no registry entry tracks.
+            // Best-effort kill + rollback of the in-memory entry, then bubble
+            // up the original persist error.
+            let _ = self.backend.kill(&record.tmux_session);
+            self.sessions.write().await.remove(&id);
+            return Err(e);
+        }
 
         self.emit(EventType::SessionCreated, &id, record.to_api_json());
         Ok(record)
@@ -356,10 +383,15 @@ impl SessionManager {
     /// With `ultracode: true`, the word "ultracode" is prepended to the FIRST
     /// prompt only.
     pub async fn send(&self, id: &str, text: &str) -> Result<(), SessionError> {
-        let (tmux_session, payload) = {
-            let sessions = self.sessions.read().await;
+        // Code review: payload computation AND the first_prompt_sent flip
+        // happen under ONE write lock (send_text included), so two concurrent
+        // send()s on the first prompt can't both see the flag unset and each
+        // prepend "ultracode". On backend error the flag stays unset (the `?`
+        // returns before flipping it), preserving the previous semantics.
+        {
+            let mut sessions = self.sessions.write().await;
             let rec = sessions
-                .get(id)
+                .get_mut(id)
                 .ok_or_else(|| SessionError::NotFound(id.to_string()))?;
             if !rec.status.is_active() {
                 return Err(SessionError::Stopped(id.to_string()));
@@ -369,17 +401,11 @@ impl SessionManager {
             } else {
                 text.to_string()
             };
-            (rec.tmux_session.clone(), payload)
-        };
 
-        self.backend.send_text(&tmux_session, &payload)?;
+            self.backend.send_text(&rec.tmux_session, &payload)?;
 
-        {
-            let mut sessions = self.sessions.write().await;
-            if let Some(rec) = sessions.get_mut(id) {
-                rec.first_prompt_sent = true;
-                rec.last_activity = now_rfc3339();
-            }
+            rec.first_prompt_sent = true;
+            rec.last_activity = now_rfc3339();
         }
         self.persist().await
     }
@@ -812,6 +838,35 @@ mod tests {
         assert!(spawned[0]
             .3
             .contains(&("MIRAI_PORT".to_string(), "4321".to_string())));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_injects_api_key_only_when_configured() {
+        // M6 fix (code review): with --api-key, the activity hook needs
+        // MIRAI_API_KEY in the session env or its POST 401s silently.
+        let (manager, backend, path) = manager_with_fake();
+
+        // No key configured → no MIRAI_API_KEY in the env.
+        manager.spawn(spawn_params()).await.unwrap();
+        {
+            let spawned = backend.spawned.lock().unwrap();
+            assert!(
+                !spawned[0].3.iter().any(|(k, _)| k == "MIRAI_API_KEY"),
+                "sin api key configurada no debe inyectarse MIRAI_API_KEY"
+            );
+        }
+
+        // Key configured → injected alongside MIRAI_SESSION_ID / MIRAI_PORT.
+        manager.set_api_key(Some("sekreto-123".into()));
+        manager.spawn(spawn_params()).await.unwrap();
+        {
+            let spawned = backend.spawned.lock().unwrap();
+            let env = &spawned[1].3;
+            assert!(env.contains(&("MIRAI_API_KEY".to_string(), "sekreto-123".to_string())));
+            assert!(env.iter().any(|(k, _)| k == "MIRAI_SESSION_ID"));
+            assert!(env.iter().any(|(k, _)| k == "MIRAI_PORT"));
+        }
         let _ = std::fs::remove_file(path);
     }
 

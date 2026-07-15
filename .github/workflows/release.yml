@@ -34,6 +34,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Guard temprano: el nombre del asset sale de VERSION, no del tag.
+      # Si difieren publicaríamos un binario con versión distinta al tag → fallar aquí.
+      - name: Verify tag matches VERSION file
+        shell: bash
+        run: |
+          VER="v$(tr -d '[:space:]' < VERSION)"
+          if [[ "$VER" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::VERSION file says '$VER' but the pushed tag is '$GITHUB_REF_NAME'. Update VERSION (or re-tag) so they match before releasing."
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -56,7 +67,9 @@ jobs:
         shell: bash
         run: |
           VER="$(tr -d '[:space:]' < VERSION)"   # fuente única de la versión
-          NAME="mirai-v${VER}+build.${{ github.run_number }}-${{ matrix.platform }}"
+          # Separador '-' (no '+'): GitHub Releases reescribe '+' en nombres de asset
+          # (lo normaliza a '.'), lo que desincronizaría los nombres frente a SHA256SUMS.
+          NAME="mirai-v${VER}-build.${{ github.run_number }}-${{ matrix.platform }}"
           mkdir -p artifacts
           cp "target/${{ matrix.target }}/release/mirai" "artifacts/${NAME}"
           chmod +x "artifacts/${NAME}"
@@ -66,7 +79,8 @@ jobs:
         shell: bash
         run: |
           VER="$(tr -d '[:space:]' < VERSION)"
-          NAME="mirai-v${VER}+build.${{ github.run_number }}-${{ matrix.platform }}.exe"
+          # Mismo separador '-' que el step unix (ver comentario arriba: '+' es riesgoso en assets).
+          NAME="mirai-v${VER}-build.${{ github.run_number }}-${{ matrix.platform }}.exe"
           mkdir -p artifacts
           cp "target/${{ matrix.target }}/release/mirai.exe" "artifacts/${NAME}"
 

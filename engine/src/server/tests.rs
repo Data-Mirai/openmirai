@@ -51,7 +51,9 @@ async fn version_returns_engine_info() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
+    // El handler emite MIRAI_VERSION (archivo VERSION), no CARGO_PKG_VERSION:
+    // asertar la misma fuente evita falsos rojos si divergen.
+    assert_eq!(json["version"], env!("MIRAI_VERSION"));
     assert_eq!(json["engine"], "openmirai-engine-rs");
 }
 

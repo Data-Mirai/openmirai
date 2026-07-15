@@ -1,7 +1,8 @@
 //! Gemini adapter — Google AI models via HTTP API.
 //!
 //! Key differences from OpenAI-compatible providers:
-//! - API key is sent as a query parameter (`?key=...`), not a header.
+//! - API key is sent via the `x-goog-api-key` header (never in the URL,
+//!   so it can't leak through logged/stringified request URLs).
 //! - Messages use `contents: [{ parts: [{ text }] }]` format.
 //! - Role `"assistant"` maps to `"model"`.
 //! - System message goes to `systemInstruction`, NOT in the contents array.
@@ -220,26 +221,36 @@ impl GeminiAdapter {
     // PRD-018: Files API — large media travels by reference
     // ------------------------------------------------------------------
 
-    /// Reject a response whose generation was cut by the output-token limit.
+    /// Reject a response whose generation was cut before a clean stop.
     ///
     /// PRD-018 (fail-loud): partial text must never surface as success. A
     /// 2h-meeting transcript that silently covers only the first 25 minutes
     /// is worse than an explicit error — the caller can't tell it's broken.
+    ///
+    /// Whitelist: only `"STOP"` or an absent finishReason (tool calls,
+    /// streaming chunks) count as success. Anything else — MAX_TOKENS,
+    /// SAFETY, RECITATION, BLOCKLIST, OTHER, … — cut the output and must
+    /// surface as an error, not as a silent partial success.
     fn check_finish_reason(data: &Value) -> Result<(), LLMError> {
         let reason = data
             .pointer("/candidates/0/finishReason")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if reason == "MAX_TOKENS" {
-            let emitted = data
-                .pointer("/usageMetadata/candidatesTokenCount")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            return Err(LLMError::Truncated(format!(
-                "finishReason=MAX_TOKENS after {emitted} output tokens — raise max_tokens to the model's output ceiling or shrink the requested output"
-            )));
+        match reason {
+            "" | "STOP" => Ok(()),
+            "MAX_TOKENS" => {
+                let emitted = data
+                    .pointer("/usageMetadata/candidatesTokenCount")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                Err(LLMError::Truncated(format!(
+                    "finishReason=MAX_TOKENS after {emitted} output tokens — raise max_tokens to the model's output ceiling or shrink the requested output"
+                )))
+            }
+            other => Err(LLMError::Truncated(format!(
+                "finishReason={other} — the model stopped before completing the output; any returned text is partial"
+            ))),
         }
-        Ok(())
     }
 
     /// Upload a local file to the Gemini Files API (resumable, single shot)
@@ -258,10 +269,11 @@ impl GeminiAdapter {
         // 1. Start resumable session. The upload root strips the API-version
         //    suffix from base_url (…/v1beta → …/upload/v1beta).
         let upload_root = self.base_url.trim_end_matches("/v1beta");
-        let start_url = format!("{upload_root}/upload/v1beta/files?key={}", self.api_key);
+        let start_url = format!("{upload_root}/upload/v1beta/files");
         let start_resp = self
             .client
             .post(&start_url)
+            .header("x-goog-api-key", &self.api_key)
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
             .header("X-Goog-Upload-Header-Content-Length", size.to_string())
@@ -289,17 +301,24 @@ impl GeminiAdapter {
             .to_string();
 
         // 2. Send the bytes and finalize. One shot — resumable chunking is
-        //    unnecessary below the 2GB cap on a local connection.
-        let bytes = tokio::fs::read(path).await.map_err(|e| {
+        //    unnecessary below the 2GB cap on a local connection. The body is
+        //    streamed from disk so a large file never sits fully in RAM.
+        let file = tokio::fs::File::open(path).await.map_err(|e| {
             LLMError::ConnectionError(format!("failed to read media file '{path}': {e}"))
         })?;
         let upload_resp = self
             .client
             .post(&session_url)
+            // The session URL no longer embeds ?key= (it mirrored the start
+            // request), so authenticate the finalize explicitly too.
+            .header("x-goog-api-key", &self.api_key)
             .header("X-Goog-Upload-Command", "upload, finalize")
             .header("X-Goog-Upload-Offset", "0")
+            // Explicit Content-Length is required here: with a streamed body
+            // reqwest can't derive it and would fall back to chunked
+            // transfer, which the upload endpoint may reject.
             .header("Content-Length", size.to_string())
-            .body(bytes)
+            .body(reqwest::Body::from(file))
             .send()
             .await
             .map_err(super::error::map_reqwest_error)?;
@@ -334,7 +353,7 @@ impl GeminiAdapter {
             .to_string();
 
         // 3. Poll until ACTIVE (the API processes uploads asynchronously).
-        let poll_url = format!("{}/{}?key={}", self.base_url, file_name, self.api_key);
+        let poll_url = format!("{}/{}", self.base_url, file_name);
         let deadline = std::time::Instant::now() + Duration::from_secs(FILE_ACTIVE_POLL_MAX_SECS);
         while state != "ACTIVE" {
             if state == "FAILED" {
@@ -350,6 +369,7 @@ impl GeminiAdapter {
             let poll: Value = self
                 .client
                 .get(&poll_url)
+                .header("x-goog-api-key", &self.api_key)
                 .send()
                 .await
                 .map_err(super::error::map_reqwest_error)?
@@ -369,8 +389,13 @@ impl GeminiAdapter {
     /// Delete an uploaded file (best-effort — the API auto-expires files
     /// after 48h, so a failed delete only widens the retention window).
     async fn delete_remote_file(&self, file_name: &str) {
-        let url = format!("{}/{}?key={}", self.base_url, file_name, self.api_key);
-        let _ = self.client.delete(&url).send().await;
+        let url = format!("{}/{}", self.base_url, file_name);
+        let _ = self
+            .client
+            .delete(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await;
     }
 
     /// Upload every `pending_upload` media attachment in `messages`, swapping
@@ -474,14 +499,12 @@ impl LLMAdapter for GeminiAdapter {
             });
         }
 
-        let url = format!(
-            "{}/models/{}:generateContent?key={}",
-            self.base_url, model, self.api_key
-        );
+        let url = format!("{}/models/{}:generateContent", self.base_url, model);
 
         let resp = self
             .client
             .post(&url)
+            .header("x-goog-api-key", &self.api_key)
             .json(&payload)
             .send()
             .await
@@ -553,11 +576,12 @@ impl LLMAdapter for GeminiAdapter {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, LLMError> {
-        let url = format!("{}/models?key={}", self.base_url, self.api_key);
+        let url = format!("{}/models", self.base_url);
 
         let resp = self
             .client
             .get(&url)
+            .header("x-goog-api-key", &self.api_key)
             .send()
             .await
             .map_err(super::error::map_reqwest_error)?;
@@ -647,14 +671,12 @@ impl GeminiAdapter {
             payload["tools"] = Value::Array(gemini_tools);
         }
 
-        let url = format!(
-            "{}/models/{}:generateContent?key={}",
-            self.base_url, model, self.api_key
-        );
+        let url = format!("{}/models/{}:generateContent", self.base_url, model);
 
         let resp = self
             .client
             .post(&url)
+            .header("x-goog-api-key", &self.api_key)
             .json(&payload)
             .send()
             .await

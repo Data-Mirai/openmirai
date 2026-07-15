@@ -1109,7 +1109,9 @@ impl GraphRunner {
             .iter()
             .filter_map(|nid| {
                 let node = graph.nodes.iter().find(|n| n.id == *nid)?;
-                let mut inputs = self.resolve_inputs(nid, graph, state);
+                // Fork state for isolation in this parallel branch (PLAN_000 / Milestone 1)
+                let branch_state = state.fork();
+                let mut inputs = self.resolve_inputs(nid, graph, &branch_state);
                 for (key, val) in &node.config {
                     inputs.entry(key.clone()).or_insert_with(|| val.clone());
                 }
@@ -1118,7 +1120,7 @@ impl GraphRunner {
                     let start = Instant::now();
                     let result = executor.execute(node, inputs, context).await;
                     let elapsed_ms = start.elapsed().as_millis() as u64;
-                    (node.id.clone(), node.tool_type.clone(), result, elapsed_ms)
+                    (node.id.clone(), node.tool_type.clone(), result, elapsed_ms, branch_state)
                 })
             })
             .collect();
@@ -1128,9 +1130,14 @@ impl GraphRunner {
 
         // Collect results.
         let mut failed_count = 0usize;
-        for (node_id, tool_type, exec_result, elapsed_ms) in results {
+        for (node_id, tool_type, exec_result, elapsed_ms, branch_state) in results {
             match exec_result {
                 Ok(output) => {
+                    // Merge the branch state changes back (PLAN_000 / Milestone 1)
+                    if let Err(e) = state.merge(&branch_state) {
+                        error!(node_id = %node_id, error = %e, "fanout: state.merge failed");
+                    }
+
                     if let Err(e) = state.set(&node_id, output, true) {
                         error!(node_id = %node_id, error = %e, "fanout: state.set failed");
                         failed_count += 1;

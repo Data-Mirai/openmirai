@@ -143,6 +143,14 @@ impl ToolExecutor for RegistryExecutor {
             }
         };
 
+        // Validate configuration fields (Milestone 3)
+        if let Err(validation_errors) = crate::tools::base::validate_node_config(&node.config, tool_spec, &node.id) {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: node.tool_type.clone(),
+                message: validation_errors.join("; "),
+            });
+        }
+
         let tool = factory.create();
 
         // PRD-004: catch_unwind — tool panics become ToolError, not process crash
@@ -173,7 +181,6 @@ impl ToolExecutor for RegistryExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::base::ToolField;
 
     struct DummyTool;
 
@@ -212,13 +219,12 @@ mod tests {
             version: "1.0.0".into(),
             category: "test".into(),
             inputs: vec![],
-            outputs: vec![ToolField {
-                name: "ok".into(),
-                field_type: crate::tools::base::FieldType::Boolean,
-                required: true,
-                description: None,
-                default: None,
-            }],
+            outputs: vec![crate::tools::base::field(
+                "ok",
+                crate::tools::base::FieldType::Boolean,
+                true,
+                "",
+            )],
             config_fields: vec![],
         }
     }

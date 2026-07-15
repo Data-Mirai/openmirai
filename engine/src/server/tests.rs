@@ -295,6 +295,67 @@ async fn get_nonexistent_session_returns_404() {
 }
 
 #[tokio::test]
+async fn get_session_otel_trace_returns_otel_format() {
+    use crate::core::runner::{ExecutionResult, ExecutionStatus, TraceEntry, TraceStatus};
+    use crate::core::state::ExecutionState;
+
+    let state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
+    let app = create_router(state.clone());
+
+    let trace_entry = TraceEntry {
+        node_id: "node_1".to_string(),
+        tool_type: "logic/condition".to_string(),
+        status: TraceStatus::Ok,
+        duration_ms: 150,
+        retries: 0,
+        error: None,
+    };
+
+    let exec_result = ExecutionResult {
+        status: ExecutionStatus::Completed,
+        state: ExecutionState::new(),
+        trace: vec![trace_entry],
+        transcript: vec![],
+        error: None,
+        interrupt_node_id: None,
+        interrupt_info: None,
+    };
+
+    state.sessions.write().await.insert("test-session-123".to_string(), exec_result);
+
+    let resp = app
+        .oneshot(
+            Request::get("/api/v1/sessions/test-session-123/otel-trace")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+
+    // Check OpenTelemetry formatting attributes
+    assert!(json.get("resourceSpans").is_some());
+    let resource_spans = json["resourceSpans"].as_array().unwrap();
+    assert_eq!(resource_spans.len(), 1);
+
+    let scope_spans = resource_spans[0]["scopeSpans"].as_array().unwrap();
+    assert_eq!(scope_spans.len(), 1);
+
+    let spans = scope_spans[0]["spans"].as_array().unwrap();
+    // 1 root span + 1 node span = 2 spans
+    assert_eq!(spans.len(), 2);
+
+    let root_span = &spans[0];
+    assert_eq!(root_span["name"], "graph:test-session-123");
+
+    let node_span = &spans[1];
+    assert_eq!(node_span["name"], "node:node_1");
+    assert_eq!(node_span["parentSpanId"], root_span["spanId"]);
+}
+
+#[tokio::test]
 async fn webhook_returns_received() {
     let app = test_app();
     let body = json!({ "event": "push" });

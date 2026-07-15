@@ -17,6 +17,8 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | FLUJOS.md | Execution flows, state machines, business rules | [producto/FLUJOS.md](producto/FLUJOS.md) |
 | API.md | HTTP API endpoints and contracts | [backend/API.md](backend/API.md) |
 | PRIMITIVES.md | Reusable engine code patterns | [backend/PRIMITIVES.md](backend/PRIMITIVES.md) |
+| RAG.md | RAG/search subsystem (providers, hybrid, embeddings) | [backend/RAG.md](backend/RAG.md) |
+| RAG.es.md | RAG.md — Spanish translation | [backend/RAG.es.md](backend/RAG.es.md) |
 | SCHEMA.md | SQLite schema (tables, stores) | [database/SCHEMA.md](database/SCHEMA.md) |
 | STORAGE.md | Storage backends, vault, FileRef | [database/STORAGE.md](database/STORAGE.md) |
 | INFRA.md | Build, CI/CD, release, deploy, env vars | [infra/INFRA.md](infra/INFRA.md) |

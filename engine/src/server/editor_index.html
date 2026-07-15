@@ -1,2386 +1,1412 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="light">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" href="data:,">
-  <title>OpenMirai — Visual Agent Editor</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    
-    html, body {
-      width: 100%;
-      height: 100%;
-    }
-    
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
-      background: #fafafa;
-      color: #111;
-      line-height: 1.5;
-    }
-
-    /* Global structure */
-    .editor-root { display: flex; flex-direction: column; height: 100vh; }
-
-    /* ===== TOOLBAR (always visible) ===== */
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-      padding: 12px 16px;
-      background: #fff;
-      border-bottom: 1px solid #e5e5e5;
-      flex-wrap: wrap;
-      min-height: 56px;
-      z-index: 100;
-      position: relative;
-    }
-
-    .toolbar-logo {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 600;
-      font-size: 14px;
-      letter-spacing: 0.5px;
-      color: #111;
-      flex-shrink: 0;
-    }
-
-    .toolbar-logo svg {
-      width: 20px;
-      height: 20px;
-    }
-
-    .toolbar-filename {
-      font-size: 12px;
-      color: #999;
-      flex-shrink: 0;
-    }
-
-    .toolbar-divider {
-      width: 1px;
-      height: 24px;
-      background: #e5e5e5;
-      margin: 0 8px;
-    }
-
-    .toolbar-center {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      margin-left: auto;
-    }
-
-    .segmented-toggle {
-      display: inline-flex;
-      border: 1px solid #e5e5e5;
-      border-radius: 4px;
-      background: #fff;
-    }
-
-    .segmented-toggle button {
-      padding: 6px 12px;
-      border: none;
-      background: transparent;
-      color: #999;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      transition: all 0.15s;
-    }
-
-    .segmented-toggle button:not(:last-child) {
-      border-right: 1px solid #e5e5e5;
-    }
-
-    .segmented-toggle button.active {
-      background: #f0f0f0;
-      color: #111;
-    }
-
-    .toolbar-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-
-    button {
-      padding: 6px 14px;
-      border: 1px solid #e5e5e5;
-      background: #fff;
-      color: #111;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 500;
-      letter-spacing: 0.4px;
-      border-radius: 4px;
-      transition: all 0.15s;
-    }
-
-    button:hover:not(:disabled) {
-      border-color: #111;
-      background: #f0f0f0;
-    }
-
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    button.primary {
-      background: #111;
-      color: #fff;
-      border-color: #111;
-    }
-
-    button.primary:hover:not(:disabled) {
-      background: #333;
-      border-color: #333;
-    }
-
-    button.danger {
-      color: #d1314c;
-      border-color: #d1314c;
-    }
-
-    button.danger:hover:not(:disabled) {
-      background: #fff3f5;
-      border-color: #d1314c;
-    }
-
-    button.success {
-      color: #2a8c6c;
-      border-color: #2a8c6c;
-    }
-
-    button.success:hover:not(:disabled) {
-      background: #f0faf8;
-    }
-
-    /* Status strip */
-    .status-bar {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 8px 16px;
-      background: #fff;
-      border-top: 1px solid #e5e5e5;
-      font-size: 11px;
-      color: #999;
-      letter-spacing: 0.4px;
-      text-transform: uppercase;
-      z-index: 99;
-    }
-
-    .status-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .status-dot.saved { background: #2a8c6c; }
-    .status-dot.unsaved { background: #9ca3af; }
-    .status-dot.valid { background: #2a8c6c; }
-    .status-dot.invalid { background: #d1314c; }
-
-    /* Main content */
-    .content-area {
-      display: flex;
-      flex: 1;
-      min-height: 0;
-      background: #fafafa;
-      position: relative;
-    }
-
-    /* Left palette */
-    .palette {
-      width: 240px;
-      background: #fff;
-      border-right: 1px solid #e5e5e5;
-      display: flex;
-      flex-direction: column;
-      overflow-y: auto;
-      overflow-x: hidden;
-    }
-
-    .palette-header {
-      padding: 12px 16px;
-      border-bottom: 1px solid #e5e5e5;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #999;
-    }
-
-    .palette-search {
-      padding: 8px 12px;
-      border: none;
-      border-bottom: 1px solid #e5e5e5;
-      width: 100%;
-      font-size: 12px;
-      background: #fff;
-    }
-
-    .palette-search::placeholder {
-      color: #ccc;
-    }
-
-    .tool-category {
-      border-bottom: 1px solid #e5e5e5;
-    }
-
-    .category-header {
-      padding: 10px 16px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      color: #111;
-      background: #f9f9f9;
-      cursor: pointer;
-      user-select: none;
-      border-bottom: 1px solid #e5e5e5;
-    }
-
-    .category-header:hover { background: #f0f0f0; }
-
-    .category-tools {
-      display: none;
-      padding: 4px 0;
-    }
-
-    .category-tools.open { display: block; }
-
-    .tool-item {
-      padding: 8px 16px;
-      font-size: 12px;
-      color: #666;
-      cursor: move;
-      user-select: none;
-      transition: all 0.15s;
-      border-left: 2px solid transparent;
-    }
-
-    .tool-item:hover {
-      color: #111;
-      background: #f9f9f9;
-      border-left-color: #111;
-    }
-
-    /* Canvas area */
-    .canvas-container {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      position: relative;
-      background: #fff;
-      background-image: 
-        linear-gradient(rgba(200, 200, 200, 0.1) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(200, 200, 200, 0.1) 1px, transparent 1px);
-      background-size: 20px 20px;
-    }
-
-    .canvas-view {
-      flex: 1;
-      overflow: hidden;
-      position: relative;
-    }
-
-    svg.canvas { display: block; width: 100%; height: 100%; }
-
-    .node {
-      cursor: move;
-    }
-
-    .node-rect {
-      fill: #fff;
-      stroke: #ccc;
-      stroke-width: 1px;
-      transition: all 0.1s;
-    }
-
-    .node-rect.selected {
-      stroke: #111;
-      stroke-width: 2px;
-    }
-
-    .node-rect.running {
-      stroke: #111;
-      stroke-width: 3px;
-    }
-
-    .node-rect.completed {
-      stroke: #2a8c6c;
-      stroke-width: 2px;
-      fill: #f3faf7;
-    }
-
-    .node-rect.error {
-      stroke: #d1314c;
-      stroke-width: 2px;
-      fill: #fdf3f5;
-    }
-
-    .node-text {
-      pointer-events: none;
-      user-select: none;
-    }
-
-    .node-id {
-      font-size: 12px;
-      font-weight: 500;
-      fill: #111;
-      text-anchor: middle;
-    }
-
-    .node-type {
-      font-size: 10px;
-      fill: #999;
-      text-anchor: middle;
-    }
-
-    .edge {
-      pointer-events: stroke;
-    }
-
-    .edge-line {
-      fill: none;
-      stroke: #ccc;
-      stroke-width: 1px;
-      cursor: pointer;
-      transition: all 0.1s;
-    }
-
-    .edge-line.selected {
-      stroke: #111;
-      stroke-width: 2px;
-    }
-
-    .edge-label {
-      fill: #666;
-      font-size: 10px;
-      pointer-events: none;
-      text-anchor: middle;
-    }
-
-    .node-handle {
-      fill: #111;
-      cursor: crosshair;
-      opacity: 0;
-      transition: opacity 0.1s;
-    }
-
-    .node-handle:hover {
-      opacity: 1;
-    }
-
-    /* Right inspector */
-    .inspector {
-      width: 280px;
-      background: #fff;
-      border-left: 1px solid #e5e5e5;
-      display: flex;
-      flex-direction: column;
-      box-shadow: -2px 0 8px rgba(0, 0, 0, 0.02);
-    }
-
-    .inspector-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid #e5e5e5;
-    }
-
-    .inspector-title {
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #999;
-    }
-
-    .inspector-close {
-      background: none;
-      border: none;
-      color: #999;
-      cursor: pointer;
-      font-size: 16px;
-      padding: 0;
-      width: 24px;
-      height: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .inspector-close:hover {
-      color: #111;
-    }
-
-    .inspector-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-    }
-
-    .form-group {
-      margin-bottom: 16px;
-    }
-
-    .form-label {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      color: #111;
-      margin-bottom: 6px;
-    }
-
-    .form-input {
-      width: 100%;
-      padding: 8px 10px;
-      border: 1px solid #e5e5e5;
-      background: #fafafa;
-      border-radius: 4px;
-      font-size: 12px;
-      color: #111;
-      transition: all 0.15s;
-    }
-
-    .form-input:focus {
-      outline: none;
-      border-color: #111;
-      background: #fff;
-    }
-
-    .form-input.textarea {
-      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-      resize: vertical;
-      min-height: 80px;
-    }
-
-    /* PRD-016: typed run-form fields */
-    .form-hint {
-      font-weight: 400;
-      text-transform: none;
-      letter-spacing: 0;
-      color: #999;
-      margin-left: 6px;
-    }
-    .form-hint.req { color: #d1314c; }
-    .form-input.invalid { border-color: #d1314c; background: #fdf3f5; }
-    .run-text { resize: vertical; min-height: 56px; font-family: inherit; }
-    .run-bool { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #111; }
-    .run-bool input { width: auto; }
-
-    /* Views (hidden by default) */
-    .view {
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      flex-direction: column;
-      background: #fff;
-    }
-
-    .view.active {
-      display: flex;
-    }
-
-    .yaml-view {
-      background: #f9f9f9;
-    }
-
-    .yaml-textarea {
-      flex: 1;
-      padding: 16px;
-      border: none;
-      background: #fff;
-      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
-      font-size: 12px;
-      color: #111;
-      resize: none;
-    }
-
-    .yaml-error {
-      background: #fef2f2;
-      border-top: 1px solid #e5e5e5;
-      padding: 12px 16px;
-      border-radius: 0;
-    }
-
-    .yaml-error-title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #d1314c;
-      text-transform: uppercase;
-      margin-bottom: 6px;
-    }
-
-    .yaml-error-message {
-      font-size: 12px;
-      font-family: 'Monaco', 'Menlo', monospace;
-      color: #666;
-      word-break: break-word;
-    }
-
-    .console-view {
-      background: #111;
-      color: #ccc;
-    }
-
-    .console-header {
-      padding: 8px 16px;
-      border-bottom: 1px solid #333;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
-
-    .console-output {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px 16px;
-      font-family: 'Monaco', 'Menlo', monospace;
-      font-size: 11px;
-      line-height: 1.6;
-    }
-
-    .console-line {
-      margin-bottom: 4px;
-    }
-
-    .console-line.ok { color: #2a8c6c; }
-    .console-line.error { color: #d1314c; }
-    .console-line.info { color: #999; }
-    .console-line.running { color: #f59e0b; }
-
-    /* Run result drawer — clean white, docks at the bottom of the canvas */
-    .result-drawer {
-      position: absolute;
-      left: 0; right: 0; bottom: 0;
-      max-height: 48%;
-      display: none;
-      flex-direction: column;
-      background: #fff;
-      border-top: 1px solid #e5e5e5;
-      box-shadow: 0 -2px 14px rgba(0,0,0,0.07);
-      z-index: 30;
-    }
-    .result-drawer.open { display: flex; }
-    .result-drawer.collapsed { max-height: none; }
-    .result-drawer.collapsed .result-drawer-body { display: none; }
-    .result-drawer-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 9px 14px; border-bottom: 1px solid #eee;
-      font-size: 11px; font-weight: 600; letter-spacing: 0.4px;
-      text-transform: uppercase; color: #111; flex-shrink: 0;
-    }
-    .result-drawer-actions button {
-      background: none; border: none; color: #999; cursor: pointer;
-      font-size: 13px; padding: 0 5px; line-height: 1;
-    }
-    .result-drawer-actions button:hover { color: #111; }
-    .result-drawer-body { overflow-y: auto; padding: 12px 14px; }
-    .result-block { margin-bottom: 14px; }
-    .result-block-label {
-      font-size: 10px; color: #999; text-transform: uppercase;
-      letter-spacing: 0.4px; margin-bottom: 5px;
-    }
-    .result-final {
-      font-size: 13px; color: #111; white-space: pre-wrap; word-break: break-word;
-      background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 11px;
-    }
-    .result-node { border: 1px solid #eee; border-radius: 4px; margin-bottom: 6px; }
-    .result-node-head {
-      display: flex; align-items: center; gap: 8px;
-      padding: 8px 11px; cursor: pointer; user-select: none;
-    }
-    .result-node-head:hover { background: #fafafa; }
-    .result-node-caret { color: #bbb; font-size: 10px; width: 10px; }
-    .result-node-name { font-weight: 600; color: #111; font-size: 12px; }
-    .result-node-type { color: #999; font-size: 11px; }
-    .result-node-status { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-    .result-node-status.ok { background: #2a8c6c; }
-    .result-node-status.error { background: #d1314c; }
-    .result-node-ms { margin-left: auto; color: #bbb; font-size: 11px; font-variant-numeric: tabular-nums; }
-    .result-node-body { padding: 0 11px 11px 29px; }
-    .result-json {
-      font-family: 'Monaco', 'Menlo', monospace; font-size: 11.5px;
-      white-space: pre-wrap; word-break: break-word; color: #333;
-      background: #fafafa; border-radius: 4px; padding: 9px; margin: 0;
-    }
-    .result-error-text { color: #d1314c; font-size: 12px; white-space: pre-wrap; }
-
-    .console-input {
-      padding: 12px 16px;
-      border-top: 1px solid #333;
-      display: flex;
-      gap: 8px;
-    }
-
-    .console-input input {
-      flex: 1;
-      background: #1a1a1a;
-      border: 1px solid #333;
-      color: #ccc;
-      padding: 6px 10px;
-      border-radius: 3px;
-      font-family: monospace;
-      font-size: 12px;
-    }
-
-    /* Toast notifications */
-    .toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      background: #111;
-      color: #fff;
-      padding: 12px 16px;
-      border-radius: 4px;
-      font-size: 12px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      animation: slideInRight 0.3s ease-out;
-      z-index: 1000;
-    }
-
-    .toast.error {
-      background: #d1314c;
-    }
-
-    .toast.success {
-      background: #2a8c6c;
-    }
-
-    @keyframes slideInRight {
-      from { transform: translateX(300px); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
-    }
-
-    /* Empty / blank state */
-    .blank-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: #999;
-      text-align: center;
-      padding: 40px 20px;
-    }
-
-    .blank-state h2 {
-      font-size: 16px;
-      color: #111;
-      margin-bottom: 8px;
-      font-weight: 500;
-    }
-
-    .blank-state p {
-      font-size: 12px;
-      margin-bottom: 20px;
-    }
-
-    /* Modals / overlays */
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.3);
-      z-index: 999;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .modal-overlay.active {
-      display: flex;
-    }
-
-    .modal {
-      background: #fff;
-      border-radius: 6px;
-      box-shadow: 0 20px 25px rgba(0, 0, 0, 0.15);
-      max-width: 500px;
-      width: 90%;
-    }
-
-    .modal-header {
-      padding: 16px;
-      border-bottom: 1px solid #e5e5e5;
-    }
-
-    .modal-title {
-      font-size: 14px;
-      font-weight: 600;
-      color: #111;
-    }
-
-    .modal-body {
-      padding: 16px;
-    }
-
-    .modal-footer {
-      padding: 12px 16px;
-      border-top: 1px solid #e5e5e5;
-      display: flex;
-      gap: 8px;
-      justify-content: flex-end;
-    }
-
-    /* Scrollbars */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: #d0d0d0;
-      border-radius: 4px;
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background: #999;
-    }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="icon" href="data:,">
+<title>mirai edit — OpenMirai</title>
+<style>
+:root{
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"Helvetica Neue",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --bg:#f5f6f5; --surface:#fff; --surface-2:#f3f4f3; --surface-3:#ecedeb;
+  --border:#e6e7e4; --border-2:#dadbd7; --border-strong:#c7c8c3;
+  --text:#1b1c1a; --text-2:#62645f; --text-3:#94968f; --text-on-accent:#fff;
+  --accent:#0e9f6e; --accent-hover:#0c8c61; --accent-press:#0a7853;
+  --accent-soft:#e8f6f0; --accent-soft-2:#d6efe4; --accent-border:#aee0cc; --accent-text:#0a6f4d;
+  --run:#c2880f; --run-soft:#fbf0d7; --run-border:#ecd49a; --run-text:#8a5e07;
+  --err:#d23b54; --err-soft:#fbe8eb; --err-border:#f0bcc5; --err-text:#a32338;
+  --canvas-bg:#f7f8f7; --canvas-dot:#d8dad6; --edge:#b9bcb6; --edge-strong:#8d908a;
+  --r-4:4px; --r-6:6px; --r-8:8px; --r-10:10px; --r-12:12px; --r-16:16px; --r-full:999px;
+  --sh-1:0 1px 2px rgba(20,28,24,.05);
+  --sh-2:0 1px 2px rgba(20,28,24,.06),0 2px 6px rgba(20,28,24,.05);
+  --sh-pop:0 16px 48px rgba(20,28,24,.16),0 4px 12px rgba(20,28,24,.08),0 0 0 1px rgba(20,28,24,.04);
+  --sh-node:0 1px 2px rgba(20,28,24,.07),0 2px 8px rgba(20,28,24,.06);
+  --focus-ring:0 0 0 3px rgba(14,159,110,.22);
+}
+[data-theme="dark"]{
+  --bg:#0e100f; --surface:#17191a; --surface-2:#1d201f; --surface-3:#24302a;
+  --border:#272a28; --border-2:#323634; --border-strong:#3d423f;
+  --text:#ecedea; --text-2:#9aa09a; --text-3:#666c66; --text-on-accent:#06140d;
+  --accent:#22b885; --accent-hover:#34c594; --accent-press:#1aa276;
+  --accent-soft:#11271f; --accent-soft-2:#163528; --accent-border:#1e5c44; --accent-text:#5fd6a9;
+  --run:#dca22e; --run-soft:#2a2310; --run-border:#574818; --run-text:#e6bc5e;
+  --err:#e5566d; --err-soft:#2a1418; --err-border:#5e2730; --err-text:#f08a9a;
+  --canvas-bg:#121414; --canvas-dot:#262a28; --edge:#3a403c; --edge-strong:#5a625c;
+  --sh-1:0 1px 2px rgba(0,0,0,.4);
+  --sh-2:0 1px 2px rgba(0,0,0,.4),0 2px 6px rgba(0,0,0,.3);
+  --sh-pop:0 16px 48px rgba(0,0,0,.6),0 4px 12px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.06);
+  --sh-node:0 1px 2px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.4);
+  --focus-ring:0 0 0 3px rgba(34,184,133,.28);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-sans);background:var(--bg);color:var(--text);
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow:hidden}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+
+.btn{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-sans);font-size:13px;
+  font-weight:550;line-height:1;letter-spacing:-.1px;cursor:pointer;border-radius:var(--r-8);
+  padding:0 12px;height:32px;border:1px solid transparent;white-space:nowrap;user-select:none;
+  transition:background .14s,border-color .14s,box-shadow .14s,color .14s,transform .06s}
+.btn:active{transform:translateY(.5px)}
+.btn svg{flex:0 0 auto}
+.btn.primary{background:var(--accent);color:var(--text-on-accent);
+  box-shadow:0 1px 2px rgba(10,120,83,.28),inset 0 1px 0 rgba(255,255,255,.18)}
+.btn.primary:hover{background:var(--accent-hover)}
+.btn.primary:active{background:var(--accent-press)}
+.btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-2);box-shadow:var(--sh-1)}
+.btn.secondary:hover{background:var(--surface-2);border-color:var(--border-strong)}
+.btn.ghost{background:transparent;color:var(--text-2)}
+.btn.ghost:hover{background:var(--surface-2);color:var(--text)}
+.btn.danger{background:var(--surface);color:var(--err-text);border-color:var(--err-border)}
+.btn.danger:hover{background:var(--err-soft)}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.iconbtn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;
+  border-radius:var(--r-8);border:1px solid transparent;background:transparent;color:var(--text-2);
+  cursor:pointer;transition:background .14s,color .14s,border-color .14s}
+.iconbtn:hover{background:var(--surface-2);color:var(--text)}
+
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-8);padding:3px;gap:2px}
+.seg button{font-family:var(--font-sans);font-size:12.5px;font-weight:550;letter-spacing:-.1px;border:none;
+  background:transparent;color:var(--text-2);cursor:pointer;padding:5px 12px;border-radius:var(--r-6);
+  display:inline-flex;align-items:center;gap:6px;transition:background .14s,color .14s,box-shadow .14s}
+.seg button.active{background:var(--surface);color:var(--text);box-shadow:var(--sh-1)}
+
+.dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;display:inline-block}
+.dot.ok{background:var(--accent)} .dot.run{background:var(--run)} .dot.err{background:var(--err)}
+.dot.off{background:var(--border-strong)}
+.badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-sans);font-size:11px;font-weight:600;
+  letter-spacing:.2px;padding:3px 8px;border-radius:var(--r-full);border:1px solid transparent;text-transform:uppercase;line-height:1}
+.badge.neutral{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+.badge.accent{background:var(--accent-soft);color:var(--accent-text);border-color:var(--accent-border)}
+.badge.run{background:var(--run-soft);color:var(--run-text);border-color:var(--run-border)}
+.tag{display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:11px;font-weight:500;
+  padding:2px 6px;border-radius:var(--r-4);background:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
+
+.input{font-family:var(--font-sans);font-size:13px;color:var(--text);background:var(--surface);
+  border:1px solid var(--border-2);border-radius:var(--r-8);padding:8px 10px;height:34px;width:100%;
+  box-shadow:var(--sh-1);transition:border-color .14s,box-shadow .14s}
+.input::placeholder{color:var(--text-3)}
+.input:focus{outline:none;border-color:var(--accent);box-shadow:var(--focus-ring)}
+.input.mono{font-family:var(--font-mono);font-size:12.5px}
+.label{font-size:11px;font-weight:600;color:var(--text-2)}
+
+.app{display:flex;flex-direction:column;height:100vh}
+.toolbar{height:52px;display:flex;align-items:center;gap:10px;padding:0 12px 0 14px;
+  background:var(--surface);border-bottom:1px solid var(--border);flex:0 0 auto;z-index:100}
+.tdiv{width:1px;height:22px;background:var(--border);margin:0 4px}
+.logo{width:26px;height:26px;border-radius:7px;background:var(--accent);display:inline-flex;align-items:center;
+  justify-content:center;flex:0 0 auto;box-shadow:0 1px 2px rgba(10,120,83,.4),inset 0 1px 0 rgba(255,255,255,.25)}
+.fname{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12.5px;color:var(--text-2)}
+.statusbar{height:30px;display:flex;align-items:center;gap:16px;padding:0 14px;background:var(--surface);
+  border-bottom:1px solid var(--border);flex:0 0 auto;font-size:11.5px;color:var(--text-2)}
+.statusbar .grow{flex:1}
+.brandmark{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.8px;color:var(--text-3);font-weight:600}
+.main{flex:1;display:flex;min-height:0}
+.palette{width:232px;flex:0 0 auto;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column}
+.pal-search{padding:12px 12px 10px;position:relative}
+.pal-search svg{position:absolute;left:21px;top:50%;transform:translateY(-50%);color:var(--text-3)}
+.pal-search .input{padding-left:30px;height:32px}
+.pal-groups{flex:1;overflow:auto;padding:0 8px}
+.pal-grp{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.9px;color:var(--text-3);padding:14px 8px 6px}
+.pal-row{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--r-8);cursor:grab;transition:background .12s}
+.pal-row:hover{background:var(--surface-2)}
+.pal-ico{width:26px;height:26px;border-radius:var(--r-6);border:1px solid;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.canvaswrap{flex:1;position:relative;min-width:0}
+.inspector{width:300px;flex:0 0 auto;background:var(--surface);border-left:1px solid var(--border);display:none;flex-direction:column}
+.inspector.open{display:flex}
+.insp-head{padding:13px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.insp-body{flex:1;padding:14px;display:flex;flex-direction:column;gap:16px;overflow:auto}
+.insp-foot{padding:12px;border-top:1px solid var(--border);display:flex;gap:8px}
+.insp-ico{width:32px;height:32px;border-radius:var(--r-8);border:1px solid;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.zoomctl{position:absolute;bottom:14px;right:16px;display:flex;align-items:center;gap:2px;background:var(--surface);
+  border:1px solid var(--border-2);border-radius:var(--r-10);box-shadow:var(--sh-2);padding:3px;z-index:4}
+.zoomctl .iconbtn{width:28px;height:28px}
+.minimap{position:absolute;bottom:14px;left:16px;display:flex;align-items:center;gap:7px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-full);box-shadow:var(--sh-1);padding:5px 11px 5px 9px;z-index:4;
+  font-size:11px;color:var(--text-3)}
+
+.toasts{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:50}
+.toast{display:flex;align-items:flex-start;gap:11px;width:340px;padding:12px 13px;background:var(--surface);
+  border:1px solid var(--border-2);border-radius:var(--r-12);box-shadow:var(--sh-pop);animation:toastIn .3s ease-out}
+.toast.error .toast-ico{background:var(--err-soft);color:var(--err-text);border-color:var(--err-border)}
+.toast-ico{width:28px;height:28px;border-radius:var(--r-8);flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+  background:var(--accent-soft);color:var(--accent-text);border:1px solid var(--accent-border)}
+@keyframes toastIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+.canvas{position:absolute;inset:0;overflow:hidden;background-color:var(--canvas-bg);
+  background-image:radial-gradient(var(--canvas-dot) 1.3px,transparent 1.3px);
+  background-size:22px 22px;background-position:-1px -1px}
+.graph{position:absolute;left:0;top:0;transform-origin:top left}
+.graph-edges{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+
+/* GEOMETRY (must match JS port math):
+   header 46 | body pad-top 2 | group label 21 | row 27 | pad-bottom 8
+   port Y(input i)  = 46 + 2 + 21 + i*27 + 13.5
+   port Y(output j) = 46 + 2 + (hasIn? 21 + nIn*27 : 0) + 21 + j*27 + 13.5
+*/
+.node{position:absolute;width:232px;background:var(--surface);border-radius:var(--r-10);
+  box-shadow:var(--sh-node),inset 0 0 0 1px var(--border-2);transition:box-shadow .2s;cursor:move}
+.node.state-running{box-shadow:var(--sh-node),0 0 0 1px var(--run-border),0 0 0 4px color-mix(in srgb,var(--run) 18%,transparent),inset 0 0 0 1px var(--border-2)}
+.node.state-done{box-shadow:var(--sh-node),0 0 0 1px var(--accent-border),inset 0 0 0 1px var(--border-2)}
+.node.state-error{box-shadow:var(--sh-node),0 0 0 1px var(--err-border),inset 0 0 0 1px var(--border-2)}
+.node.selected{box-shadow:0 0 0 2px var(--accent),0 0 0 5px color-mix(in srgb,var(--accent) 16%,transparent)}
+.node-head{min-height:46px;display:flex;align-items:center;gap:9px;padding:8px 11px;
+  border-radius:var(--r-10) var(--r-10) 0 0;border-bottom:1px solid var(--border);position:relative;transition:background .25s}
+.node-rail{position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0}
+.node-ico{width:28px;height:28px;border-radius:var(--r-8);border:1px solid;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.node-id{font-family:var(--font-mono);font-size:12.5px;font-weight:650;color:var(--text);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node-tool{font-family:var(--font-mono);font-size:10px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node-grp{font-family:var(--font-mono);font-size:8.5px;font-weight:700;letter-spacing:.8px;color:var(--text-3);
+  display:flex;align-items:center;gap:7px;padding:7px 12px 4px}
+.node-grp::after{content:"";flex:1;height:1px;background:var(--border)}
+.node-row{position:relative;display:flex;align-items:center;gap:8px;height:27px}
+.node-row.in{padding:0 12px 0 13px} .node-row.out{padding:0 13px 0 12px}
+.node-name{font-family:var(--font-mono);font-size:11px;color:var(--text);white-space:nowrap;flex:0 0 auto}
+.node-spacer{flex:1;min-width:8px}
+.type{font-family:var(--font-mono);font-size:8.5px;font-weight:700;letter-spacing:.3px;padding:1px 5px;
+  border-radius:var(--r-4);border:1px solid;flex:0 0 auto;text-transform:uppercase}
+.val{display:inline-block;font-family:var(--font-mono);font-size:10.5px;font-weight:600;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;padding:1px 6px;border-radius:var(--r-4);border:1px solid;
+  vertical-align:middle;flex:0 1 auto;min-width:0;max-width:130px}
+.val.src{color:var(--text-2);background:var(--surface-2);border-color:var(--border-2)}
+.port{position:absolute;top:50%;transform:translateY(-50%);width:11px;height:11px;border-radius:50%;
+  background:var(--surface);box-shadow:var(--sh-1);z-index:3}
+.port.l{left:-6px} .port.r{right:-6px}
+.node-status{width:17px;height:17px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.node-status.done{background:var(--accent);color:var(--text-on-accent)}
+.node-status.error{background:var(--err);color:#fff}
+
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.35);z-index:999;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:var(--surface);border-radius:var(--r-12);box-shadow:var(--sh-pop);max-width:500px;width:90%}
+.modal-header{padding:16px;border-bottom:1px solid var(--border)}
+.modal-title{font-size:14px;font-weight:650;color:var(--text)}
+.modal-body{padding:16px}
+.modal-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+
+.form-group{margin-bottom:16px}
+.form-label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--text-2);margin-bottom:6px}
+.form-input{width:100%;padding:8px 10px;border:1px solid var(--border-2);background:var(--surface);
+  border-radius:var(--r-8);font-size:13px;font-family:var(--font-sans);color:var(--text);
+  box-shadow:var(--sh-1);transition:border-color .14s,box-shadow .14s}
+.form-input:focus{outline:none;border-color:var(--accent);box-shadow:var(--focus-ring)}
+.form-input.textarea{font-family:var(--font-mono);font-size:12.5px;resize:vertical;min-height:80px}
+.form-hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-3);margin-left:6px}
+.form-hint.req{color:var(--err-text)}
+.form-input.invalid{border-color:var(--err);background:var(--err-soft)}
+.run-text{resize:vertical;min-height:56px;font-family:inherit}
+.run-bool{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text)}
+.run-bool input{width:auto}
+
+.yaml-view{position:absolute;inset:0;display:none;flex-direction:column;background:var(--surface);z-index:5}
+.yaml-view.active{display:flex}
+.yaml-textarea{flex:1;padding:16px;border:none;background:var(--surface);
+  font-family:var(--font-mono);font-size:12.5px;color:var(--text);resize:none}
+.yaml-textarea:focus{outline:none}
+.yaml-error{background:var(--err-soft);border-top:1px solid var(--border);padding:12px 16px}
+.yaml-error-title{font-size:11px;font-weight:600;color:var(--err-text);text-transform:uppercase;margin-bottom:6px}
+.yaml-error-message{font-size:12px;font-family:var(--font-mono);color:var(--text-2);word-break:break-word}
+
+.result-drawer{position:absolute;left:0;right:0;bottom:0;max-height:48%;display:none;
+  flex-direction:column;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -2px 14px rgba(0,0,0,.07);z-index:30}
+.result-drawer.open{display:flex}
+.result-drawer.collapsed .result-drawer-body{display:none}
+.result-drawer-header{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;
+  border-bottom:1px solid var(--border);font-size:11px;font-weight:600;letter-spacing:.4px;
+  text-transform:uppercase;color:var(--text);flex-shrink:0}
+.result-drawer-actions{display:flex;gap:4px}
+.result-drawer-actions .iconbtn{width:24px;height:24px}
+.result-drawer-body{overflow-y:auto;padding:12px 14px}
+.result-block{margin-bottom:14px}
+.result-block-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+.result-final{font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-8);padding:11px}
+.result-node{border:1px solid var(--border);border-radius:var(--r-8);margin-bottom:6px}
+.result-node-head{display:flex;align-items:center;gap:8px;padding:8px 11px;cursor:pointer;user-select:none}
+.result-node-head:hover{background:var(--surface-2)}
+.result-node-caret{color:var(--text-3);font-size:10px;width:10px}
+.result-node-name{font-weight:600;color:var(--text);font-size:12px}
+.result-node-type{color:var(--text-3);font-size:11px}
+.result-node-status{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.result-node-status.ok{background:var(--accent)}
+.result-node-status.error{background:var(--err)}
+.result-node-ms{margin-left:auto;color:var(--text-3);font-size:11px;font-variant-numeric:tabular-nums}
+.result-node-body{padding:0 11px 11px 29px}
+.result-json{font-family:var(--font-mono);font-size:11.5px;white-space:pre-wrap;word-break:break-word;
+  color:var(--text-2);background:var(--surface-2);border-radius:var(--r-6);padding:9px;margin:0}
+.result-error-text{color:var(--err-text);font-size:12px;white-space:pre-wrap}
+
+.console-view{position:absolute;inset:0;display:none;flex-direction:column;background:var(--surface-3);z-index:5}
+.console-view.active{display:flex}
+.console-header{padding:8px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;
+  justify-content:space-between;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--text-2)}
+.console-output{flex:1;overflow-y:auto;padding:12px 16px;font-family:var(--font-mono);font-size:11px;line-height:1.6}
+.console-line{margin-bottom:4px}
+.console-line.ok{color:var(--accent-text)} .console-line.error{color:var(--err-text)}
+.console-line.info{color:var(--text-3)} .console-line.running{color:var(--run-text)}
+
+.blank-state{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  position:absolute;inset:0;color:var(--text-3);text-align:center;padding:40px 20px;pointer-events:none}
+.blank-state h2{font-size:16px;color:var(--text-2);margin-bottom:8px;font-weight:500}
+.blank-state p{font-size:12px}
+
+.spin{animation:rot .8s linear infinite;transform-origin:center}
+@keyframes rot{to{transform:rotate(360deg)}}
+@keyframes dash{to{stroke-dashoffset:-16}}
+</style>
 </head>
 <body>
-
-<div class="editor-root">
-  
-  <!-- TOOLBAR (always visible) -->
+<div class="app">
   <div class="toolbar">
-    <div class="toolbar-logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <circle cx="12" cy="12" r="10"/>
-        <circle cx="12" cy="12" r="6"/>
+    <span class="logo">
+      <svg width="17" height="17" viewBox="0 0 18 18" fill="none">
+        <path d="M5 4.5L12.5 9L5 13.5" stroke="rgba(255,255,255,.55)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="5" cy="4.5" r="2.1" fill="#fff"/><circle cx="5" cy="13.5" r="2.1" fill="#fff"/><circle cx="13" cy="9" r="2.4" fill="#fff"/>
       </svg>
-      OpenMirai
-    </div>
-    <span class="toolbar-filename" id="filename">agent</span>
-    <span class="toolbar-divider"></span>
-    
-    <div class="toolbar-center">
-      <div class="segmented-toggle">
-        <button class="view-toggle active" data-view="visual">Visual</button>
-        <button class="view-toggle" data-view="yaml">YAML</button>
-      </div>
-      
-      <button id="btnFit" title="Fit graph to view">Fit</button>
-      <button id="btnCompile">Compile</button>
-      <button id="btnSave">Save</button>
-      <button id="btnUndo" disabled>Undo</button>
-      <button id="btnRedo" disabled>Redo</button>
-      <button id="btnSettings" title="Model & defaults">Settings</button>
-      <button id="btnRun" class="primary">Run</button>
-    </div>
+    </span>
+    <span style="font-size:13.5px;font-weight:650;letter-spacing:-.2px">OpenMirai</span>
+    <span class="tdiv"></span>
+    <span class="fname"><span data-ico="code" style="color:var(--text-3)"></span><span id="filename" style="color:var(--text)">agent</span><span style="color:var(--text-3)">.yaml</span><span id="dirtyDot" style="width:6px;height:6px;border-radius:50%;background:var(--run);display:none"></span></span>
+    <span class="seg" id="modeSeg" style="margin-left:14px">
+      <button data-mode="visual" class="active"><span data-ico="layers"></span>Visual</button>
+      <button data-mode="yaml"><span data-ico="code"></span>YAML</button>
+    </span>
+    <span style="flex:1"></span>
+    <button class="iconbtn" title="Fit to view" id="btnFit"><span data-ico="fit"></span></button>
+    <button class="btn secondary" id="btnCompile"><span data-ico="check"></span>Compile</button>
+    <button class="btn secondary" id="btnSave"><span data-ico="save"></span>Save</button>
+    <span class="tdiv"></span>
+    <button class="iconbtn" id="btnUndo" title="Undo" disabled><span data-ico="undo"></span></button>
+    <button class="iconbtn" id="btnRedo" title="Redo" disabled><span data-ico="redo"></span></button>
+    <span class="tdiv"></span>
+    <button class="iconbtn" id="themeBtn" title="Theme"><span data-ico="moon"></span></button>
+    <button class="iconbtn" id="btnSettings" title="Settings"><span data-ico="gear"></span></button>
+    <button class="btn primary" id="btnRun" style="margin-left:2px"><span data-ico="run" data-fill="1"></span>Run</button>
   </div>
-
-  <!-- STATUS BAR -->
-  <div class="status-bar">
-    <div class="status-item">
-      <div class="status-dot unsaved" id="saveDot"></div>
-      <span id="saveStatus">unsaved</span>
-    </div>
-    <div class="status-item">
-      <div class="status-dot valid" id="validDot"></div>
-      <span id="validStatus">valid</span>
-    </div>
-    <div class="status-item" style="margin-left:auto; color:#bbb;">
-      OpenMirai · Data Mirai
-    </div>
+  <div class="statusbar">
+    <span style="display:inline-flex;align-items:center;gap:7px"><span class="dot off" id="saveDot"></span><span id="saveStatus">saved</span></span>
+    <span style="display:inline-flex;align-items:center;gap:7px"><span class="dot ok" id="validDot"></span><span id="validStatus">valid</span></span>
+    <span class="grow"></span>
+    <span class="brandmark">OPENMIRAI &middot; DATA MIRAI</span>
   </div>
-
-  <!-- CONTENT AREA -->
-  <div class="content-area">
-    
-    <!-- LEFT PALETTE -->
-    <div class="palette">
-      <div class="palette-header">Tools</div>
-      <input type="text" class="palette-search" id="paletteSearch" placeholder="Search tools...">
-      <div id="paletteContent"></div>
-    </div>
-
-    <!-- CANVAS / YAML / CONSOLE -->
-    <div style="flex: 1; display: flex; flex-direction: column; position: relative;">
-      
-      <!-- VISUAL VIEW -->
-      <div class="view active" data-view="visual">
-        <div class="canvas-container">
-          <div class="canvas-view">
-            <svg class="canvas" id="canvas">
-              <defs>
-                <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-                  <polygon points="0 0, 10 3, 0 6" fill="#999" />
-                </marker>
-              </defs>
-              <g id="edges"></g>
-              <g id="nodes"></g>
-            </svg>
-          </div>
-        </div>
-      </div>
-
-      <!-- YAML VIEW -->
-      <div class="view" data-view="yaml">
+  <div class="main">
+    <aside class="palette">
+      <div class="pal-search"><span data-ico="search"></span><input class="input" id="paletteSearch" placeholder="Search tools"/></div>
+      <div class="pal-groups" id="palGroups"></div>
+    </aside>
+    <div class="canvaswrap" id="canvaswrap">
+      <div class="canvas" id="canvas"><div class="graph" id="graph"></div></div>
+      <div class="yaml-view" id="yamlView">
         <textarea class="yaml-textarea" id="yamlEditor" spellcheck="false"></textarea>
-        <div class="yaml-error" id="yamlError" style="display: none;">
+        <div class="yaml-error" id="yamlError" style="display:none">
           <div class="yaml-error-title">Parse Error</div>
           <div class="yaml-error-message" id="yamlErrorMsg"></div>
         </div>
       </div>
-
-      <!-- CONSOLE VIEW -->
-      <div class="view" data-view="console">
+      <div class="console-view" id="consoleView">
         <div class="console-header">
           <span>Run Output</span>
-          <button id="consoleClose" style="background: none; border: none; color: #999; font-size: 16px; cursor: pointer; padding: 0; width: 24px; height: 24px;">✕</button>
+          <button class="iconbtn" id="consoleClose"><span data-ico="x"></span></button>
         </div>
         <div class="console-output" id="consoleOutput"></div>
-        <div class="console-input" id="consoleInputArea" style="display: none;">
-          <input type="text" id="consoleInput" placeholder="trigger_data (JSON)...">
-          <button id="btnStop">Stop</button>
-        </div>
       </div>
-
-      <!-- RUN RESULT DRAWER — overlays the bottom of the canvas after a run -->
       <div class="result-drawer" id="resultDrawer">
         <div class="result-drawer-header">
           <span id="resultDrawerTitle">Run result</span>
           <div class="result-drawer-actions">
-            <button id="resultDrawerToggle" title="Collapse">▾</button>
-            <button id="resultDrawerClose" title="Close">✕</button>
+            <button class="iconbtn" id="resultDrawerToggle" title="Collapse"><span data-ico="minus"></span></button>
+            <button class="iconbtn" id="resultDrawerClose" title="Close"><span data-ico="x"></span></button>
           </div>
         </div>
         <div class="result-drawer-body" id="resultDrawerBody"></div>
       </div>
-
-    </div>
-
-    <!-- RIGHT INSPECTOR -->
-    <div class="inspector" id="inspector" style="display: none;">
-      <div class="inspector-header">
-        <div class="inspector-title" id="inspectorTitle">Properties</div>
-        <button class="inspector-close" id="inspectorClose">✕</button>
+      <div class="minimap"><span data-ico="layers"></span><span id="nodeCount">0 nodes</span></div>
+      <div class="zoomctl">
+        <button class="iconbtn" id="zoomOut" title="Zoom out"><span data-ico="minus"></span></button>
+        <span id="zoomLabel" style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-2);padding:0 6px;min-width:42px;text-align:center">100%</span>
+        <button class="iconbtn" id="zoomIn" title="Zoom in"><span data-ico="plus"></span></button>
+        <span style="width:1px;height:18px;background:var(--border);margin:0 2px"></span>
+        <button class="iconbtn" id="fitBtn2" title="Fit"><span data-ico="fit"></span></button>
       </div>
-      <div class="inspector-content" id="inspectorContent"></div>
     </div>
-
+    <aside class="inspector" id="inspector"></aside>
   </div>
-
 </div>
 
-<!-- MODAL: Run Input -->
 <div class="modal-overlay" id="runModal">
   <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title">Run Agent</div>
-    </div>
+    <div class="modal-header"><div class="modal-title">Run Agent</div></div>
     <div class="modal-body">
-      <!-- PRD-016: fields generated from the agent's declared inputs (or JSON fallback) -->
       <div id="runFields"></div>
       <div id="runFormError" class="result-error-text" style="display:none;margin-top:6px;"></div>
     </div>
     <div class="modal-footer">
-      <button id="runCancel">Cancel</button>
-      <button id="runStart" class="primary">Start</button>
+      <button class="btn secondary" id="runCancel">Cancel</button>
+      <button class="btn primary" id="runStart">Start</button>
     </div>
   </div>
 </div>
 
-<!-- PRD-014: preflight gate (missing configuration before a run) -->
 <div class="modal-overlay" id="preflightModal">
   <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title">Missing configuration</div>
-    </div>
+    <div class="modal-header"><div class="modal-title">Missing configuration</div></div>
     <div class="modal-body" id="preflightBody"></div>
-    <div class="modal-footer">
-      <button id="preflightClose">Close</button>
-    </div>
+    <div class="modal-footer"><button class="btn secondary" id="preflightClose">Close</button></div>
   </div>
 </div>
 
-<!-- PRD-014: Settings — pick the default model from the curated catalog -->
 <div class="modal-overlay" id="settingsModal">
-  <div class="modal" style="max-width:560px;">
-    <div class="modal-header">
-      <div class="modal-title">Settings · default model</div>
-    </div>
-    <div class="modal-body" id="settingsBody">
-      <div style="color:#666;font-size:13px;">Loading models…</div>
-    </div>
-    <div class="modal-footer">
-      <button id="settingsClose">Close</button>
-    </div>
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header"><div class="modal-title">Settings &middot; default model</div></div>
+    <div class="modal-body" id="settingsBody"><div style="color:var(--text-3);font-size:13px;">Loading models...</div></div>
+    <div class="modal-footer"><button class="btn secondary" id="settingsClose">Close</button></div>
   </div>
 </div>
 
-<!-- TOAST CONTAINER -->
-<div id="toastContainer"></div>
+<div class="toasts" id="toasts"></div>
 
 <script>
-// ============================================================================
-// STATE & INITIALIZATION
-// ============================================================================
+'use strict';
 
-const state = {
-  spec: null,
-  raw: '',
-  path: '',
-  parseError: null,
-  isDirty: false,
-  isCompiling: false,
-  isRunning: false,
-  selectedNode: null,
-  selectedEdge: null,
-  canUndo: false,
-  canRedo: false,
-  tools: [],
-  runningAgentId: null,
-  runOutputs: {}, // node_id → { tool_type, ms, output } captured from the run stream
-  canvas: {
-    panX: 0,
-    panY: 0,
-    zoom: 1,
-  },
+var ICONS={
+  run:'M7 4.5l12 7.5-12 7.5z',check:'M4.5 12.5l5 5 10-11',
+  save:'M5 3.5h11l3 3v13.5a.5.5 0 0 1-.5.5H5a.5.5 0 0 1-.5-.5v-16a.5.5 0 0 1 .5-.5zM8 3.5v5h6v-5M8 20v-6.5h8V20',
+  undo:'M9 7L4.5 11.5 9 16M4.5 11.5H15a4.5 4.5 0 0 1 0 9h-2',redo:'M15 7l4.5 4.5L15 16M19.5 11.5H9a4.5 4.5 0 0 0 0 9h2',
+  gear:'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 13.5a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-2.77 1.13V20a2 2 0 0 1-4 0v-.09A1.6 1.6 0 0 0 6.6 18.5l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.6 1.6 0 0 0 4.9 12.9H4.8a2 2 0 0 1 0-4h.09A1.6 1.6 0 0 0 6.02 6.13l-.06-.06A2 2 0 1 1 8.79 3.24l.06.06a1.6 1.6 0 0 0 1.77.32H10.7A1.6 1.6 0 0 0 11.7 2.2V2a2 2 0 0 1 4 0v.09a1.6 1.6 0 0 0 2.77 1.13l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V8',
+  fit:'M3.5 8.5v-4a1 1 0 0 1 1-1h4M15.5 3.5h4a1 1 0 0 1 1 1v4M20.5 15.5v4a1 1 0 0 1-1 1h-4M8.5 20.5h-4a1 1 0 0 1-1-1v-4',
+  search:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4',plus:'M12 5v14M5 12h14',minus:'M5 12h14',
+  x:'M6 6l12 12M18 6L6 18',dotsV:'M12 6.5h.01M12 12h.01M12 17.5h.01',
+  layers:'M12 3.5l8.5 4.5L12 12.5 3.5 8zM3.5 12.5L12 17l8.5-4.5M3.5 16.5L12 21l8.5-4.5',
+  sun:'M12 6.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM12 1.5v2.5M12 20v2.5M3.5 12H1M23 12h-2.5M5.6 5.6L3.9 3.9M20.1 20.1l-1.7-1.7M5.6 18.4l-1.7 1.7M20.1 3.9l-1.7 1.7',
+  moon:'M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z',code:'M8.5 8.5L4 12l4.5 3.5M15.5 8.5L20 12l-4.5 3.5M13.5 5l-3 14',
+  trigger:'M13 2.5L4 13.5h6l-1 8 9-11h-6z',ai:'M12 3.5l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5L4.5 11l5.5-2z',
+  data:'M12 3.5c4.4 0 8 1.4 8 3.1S16.4 9.7 12 9.7 4 8.3 4 6.6 7.6 3.5 12 3.5zM4 6.6v10.8c0 1.7 3.6 3.1 8 3.1s8-1.4 8-3.1V6.6M4 12c0 1.7 3.6 3.1 8 3.1s8-1.4 8-3.1',
+  output:'M21 12H9M21 12l-4-4M21 12l-4 4M14 4.5H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h9',
+  agent:'M12 3.5l7.5 4v9L12 20.5 4.5 16.5v-9zM12 3.5v17M4.5 7.5L12 11.5l7.5-4',
+  logic:'M4 4h4v4H4zM16 4h4v4h-4zM16 16h4v4h-4zM8 6h8M20 8v8M6 8v10h10',
+  system:'M4.5 12a7.5 7.5 0 1 0 15 0 7.5 7.5 0 0 0-15 0zM12 8v4l2.5 2.5',
+  fs:'M4 4h6l2 2h8v12H4zM4 10h16',
+  git:'M12 3v18M3 8l9 4 9-4'
+};
+function svgIcon(name,size,fill){size=size||18;var d=ICONS[name]||'';
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="'+(fill?'currentColor':'none')+'" stroke="'+(fill?'none':'currentColor')+'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:block;flex:0 0 auto"><path d="'+d+'"/></svg>';}
+function paintIcons(root){(root||document).querySelectorAll('[data-ico]').forEach(function(el){
+  if(el.dataset.done)return;el.innerHTML=svgIcon(el.dataset.ico,el.dataset.sz?+el.dataset.sz:16,el.dataset.fill==='1');
+  el.style.display='inline-flex';el.dataset.done='1';});}
+
+var CAT={
+  trigger:{ico:'trigger',label:'TRIGGER',tint:'#6b7280'},
+  agent:{ico:'agent',label:'AGENT',tint:'#0e9f6e'},
+  ai:{ico:'ai',label:'AI',tint:'#3b8fb0'},
+  data:{ico:'data',label:'DATA',tint:'#3b78d6'},
+  output:{ico:'output',label:'OUTPUT',tint:'#8a8d88'},
+  logic:{ico:'logic',label:'LOGIC',tint:'#9b59b6'},
+  system:{ico:'system',label:'SYSTEM',tint:'#e67e22'},
+  fs:{ico:'fs',label:'FILESYSTEM',tint:'#b08534'},
+  git:{ico:'git',label:'GIT',tint:'#e74c3c'}
 };
 
-const ui = {
-  canvas: document.getElementById('canvas'),
-  yamlEditor: document.getElementById('yamlEditor'),
-  paletteContent: document.getElementById('paletteContent'),
-  inspector: document.getElementById('inspector'),
-  inspectorContent: document.getElementById('inspectorContent'),
-  btnSave: document.getElementById('btnSave'),
-  btnCompile: document.getElementById('btnCompile'),
-  btnRun: document.getElementById('btnRun'),
-  btnUndo: document.getElementById('btnUndo'),
-  btnRedo: document.getElementById('btnRedo'),
-  btnSettings: document.getElementById('btnSettings'),
-  saveDot: document.getElementById('saveDot'),
-  saveStatus: document.getElementById('saveStatus'),
-  validDot: document.getElementById('validDot'),
-  validStatus: document.getElementById('validStatus'),
-  viewToggles: document.querySelectorAll('.view-toggle'),
-  views: document.querySelectorAll('.view'),
+function catFromToolType(tt){
+  if(!tt)return'agent';
+  var p=tt.split('/')[0];
+  var map={ai:'ai',data:'data',trigger:'trigger',output:'output',logic:'logic',system:'system',
+    filesystem:'fs',git:'git',agent:'agent',mcp:'agent',state:'data'};
+  return map[p]||'agent';
+}
+
+var NODE_W=232;
+var G={HEAD:46,PADTOP:2,GRP:21,ROW:27,PADBOT:8};
+function cardH(ins,outs){var inB=ins.length?G.GRP+ins.length*G.ROW:0;var outB=outs.length?G.GRP+outs.length*G.ROW:0;return G.HEAD+G.PADTOP+inB+outB+G.PADBOT;}
+function inY(ins,idx){return G.HEAD+G.PADTOP+G.GRP+idx*G.ROW+G.ROW/2;}
+function outY(ins,outs,idx){var inB=ins.length?G.GRP+ins.length*G.ROW:0;return G.HEAD+G.PADTOP+inB+G.GRP+idx*G.ROW+G.ROW/2;}
+function edgePath(x1,y1,x2,y2){var dx=Math.max(46,Math.abs(x2-x1)*0.45);return 'M '+x1+' '+y1+' C '+(x1+dx)+' '+y1+', '+(x2-dx)+' '+y2+', '+x2+' '+y2;}
+
+var state={
+  spec:null,raw:'',path:'',parseError:null,isDirty:false,isCompiling:false,isRunning:false,
+  selectedNode:null,selectedEdge:null,canUndo:false,canRedo:false,
+  tools:[],runningAgentId:null,runOutputs:{},
+  nodeState:{},
+  zoom:null,panX:0,panY:0
 };
 
-// ============================================================================
-// API CALLS (error-wrapped)
-// ============================================================================
+var $=function(s){return document.querySelector(s);};
+var graphEl=$('#graph'),canvasEl=$('#canvas');
 
-async function api(method, path, body = null) {
-  try {
-    const opts = { method };
-    if (body) {
-      opts.headers = { 'Content-Type': 'application/json' };
-      opts.body = JSON.stringify(body);
-    }
-    const resp = await fetch(path, opts);
-    if (!resp.ok) {
-      throw new Error(`${resp.status}: ${resp.statusText}`);
-    }
-    return await resp.json();
-  } catch (err) {
-    console.error(`API error on ${method} ${path}:`, err);
-    showToast(`API error: ${err.message}`, 'error');
-    return null;
-  }
+function escapeHtml(text){
+  var map={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
+  return String(text||'').replace(/[&<>"']/g,function(m){return map[m];});
 }
 
-async function loadAgent() {
-  try {
-    const data = await api('GET', '/api/edit/agent');
-    if (!data) return false;
-    
-    state.path = data.path || 'agent';
-    state.raw = data.raw || '';
-    state.spec = data.spec || null;
-    state.parseError = data.parse_error || null;
-    
-    const filename = state.path.split('/').pop() || 'agent';
-    document.getElementById('filename').textContent = filename;
-    
-    updateYAMLEditor();
-    await updatePalette();
-    updateStatus();
-    
-    if (state.parseError) {
-      showView('yaml');
-      renderCanvasBlank('Parse Error', state.parseError);
-    } else if (!state.spec || state.spec === null) {
-      showView('visual');
-      renderCanvasBlank('New Agent', 'Click Visual → edit in YAML or add nodes from Tools');
-    } else {
-      showView('visual');
-      autoLayout(state.spec);
-      renderCanvas();
-      fitToView(); // center the graph in the viewport on load
-    }
-
-    return true;
-  } catch (err) {
-    console.error('Load agent error:', err);
-    showToast(`Load error: ${err.message}`, 'error');
-    return false;
-  }
+function toolSpecFor(toolType){
+  if(!toolType||!state.tools.length)return null;
+  for(var i=0;i<state.tools.length;i++){if(state.tools[i].tool_type===toolType)return state.tools[i];}
+  return null;
 }
 
-async function saveAgent() {
-  if (!state.isDirty) return;
-  
-  try {
-    const body = state.spec ? { spec: state.spec } : { raw: state.raw };
-    const data = await api('PUT', '/api/edit/agent', body);
-    if (!data || !data.ok) {
-      showToast(data?.error || 'Save failed', 'error');
-      return false;
-    }
-    
-    state.raw = data.raw || '';
-    state.isDirty = false;
-    updateYAMLEditor();
-    updateStatus();
-    showToast('Saved', 'success');
-    return true;
-  } catch (err) {
-    console.error('Save error:', err);
-    showToast(`Save error: ${err.message}`, 'error');
-    return false;
+function portsForNode(nodeId,toolType){
+  var ts=toolSpecFor(toolType);
+  var ins=[],outs=[];
+  if(ts){
+    (ts.inputs||[]).forEach(function(p){ins.push({n:p.name,t:p.field_type||'any'});});
+    (ts.outputs||[]).forEach(function(p){outs.push({n:p.name,t:p.field_type||'any'});});
   }
-}
-
-async function compileAgent() {
-  if (state.isCompiling) return;
-  state.isCompiling = true;
-  ui.btnCompile.disabled = true;
-  
-  try {
-    const body = state.spec ? { spec: state.spec } : { raw: state.raw };
-    const data = await api('POST', '/api/edit/compile', body);
-    if (!data) return;
-    
-    if (data.ok) {
-      showToast('Compiled successfully', 'success');
-      state.parseError = null;
-    } else {
-      const msg = (data.diagnostics && data.diagnostics[0]) ? data.diagnostics[0].message : 'Compile failed';
-      showToast(`Error: ${msg}`, 'error');
-      state.parseError = msg;
-    }
-    updateStatus();
-  } catch (err) {
-    console.error('Compile error:', err);
-    showToast(`Compile error: ${err.message}`, 'error');
-  } finally {
-    state.isCompiling = false;
-    ui.btnCompile.disabled = false;
-  }
-}
-
-async function undoRedo(action) {
-  try {
-    const data = await api('POST', `/api/edit/${action}`);
-    if (!data) return;
-    
-    state.spec = data.spec || null;
-    state.raw = data.raw || '';
-    state.canUndo = data.can_undo || false;
-    state.canRedo = data.can_redo || false;
-    state.isDirty = false;
-    state.parseError = null;
-    state.selectedNode = null;
-    state.selectedEdge = null;
-    
-    updateYAMLEditor();
-    updateStatus();
-    
-    if (state.spec && state.spec !== null) {
-      renderCanvas();
-    } else {
-      renderCanvasBlank('Blank', 'Edit in YAML or start from a template');
-    }
-  } catch (err) {
-    console.error(`${action} error:`, err);
-    showToast(`${action} failed`, 'error');
-  }
-}
-
-// PRD-016: a value is "simple" (rendered as a field) unless it's object/array (→ JSON area).
-function isSimpleInputType(type) {
-  return !['object', 'array'].includes((type || 'text').toLowerCase());
-}
-
-// Build the Run modal body from the agent's declared `inputs` (schema-driven form).
-// No inputs declared → a free JSON textarea (fallback). Sets data-mode on the container.
-// Create the input element for one input type, with placeholder from the description.
-function createRunField(type, desc) {
-  if (type === 'boolean') {
-    const f = document.createElement('input');
-    f.type = 'checkbox';
-    return f;
-  }
-  if (type === 'number') {
-    const f = document.createElement('input');
-    f.type = 'number';
-    f.className = 'form-input';
-    f.placeholder = desc;
-    return f;
-  }
-  const f = document.createElement('textarea');
-  if (isSimpleInputType(type)) {
-    f.className = 'form-input run-text';
-    f.placeholder = desc;
-  } else {
-    f.className = 'form-input textarea'; // object/array → JSON
-    f.placeholder = desc || (type === 'array' ? '[]' : '{}');
-  }
-  return f;
-}
-
-// Render one labeled row per declared input into the container.
-function renderRunFields(inputs, container) {
-  Object.keys(inputs).forEach((name) => {
-    const spec = inputs[name] || {};
-    const type = (spec.type || 'text').toLowerCase();
-    const required = !!spec.required;
-    const desc = spec.description || '';
-    const g = document.createElement('div');
-    g.className = 'form-group';
-    g.innerHTML = `<label class="form-label">${escapeHtml(name)}` +
-      `<span class="form-hint${required ? ' req' : ''}">${escapeHtml(type)}${required ? ' · required' : ''}</span></label>`;
-
-    const field = createRunField(type, desc);
-    if (type === 'boolean') {
-      const wrap = document.createElement('label');
-      wrap.className = 'run-bool';
-      wrap.appendChild(field);
-      wrap.appendChild(document.createTextNode(desc || name));
-      g.appendChild(wrap);
-    } else {
-      g.appendChild(field);
-    }
-    field.dataset.inputName = name;
-    field.dataset.inputType = type;
-    field.dataset.required = required ? '1' : '';
-    container.appendChild(g);
-  });
-}
-
-// Build the Run modal body: a form from the agent's inputs, or a JSON textarea fallback.
-function buildRunForm() {
-  const container = document.getElementById('runFields');
-  document.getElementById('runFormError').style.display = 'none';
-  container.innerHTML = '';
-  const inputs = (state.spec && state.spec.inputs) || {};
-
-  if (!Object.keys(inputs).length) {
-    container.dataset.mode = 'json';
-    const g = document.createElement('div');
-    g.className = 'form-group';
-    g.innerHTML = '<label class="form-label">Trigger Data (JSON)</label>' +
-      '<textarea class="form-input textarea" id="runJsonInput" placeholder="{}" spellcheck="false"></textarea>';
-    container.appendChild(g);
-    return;
-  }
-
-  container.dataset.mode = 'form';
-  renderRunFields(inputs, container);
-}
-
-// Collect + validate the Run form → { ok, triggerData } or { ok:false, error, missing }.
-// Coerces by type (number→Number, boolean→bool, object/array→JSON.parse).
-function collectRunForm() {
-  const container = document.getElementById('runFields');
-  if (container.dataset.mode === 'json') {
-    const raw = (document.getElementById('runJsonInput').value || '').trim() || '{}';
-    try { return { ok: true, triggerData: JSON.parse(raw) }; }
-    catch (e) { return { ok: false, error: 'JSON inválido en Trigger Data' }; }
-  }
-
-  const fields = Array.from(container.querySelectorAll('[data-input-name]'));
-  const triggerData = {};
-  const missing = [];
-  fields.forEach((f) => f.classList.remove('invalid'));
-
-  for (const f of fields) {
-    const name = f.dataset.inputName;
-    const type = f.dataset.inputType;
-    const required = f.dataset.required === '1';
-
-    if (type === 'boolean') { triggerData[name] = f.checked; continue; }
-
-    const raw = (f.value || '').trim();
-    if (!raw) {
-      if (required) { missing.push(name); f.classList.add('invalid'); }
-      continue; // skip empty optional
-    }
-    if (type === 'number') {
-      const n = Number(raw);
-      if (Number.isNaN(n)) { f.classList.add('invalid'); return { ok: false, error: `"${name}" debe ser un número` }; }
-      triggerData[name] = n;
-    } else if (!isSimpleInputType(type)) {
-      try { triggerData[name] = JSON.parse(raw); }
-      catch (e) { f.classList.add('invalid'); return { ok: false, error: `JSON inválido en "${name}"` }; }
-    } else {
-      triggerData[name] = raw;
-    }
-  }
-
-  if (missing.length) return { ok: false, error: `Faltan campos requeridos: ${missing.join(', ')}`, missing };
-  return { ok: true, triggerData };
-}
-
-async function runAgent() {
-  if (state.isRunning || !state.spec) {
-    showToast('No spec to run', 'error');
-    return;
-  }
-
-  try {
-    const modal = document.getElementById('runModal');
-    buildRunForm(); // schema-driven fields from the agent's inputs
-    modal.classList.add('active');
-
-    document.getElementById('runStart').onclick = async () => {
-      try {
-        const collected = collectRunForm();
-        if (!collected.ok) {
-          const errEl = document.getElementById('runFormError');
-          errEl.textContent = collected.error;
-          errEl.style.display = 'block';
-          return; // keep modal open so the user can fix it
-        }
-        const triggerData = collected.triggerData;
-
-        modal.classList.remove('active');
-
-        // PRD-014: preflight gate — if the provider/model isn't ready, guide
-        // the user (download the model, start Ollama, set a key) before running.
-        const pf = await checkPreflight();
-        if (!pf.ok) {
-          showPreflightGate(pf, triggerData);
-          return;
-        }
-
-        await executeRun(triggerData);
-      } catch (err) {
-        showToast(`Run setup error: ${err.message}`, 'error');
-        console.error('Run setup error:', err);
-        modal.classList.remove('active');
+  if(!ins.length&&!outs.length&&state.spec&&state.spec.graph){
+    var edges=state.spec.graph.edges||[];
+    var inNames={},outNames={};
+    edges.forEach(function(e){
+      if(e.target===nodeId){
+        var dm=e.data_map||{};
+        Object.keys(dm).forEach(function(k){inNames[k]=1;});
+        if(!Object.keys(dm).length)inNames[e.source]=1;
       }
-    };
-
-    document.getElementById('runCancel').onclick = () => {
-      modal.classList.remove('active');
-    };
-
-    document.getElementById('btnStop').onclick = () => {
-      state.isRunning = false;
-      addConsoleLine('Stopped.', 'info');
-    };
-  } catch (err) {
-    console.error('Run init error:', err);
-    showToast(`Run error: ${err.message}`, 'error');
-  }
-}
-
-// Read an SSE response body line by line, invoking onEvent(parsedJSON) for each
-// `data: {...}` line. Stops when the body ends or shouldContinue() turns false.
-async function parseSSEStream(resp, onEvent, shouldContinue = () => true) {
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (shouldContinue()) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      try { onEvent(JSON.parse(line.substring(6))); }
-      catch (e) { console.error('SSE parse error:', e); }
-    }
-  }
-}
-
-// Create the agent instance and stream its execution onto the canvas.
-async function executeRun(triggerData) {
-  try {
-    const createResp = await api('POST', '/api/v1/agents/from-spec', state.spec);
-    if (!createResp || !createResp.id) {
-      showToast('Failed to create agent instance', 'error');
-      return;
-    }
-    state.runningAgentId = createResp.id;
-    state.isRunning = true;
-    showView('visual'); // keep the graph visible so the run plays out on the canvas
-    resetHighlights();
-    resetRunResult();
-    clearConsole();
-    addConsoleLine('Starting run...', 'info');
-    try {
-      const streamResp = await fetch(`/api/v1/agents/${state.runningAgentId}/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(triggerData),
-      });
-      if (!streamResp.ok) {
-        addConsoleLine(`Stream failed: ${streamResp.statusText}`, 'error');
-        state.isRunning = false;
-        return;
+      if(e.source===nodeId){
+        var dm2=e.data_map||{};
+        Object.values(dm2).forEach(function(v){if(typeof v==='string')outNames[v]=1;});
+        if(!Object.keys(dm2).length)outNames[e.target]=1;
       }
-      await parseSSEStream(streamResp, handleStreamEvent, () => state.isRunning);
-    } catch (err) {
-      addConsoleLine(`Stream error: ${err.message}`, 'error');
-    } finally {
-      state.isRunning = false;
-    }
-  } catch (err) {
-    showToast(`Run error: ${err.message}`, 'error');
-  }
-}
-
-// PRD-014: is the launch provider/model ready? (Never blocks if the check fails.)
-async function checkPreflight() {
-  try {
-    const pf = await api('GET', '/api/edit/preflight');
-    return pf || { ok: true, diagnostics: [] };
-  } catch (err) {
-    return { ok: true, diagnostics: [] };
-  }
-}
-
-// Show the "missing configuration" gate with actionable fixes (download model, etc.).
-function showPreflightGate(pf, triggerData) {
-  try {
-    const modal = document.getElementById('preflightModal');
-    const body = document.getElementById('preflightBody');
-    body.innerHTML = '';
-    (pf.diagnostics || []).forEach((d) => {
-      const row = document.createElement('div');
-      row.style.cssText = 'margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #eee;';
-      const msg = document.createElement('div');
-      msg.style.cssText = 'color:#d1314c;font-size:13px;';
-      msg.textContent = '✗ ' + (d.message || '');
-      row.appendChild(msg);
-      const action = document.createElement('div');
-      action.style.cssText = 'color:#666;font-size:12px;margin-top:4px;';
-      action.textContent = '→ ' + (d.action || '');
-      row.appendChild(action);
-      const m = /ollama pull (\S+)/.exec(d.action || '');
-      if (m) {
-        const btn = document.createElement('button');
-        btn.className = 'primary';
-        btn.style.cssText = 'margin-top:8px;';
-        btn.textContent = `Download ${m[1]}`;
-        const prog = document.createElement('div');
-        prog.style.cssText = 'font-size:12px;color:#666;margin-top:6px;font-variant-numeric:tabular-nums;';
-        btn.onclick = async () => {
-          btn.disabled = true;
-          const ok = await pullModelStream(m[1], (line) => { prog.textContent = line; });
-          if (ok) {
-            modal.classList.remove('active');
-            await executeRun(triggerData);
-          } else {
-            btn.disabled = false;
-          }
-        };
-        row.appendChild(btn);
-        row.appendChild(prog);
-      }
-      body.appendChild(row);
     });
-    modal.classList.add('active');
-    document.getElementById('preflightClose').onclick = () => modal.classList.remove('active');
-  } catch (err) {
-    console.error('showPreflightGate error:', err);
+    Object.keys(inNames).forEach(function(k){ins.push({n:k,t:'any'});});
+    Object.keys(outNames).forEach(function(k){outs.push({n:k,t:'any'});});
   }
+  return{inputs:ins,outputs:outs};
 }
 
-// Pull an Ollama model, streaming progress lines to `onLine`. Returns true on success.
-async function pullModelStream(name, onLine) {
-  try {
-    const resp = await fetch('/api/edit/models/pull', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
-    if (!resp.ok || !resp.body) { showToast('Pull failed', 'error'); return false; }
-    let ok = false;
-    await parseSSEStream(resp, (d) => {
-      const pct = (d.completed && d.total) ? ` ${Math.floor((d.completed * 100) / d.total)}%` : '';
-      onLine(`${d.status || ''}${pct}`);
-      if (d.done) ok = d.status === 'success';
-    });
-    showToast(ok ? '✓ Model downloaded' : '✗ Download failed', ok ? 'success' : 'error');
-    return ok;
-  } catch (err) {
-    showToast(`Pull error: ${err.message}`, 'error');
-    return false;
-  }
-}
-
-// PRD-014: open the Settings panel — browse the curated catalog and set the default model.
-async function openSettings() {
-  const modal = document.getElementById('settingsModal');
-  const body = document.getElementById('settingsBody');
-  modal.classList.add('active');
-  document.getElementById('settingsClose').onclick = () => modal.classList.remove('active');
-  body.innerHTML = '<div style="color:#666;font-size:13px;">Loading models…</div>';
-  try {
-    const [cfg, list] = await Promise.all([
-      api('GET', '/api/edit/config').catch(() => ({})),
-      api('GET', '/api/edit/models').catch(() => ({ catalog: [] })),
-    ]);
-    renderSettings(cfg || {}, (list && list.catalog) || []);
-  } catch (err) {
-    body.innerHTML = `<div style="color:#d1314c;font-size:13px;">Could not load models: ${err.message}</div>`;
-  }
-}
-
-function renderSettings(cfg, models) {
-  const body = document.getElementById('settingsBody');
-  body.innerHTML = '';
-  const current = cfg.default_model || '';
-  const head = document.createElement('div');
-  head.style.cssText = 'font-size:12px;color:#666;margin-bottom:12px;';
-  head.textContent = current
-    ? `Current default: ${cfg.default_provider || 'ollama'} · ${current}`
-    : 'No default configured yet — pick one below.';
-  body.appendChild(head);
-
-  if (!models.length) {
-    const empty = document.createElement('div');
-    empty.style.cssText = 'color:#666;font-size:13px;';
-    empty.textContent = 'No catalog available.';
-    body.appendChild(empty);
-    return;
-  }
-
-  models.forEach((m) => {
-    const isDefault = m.name === current;
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #eee;';
-
-    const info = document.createElement('div');
-    info.style.cssText = 'flex:1;min-width:0;';
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:13px;font-weight:600;color:#111;';
-    title.textContent = m.name + (m.recommended ? '  ·  recommended' : '');
-    const sub = document.createElement('div');
-    sub.style.cssText = 'font-size:11px;color:#999;margin-top:2px;';
-    const size = m.size_gb ? `${Number(m.size_gb).toFixed(1)} GB` : '';
-    sub.textContent = [m.description, size].filter(Boolean).join(' · ');
-    info.appendChild(title);
-    info.appendChild(sub);
-    row.appendChild(info);
-
-    const tag = document.createElement('span');
-    tag.style.cssText = `font-size:10px;letter-spacing:.04em;padding:2px 7px;border-radius:3px;${
-      m.installed ? 'background:#e8f4ef;color:#2a8c6c;' : 'background:#f2f2f2;color:#999;'}`;
-    tag.textContent = m.installed ? 'INSTALLED' : 'NOT LOCAL';
-    row.appendChild(tag);
-
-    const prog = document.createElement('div');
-    prog.style.cssText = 'font-size:11px;color:#666;min-width:90px;text-align:right;font-variant-numeric:tabular-nums;';
-
-    const action = document.createElement('button');
-    if (isDefault) {
-      action.textContent = 'Default';
-      action.className = 'primary';
-      action.disabled = true;
-    } else if (m.installed) {
-      action.textContent = 'Set default';
-      action.onclick = () => setDefaultModel(cfg.default_provider || 'ollama', m.name);
-    } else {
-      action.textContent = 'Download';
-      action.onclick = async () => {
-        action.disabled = true;
-        const ok = await pullModelStream(m.name, (line) => { prog.textContent = line; });
-        if (ok) await openSettings(); else action.disabled = false;
-      };
-    }
-    row.appendChild(prog);
-    row.appendChild(action);
-    body.appendChild(row);
-  });
-}
-
-async function setDefaultModel(provider, model) {
-  try {
-    await api('PUT', '/api/edit/config', { default_provider: provider, default_model: model });
-    showToast(`✓ Default set to ${model}`, 'success');
-    await openSettings();
-  } catch (err) {
-    showToast(`Could not set default: ${err.message}`, 'error');
-  }
-}
-
-function handleStreamEvent(event) {
-  try {
-    // SSE payload shape (engine streaming::StreamEvent, adjacently tagged):
-    //   { "event": "node.started", "data": { "node_id": "...", ... } }
-    const name = event.event || event.event_type || '';
-    const d = event.data || event;
-    const nodeId = d.node_id;
-
-    if (name === 'graph.started') {
-      addConsoleLine('Execution started', 'info');
-    } else if (name === 'node.started') {
-      addConsoleLine(`→ ${nodeId || '?'}: running`, 'running');
-      highlightNode(nodeId, 'running');
-    } else if (name === 'node.completed') {
-      const ms = d.duration_ms != null ? ` (${d.duration_ms}ms)` : '';
-      addConsoleLine(`✓ ${nodeId || '?'}: completed${ms}`, 'ok');
-      highlightNode(nodeId, 'completed');
-      state.runOutputs[nodeId] = { tool_type: d.tool_type, ms: d.duration_ms, output: d.output, status: 'ok' };
-      renderRunResult(); // surface output as nodes finish
-    } else if (name === 'node.error') {
-      addConsoleLine(`✗ ${nodeId || '?'}: ${d.error || 'error'}`, 'error');
-      highlightNode(nodeId, 'error');
-      state.runOutputs[nodeId] = { tool_type: d.tool_type, error: d.error || 'error', status: 'error' };
-      renderRunResult();
-    } else if (name === 'node.token') {
-      if (d.token) addConsoleLine(d.token, 'info');
-    } else if (name === 'graph.completed') {
-      addConsoleLine('✓ Execution completed', 'ok');
-      showToast('✓ Run completed', 'success');
-      const ms = d.total_duration_ms != null ? ` · ${d.total_duration_ms}ms` : '';
-      renderRunResult({ finalSnapshot: d.output, title: `Run result · ${d.status || 'Completed'}${ms}` });
-    } else if (name === 'graph.error') {
-      addConsoleLine(`✗ ${d.error || 'graph error'}`, 'error');
-      showToast('✗ Run failed', 'error');
-      renderRunResult({ title: 'Run result · Error', graphError: d.error || 'graph error' });
-    }
-  } catch (err) {
-    console.error('Handle stream event error:', err);
-  }
-}
-
-// ============================================================================
-// RUN RESULT DRAWER (PRD-015) — surface the agent's output, n8n-style
-// ============================================================================
-
-// Clear captured outputs and hide the drawer (called at the start of every run).
-function resetRunResult() {
-  state.runOutputs = {};
-  const drawer = document.getElementById('resultDrawer');
-  if (drawer) drawer.classList.remove('open', 'collapsed');
-  const body = document.getElementById('resultDrawerBody');
-  if (body) body.innerHTML = '';
-}
-
-// Field names that, when present, hold the human-readable result of a node.
-const RESULT_TEXT_KEYS = ['response', 'output', 'text', 'result', 'content', 'message', 'answer'];
-
-// Render a value for display: strings as-is, objects as pretty JSON.
-function prettyValue(val) {
-  if (val == null) return '(no output)';
-  if (typeof val === 'string') return val;
-  try { return JSON.stringify(val, null, 2); } catch (e) { return String(val); }
-}
-
-// A string is a meaningful headline if it isn't empty or a degenerate "{}"/"[]"/null.
-function isMeaningfulText(s) {
-  const t = (s || '').trim();
-  return t.length > 0 && t !== '{}' && t !== '[]' && t !== 'null';
-}
-
-// Pull the most likely "final answer" string out of a node's output map.
-function extractResultText(output) {
-  if (output == null) return null;
-  if (typeof output === 'string') return isMeaningfulText(output) ? output : null;
-  if (typeof output === 'object') {
-    for (const k of RESULT_TEXT_KEYS) {
-      if (typeof output[k] === 'string' && isMeaningfulText(output[k])) return output[k];
-    }
+function valFor(nodeId,portName,isOut){
+  var st=state.nodeState[nodeId];
+  if(!st||st==='idle')return null;
+  if(st==='running'&&isOut)return null;
+  var ro=state.runOutputs[nodeId];
+  if(!ro)return null;
+  var out=ro.output;
+  if(!out||typeof out!=='object')return null;
+  if(out[portName]!=null){
+    var v=out[portName];
+    if(typeof v==='string')return v.length>20?v.substring(0,18)+'...':v;
+    return JSON.stringify(v).substring(0,20);
   }
   return null;
 }
 
-// Pick the node whose output is "the result". Prefer the last node (in execution
-// order) that actually carries human-readable text — an output/* node that just
-// echoes an empty map shouldn't win over the LLM node that holds the answer.
-function pickFinalNode() {
-  const ids = Object.keys(state.runOutputs).filter((id) => state.runOutputs[id].status === 'ok');
-  for (let i = ids.length - 1; i >= 0; i--) {
-    if (extractResultText(state.runOutputs[ids[i]].output) != null) return ids[i];
-  }
-  // No text anywhere → fall back to the output/* node, else the last ok node.
-  const outNode = ids.find((id) => (state.runOutputs[id].tool_type || '').startsWith('output/'));
-  if (outNode) return outNode;
-  return ids.length ? ids[ids.length - 1] : null;
+function rowHTML(nodeId,port,side,cat){
+  var isOut=side==='out';var v=valFor(nodeId,port.n,isOut);var c=CAT[cat]||CAT.agent;var tint=c.tint;
+  var typeStyle='background:color-mix(in srgb,'+tint+' 11%,var(--surface));color:'+tint+';border-color:color-mix(in srgb,'+tint+' 26%,transparent)';
+  var valHTML='';
+  if(v!=null){var vs=isOut?'color:'+tint+';background:color-mix(in srgb,'+tint+' 10%,transparent);border-color:color-mix(in srgb,'+tint+' 24%,transparent)':'';
+    valHTML='<span class="val'+(isOut?'':' src')+'" style="'+vs+'">'+escapeHtml(v)+'</span>';}
+  return '<div class="node-row '+(isOut?'out':'in')+'">'+
+    '<span class="node-name">'+escapeHtml(port.n)+'</span>'+
+    '<span class="type" style="'+typeStyle+'">'+escapeHtml(port.t)+'</span>'+
+    '<span class="node-spacer"></span>'+valHTML+
+    '<span class="port '+(isOut?'r':'l')+'" style="background:color-mix(in srgb,'+tint+' 16%,var(--surface));border:2px solid '+tint+'"></span>'+
+  '</div>';
 }
 
-// Expand/collapse a node's output body and sync its caret.
-function setNodeBodyExpanded(head, nbody, expand) {
-  nbody.style.display = expand ? 'block' : 'none';
-  head.querySelector('.result-node-caret').textContent = expand ? '▾' : '▸';
+function nodeHTML(n,ports,cat){
+  var c=CAT[cat]||CAT.agent;
+  var st=state.nodeState[n.id]||'idle';
+  var hasVals=st!=='idle';
+  var headBg='color-mix(in srgb,'+c.tint+' 11%,var(--surface))';
+  var icoStyle='background:color-mix(in srgb,'+c.tint+' 15%,var(--surface));color:'+c.tint+';border-color:color-mix(in srgb,'+c.tint+' 30%,transparent)';
+  var status='';
+  if(st==='running')status='<span style="color:var(--run)"><svg class="spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg></span>';
+  else if(st==='done')status='<span class="node-status done">'+svgIcon('check',11,false)+'</span>';
+  else if(st==='error')status='<span class="node-status error">'+svgIcon('x',11,false)+'</span>';
+  var body='';
+  if(ports.inputs.length){body+='<div class="node-grp">'+(hasVals?'RECEIVED':'INPUTS')+'</div>';ports.inputs.forEach(function(p){body+=rowHTML(n.id,p,'in',cat);});}
+  if(ports.outputs.length){body+='<div class="node-grp">'+(hasVals?'PRODUCED':'OUTPUTS')+'</div>';ports.outputs.forEach(function(p){body+=rowHTML(n.id,p,'out',cat);});}
+  var pos=n.position||{};var x=Number(pos.x)||0;var y=Number(pos.y)||0;
+  return '<div class="node state-'+st+(n.id===state.selectedNode?' selected':'')+'" data-id="'+escapeHtml(n.id)+'" style="left:'+x+'px;top:'+y+'px;width:'+NODE_W+'px">'+
+    '<div class="node-head" style="background:'+headBg+'">'+
+      '<span class="node-rail" style="background:'+c.tint+'"></span>'+
+      '<span class="node-ico" style="'+icoStyle+'">'+svgIcon(c.ico,16,false)+'</span>'+
+      '<div style="flex:1;min-width:0"><div class="node-id">'+escapeHtml(n.id)+'</div><div class="node-tool" style="color:'+c.tint+';opacity:.8">'+escapeHtml(n.tool_type||'')+'</div></div>'+
+      status+
+    '</div>'+body+
+  '</div>';
 }
 
-// A labeled block container for the drawer (e.g. "Result", "Node outputs").
-function resultBlock(label) {
-  const block = document.createElement('div');
-  block.className = 'result-block';
-  block.innerHTML = `<div class="result-block-label">${escapeHtml(label)}</div>`;
-  return block;
-}
+function renderGraph(){
+  if(!state.spec||!state.spec.graph){renderBlank('No graph','Create nodes to get started');return;}
+  var nodes=state.spec.graph.nodes||[];var edges=state.spec.graph.edges||[];
+  if(!nodes.length){renderBlank('Empty graph','Add nodes from the palette');return;}
 
-// One collapsible row showing a node's output (or its error, auto-expanded).
-function buildNodeRow(id, n) {
-  const isErr = n.status === 'error';
-  const row = document.createElement('div');
-  row.className = 'result-node';
+  var nodePortsMap={};
+  nodes.forEach(function(n){nodePortsMap[n.id]=portsForNode(n.id,n.tool_type);});
 
-  const head = document.createElement('div');
-  head.className = 'result-node-head';
-  const ms = n.ms != null ? `<span class="result-node-ms">${n.ms}ms</span>` : '';
-  head.innerHTML =
-    '<span class="result-node-caret">▸</span>' +
-    `<span class="result-node-status ${isErr ? 'error' : 'ok'}"></span>` +
-    `<span class="result-node-name">${escapeHtml(id)}</span>` +
-    `<span class="result-node-type">${escapeHtml(n.tool_type || '')}</span>` +
-    ms;
+  var maxW=0,maxH=0;
+  nodes.forEach(function(n){
+    var pos=n.position||{};var x=Number(pos.x)||0;var y=Number(pos.y)||0;
+    var p=nodePortsMap[n.id];
+    maxW=Math.max(maxW,x+NODE_W+20);maxH=Math.max(maxH,y+cardH(p.inputs,p.outputs)+20);
+  });
+  var gW=Math.max(maxW,800);var gH=Math.max(maxH,400);
 
-  const nbody = document.createElement('div');
-  nbody.className = 'result-node-body';
-  nbody.style.display = 'none';
-  if (isErr) {
-    const e = document.createElement('div');
-    e.className = 'result-error-text';
-    e.textContent = n.error || 'error';
-    nbody.appendChild(e);
-  } else {
-    const pre = document.createElement('pre');
-    pre.className = 'result-json';
-    pre.textContent = prettyValue(n.output);
-    nbody.appendChild(pre);
-  }
-  head.addEventListener('click', () => setNodeBodyExpanded(head, nbody, nbody.style.display === 'none'));
-  if (isErr) setNodeBodyExpanded(head, nbody, true); // surface failures immediately
-  row.appendChild(head);
-  row.appendChild(nbody);
-  return row;
-}
+  var svg='<svg class="graph-edges" width="'+gW+'" height="'+gH+'"><defs>';
+  ['idle','done','running'].forEach(function(t){var col=t==='done'?'var(--accent)':t==='running'?'var(--run)':'var(--edge-strong)';
+    svg+='<marker id="arw-'+t+'" viewBox="0 0 10 10" refX="7.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1 1L8 5L1 9" fill="none" stroke="'+col+'" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>';});
+  svg+='</defs>';
 
-// The highlighted "Result" block: the final node's output as text (or JSON).
-function buildResultBlock() {
-  const finalId = pickFinalNode();
-  if (!finalId || !state.runOutputs[finalId]) return null;
-  const out = state.runOutputs[finalId].output;
-  const text = extractResultText(out);
-  const block = resultBlock(`Result · ${finalId}`);
-  const fin = document.createElement('div');
-  fin.className = 'result-final';
-  fin.textContent = text != null ? text : prettyValue(out);
-  block.appendChild(fin);
-  return block;
-}
-
-// Render the drawer from state.runOutputs. opts: { title, graphError, finalSnapshot }.
-// Orchestrator only — each block is built by a dedicated helper.
-function renderRunResult(opts = {}) {
-  try {
-    const drawer = document.getElementById('resultDrawer');
-    const body = document.getElementById('resultDrawerBody');
-    if (!drawer || !body) return;
-    drawer.classList.add('open');
-    if (opts.title) document.getElementById('resultDrawerTitle').textContent = opts.title;
-    body.innerHTML = '';
-
-    // Graph-level error (e.g. validation) — show it and stop.
-    if (opts.graphError) {
-      const block = resultBlock('Error');
-      const err = document.createElement('div');
-      err.className = 'result-error-text';
-      err.textContent = opts.graphError;
-      block.appendChild(err);
-      body.appendChild(block);
-      return;
-    }
-
-    // RESULT — only once the run has finished (finalSnapshot present).
-    if (opts.finalSnapshot !== undefined) {
-      const block = buildResultBlock();
-      if (block) body.appendChild(block);
-    }
-
-    // NODE OUTPUTS — one collapsible row per node, in execution order.
-    const ids = Object.keys(state.runOutputs);
-    if (ids.length) {
-      const block = resultBlock('Node outputs');
-      ids.forEach((id) => block.appendChild(buildNodeRow(id, state.runOutputs[id])));
-      body.appendChild(block);
-    }
-  } catch (err) {
-    console.error('renderRunResult error:', err);
-  }
-}
-
-// ============================================================================
-// UI UPDATES
-// ============================================================================
-
-function updateStatus() {
-  const saved = !state.isDirty;
-  const valid = !state.parseError;
-  
-  ui.saveDot.className = `status-dot ${saved ? 'saved' : 'unsaved'}`;
-  ui.saveStatus.textContent = saved ? 'saved' : 'unsaved';
-  
-  ui.validDot.className = `status-dot ${valid ? 'valid' : 'invalid'}`;
-  ui.validStatus.textContent = valid ? 'valid' : 'invalid';
-  
-  ui.btnUndo.disabled = !state.canUndo;
-  ui.btnRedo.disabled = !state.canRedo;
-  ui.btnRun.disabled = !state.spec || state.spec === null || state.parseError;
-}
-
-function updateYAMLEditor() {
-  try {
-    ui.yamlEditor.value = state.raw;
-    const yamlError = document.getElementById('yamlError');
-    if (state.parseError) {
-      yamlError.style.display = 'block';
-      document.getElementById('yamlErrorMsg').textContent = state.parseError;
-    } else {
-      yamlError.style.display = 'none';
-    }
-  } catch (err) {
-    console.error('Update YAML editor error:', err);
-  }
-}
-
-async function updatePalette() {
-  try {
-    if (state.tools.length === 0) {
-      const data = await api('GET', '/api/v1/tools');
-      if (!data) {
-        state.tools = [];
-        return;
-      }
-      state.tools = data;
-    }
-    
-    const grouped = {};
-    for (const tool of state.tools) {
-      const cat = tool.category || 'other';
-      if (!grouped[cat]) grouped[cat] = [];
-      grouped[cat].push(tool);
-    }
-    
-    let html = '';
-    for (const [cat, tools] of Object.entries(grouped).sort()) {
-      const catEscaped = cat.replace(/"/g, '&quot;');
-      html += `<div class="tool-category">
-        <div class="category-header" onclick="toggleCategory(this)">${escapeHtml(cat)}</div>
-        <div class="category-tools open">`;
-      
-      for (const tool of tools) {
-        const toolId = tool.tool_type || tool.id || 'unknown';
-        html += `<div class="tool-item" data-tool="${escapeHtml(toolId)}">${escapeHtml(tool.name || toolId)}</div>`;
-      }
-      html += `</div></div>`;
-    }
-    
-    ui.paletteContent.innerHTML = html;
-  } catch (err) {
-    console.error('Update palette error:', err);
-  }
-}
-
-function renderCanvasBlank(title, msg) {
-  try {
-    const edgesGroup = document.getElementById('edges');
-    const nodesGroup = document.getElementById('nodes');
-    edgesGroup.innerHTML = '';
-    nodesGroup.innerHTML = '';
-    
-    const g = nodesGroup;
-    const text1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text1.setAttribute('x', '50%');
-    text1.setAttribute('y', '45%');
-    text1.setAttribute('text-anchor', 'middle');
-    text1.setAttribute('font-size', '18');
-    text1.setAttribute('fill', '#999');
-    text1.textContent = title;
-    g.appendChild(text1);
-    
-    const text2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text2.setAttribute('x', '50%');
-    text2.setAttribute('y', '55%');
-    text2.setAttribute('text-anchor', 'middle');
-    text2.setAttribute('font-size', '12');
-    text2.setAttribute('fill', '#bbb');
-    text2.textContent = msg;
-    g.appendChild(text2);
-  } catch (err) {
-    console.error('Render blank canvas error:', err);
-  }
-}
-
-// Layout + node geometry (single source of truth for the node box size).
-const LAYOUT = { colStride: 220, rowStride: 100, nodeW: 120, nodeH: 60, halfW: 60, halfH: 30 };
-
-// Left→right layered layout by LONGEST-PATH level, each column centered vertically.
-// Deterministic. Respects saved positions only if EVERY node already has one
-// (unless `force`). fitToView() handles centering the result in the viewport.
-function autoLayout(spec, force) {
-  try {
-    if (!spec || !spec.graph) return;
-    const nodes = spec.graph.nodes || [];
-    const edges = spec.graph.edges || [];
-    if (!nodes.length) return;
-    // A "saved layout" = every node has a non-origin position. The spec serializer
-    // defaults absent positions to {0,0}, which we treat as "needs layout".
-    const hasSavedLayout = nodes.every((n) => n.position && (Number(n.position.x) || Number(n.position.y)));
-    if (hasSavedLayout && !force) return;
-
-    // Build adjacency + indegree.
-    const adj = {}, indeg = {};
-    nodes.forEach((n) => { adj[n.id] = []; indeg[n.id] = 0; });
-    edges.forEach((e) => {
-      if (adj[e.source] && indeg[e.target] != null) { adj[e.source].push(e.target); indeg[e.target]++; }
-    });
-
-    // Kahn traversal assigning longest-path column to each node.
-    const col = {}, work = { ...indeg };
-    const q = nodes.filter((n) => indeg[n.id] === 0).map((n) => n.id);
-    if (!q.length && nodes.length) q.push(nodes[0].id); // cycle fallback
-    q.forEach((id) => { col[id] = 0; });
-    while (q.length) {
-      const id = q.shift();
-      (adj[id] || []).forEach((t) => {
-        col[t] = Math.max(col[t] == null ? 0 : col[t], (col[id] || 0) + 1);
-        if (--work[t] === 0) q.push(t);
-      });
-    }
-    // Unreached nodes (cycles/orphans) → trailing columns.
-    let maxCol = 0; Object.values(col).forEach((c) => { maxCol = Math.max(maxCol, c); });
-    nodes.forEach((n) => { if (col[n.id] == null) col[n.id] = ++maxCol; });
-
-    // Group by column; center each column around y=0 (fitToView re-centers globally).
-    const byCol = {};
-    nodes.forEach((n) => { (byCol[col[n.id]] = byCol[col[n.id]] || []).push(n.id); });
-    Object.keys(byCol).forEach((c) => {
-      const ids = byCol[c];
-      const colH = (ids.length - 1) * LAYOUT.rowStride;
-      ids.forEach((id, i) => {
-        const n = nodes.find((x) => x.id === id);
-        if (n) n.position = { x: Number(c) * LAYOUT.colStride, y: i * LAYOUT.rowStride - colH / 2 };
-      });
-    });
-  } catch (err) {
-    console.error('autoLayout error:', err);
-  }
-}
-
-// Apply the current pan/zoom to the canvas content (both edge and node groups).
-function applyViewport() {
-  const c = state.canvas;
-  const t = `translate(${c.panX} ${c.panY}) scale(${c.zoom})`;
-  const e = document.getElementById('edges');
-  const n = document.getElementById('nodes');
-  if (e) e.setAttribute('transform', t);
-  if (n) n.setAttribute('transform', t);
-}
-
-// Center + scale the whole graph to fit the viewport (never zooms past 1:1).
-function fitToView() {
-  try {
-    const nodes = (state.spec && state.spec.graph && state.spec.graph.nodes) || [];
-    if (!nodes.length) return;
-    const svg = document.getElementById('canvas');
-    const vw = svg.clientWidth || 900, vh = svg.clientHeight || 600;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    nodes.forEach((nd) => {
-      const x = Number(nd.position && nd.position.x) || 0;
-      const y = Number(nd.position && nd.position.y) || 0;
-      minX = Math.min(minX, x - LAYOUT.halfW); maxX = Math.max(maxX, x + LAYOUT.halfW);
-      minY = Math.min(minY, y - LAYOUT.halfH); maxY = Math.max(maxY, y + LAYOUT.halfH);
-    });
-    const gw = Math.max(1, maxX - minX), gh = Math.max(1, maxY - minY);
-    const margin = 60;
-    const scale = Math.max(0.1, Math.min(1, (vw - margin * 2) / gw, (vh - margin * 2) / gh));
-    state.canvas.zoom = scale;
-    state.canvas.panX = (vw - gw * scale) / 2 - minX * scale;
-    state.canvas.panY = (vh - gh * scale) / 2 - minY * scale;
-    applyViewport();
-  } catch (err) {
-    console.error('fitToView error:', err);
-  }
-}
-
-function renderCanvas() {
-  try {
-    if (!state.spec || !state.spec.graph) {
-      renderCanvasBlank('No graph', 'Create nodes to get started');
-      return;
-    }
-    
-    const { nodes = [], edges = [] } = state.spec.graph;
-    if (nodes.length === 0) {
-      renderCanvasBlank('Empty graph', 'Add nodes from the palette');
-      return;
-    }
-    
-    const edgesGroup = document.getElementById('edges');
-    const nodesGroup = document.getElementById('nodes');
-    edgesGroup.innerHTML = '';
-    nodesGroup.innerHTML = '';
-    
-    const nodeMap = {};
-    for (const n of nodes) {
-      const pos = n.position || {};
-      const x = Number(pos.x) || 0;
-      const y = Number(pos.y) || 0;
-      nodeMap[n.id] = { x, y, ...n };
-      
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rect.setAttribute('class', 'node-rect');
-      rect.setAttribute('x', x - LAYOUT.halfW);
-      rect.setAttribute('y', y - LAYOUT.halfH);
-      rect.setAttribute('width', LAYOUT.nodeW);
-      rect.setAttribute('height', LAYOUT.nodeH);
-      rect.setAttribute('rx', '4');
-      if (state.selectedNode === n.id) rect.classList.add('selected');
-      
-      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      g.setAttribute('class', 'node');
-      g.setAttribute('data-id', n.id);
-      g.appendChild(rect);
-      
-      const textId = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      textId.setAttribute('class', 'node-id');
-      textId.setAttribute('x', x);
-      textId.setAttribute('y', y - 8);
-      textId.textContent = n.id;
-      g.appendChild(textId);
-      
-      const textType = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      textType.setAttribute('class', 'node-type');
-      textType.setAttribute('x', x);
-      textType.setAttribute('y', y + 12);
-      textType.textContent = n.tool_type || '?';
-      g.appendChild(textType);
-      
-      nodesGroup.appendChild(g);
-      
-      g.addEventListener('click', (e) => {
-        e.stopPropagation();
-        selectNode(n.id);
-      });
-
-      // Drag to reposition (n8n-style). Listeners live on document so the
-      // drag survives the re-render that happens on every move.
-      g.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        e.stopPropagation();
-        const node = state.spec.graph.nodes.find((nn) => nn.id === n.id);
-        if (!node) return;
-        const startMx = e.clientX, startMy = e.clientY;
-        const startX = Number(node.position && node.position.x) || 0;
-        const startY = Number(node.position && node.position.y) || 0;
-        let moved = false;
-        const onMove = (me) => {
-          moved = true;
-          const z = state.canvas.zoom || 1; // screen px → SVG units
-          node.position = {
-            x: startX + (me.clientX - startMx) / z,
-            y: startY + (me.clientY - startMy) / z,
-          };
-          renderCanvas();
-        };
-        const onUp = () => {
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-          if (moved) { state.isDirty = true; updateStatus(); }
-        };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
-    }
-
-    // Render edges
-    for (const e of edges) {
-      const src = nodeMap[e.source];
-      const tgt = nodeMap[e.target];
-      if (!src || !tgt) continue;
-      
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('class', 'edge-line');
-      if (state.selectedEdge === e.id) path.classList.add('selected');
-      
-      // Smooth horizontal cubic bezier for the L→R flow (n8n-style). The control-point
-      // offset grows with distance but stays ≥ 40px to avoid sharp bends on close nodes.
-      const dx = tgt.x - src.x;
-      const cpOffset = Math.max(40, Math.abs(dx) * 0.5);
-      const sx = src.x + LAYOUT.halfW, ex = tgt.x - LAYOUT.halfW;
-      const d = `M ${sx} ${src.y} C ${sx + cpOffset} ${src.y} ${ex - cpOffset} ${tgt.y} ${ex} ${tgt.y}`;
-      path.setAttribute('d', d);
-      path.setAttribute('marker-end', 'url(#arrowhead)');
-      
-      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      g.setAttribute('class', 'edge');
-      g.setAttribute('data-id', e.id);
-      g.appendChild(path);
-      
-      edgesGroup.appendChild(g);
-      
-      g.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        selectEdge(e.id);
-      });
-    }
-
-    applyViewport(); // keep pan/zoom applied across re-renders (e.g. during drag)
-  } catch (err) {
-    console.error('Render canvas error:', err);
-  }
-}
-
-function selectNode(id) {
-  try {
-    state.selectedNode = id;
-    state.selectedEdge = null;
-    const node = state.spec && state.spec.graph ? state.spec.graph.nodes.find(n => n.id === id) : null;
-    if (node) {
-      showInspector(node, 'node');
-    }
-    renderCanvas();
-  } catch (err) {
-    console.error('Select node error:', err);
-  }
-}
-
-function selectEdge(id) {
-  try {
-    state.selectedEdge = id;
-    state.selectedNode = null;
-    const edge = state.spec && state.spec.graph ? state.spec.graph.edges.find(e => e.id === id) : null;
-    if (edge) {
-      showInspector(edge, 'edge');
-    }
-    renderCanvas();
-  } catch (err) {
-    console.error('Select edge error:', err);
-  }
-}
-
-function showInspector(item, type) {
-  try {
-    ui.inspector.style.display = 'flex';
-    
-    if (type === 'node') {
-      ui.inspectorContent.innerHTML = `
-        <div class="form-group">
-          <label class="form-label">Node ID</label>
-          <input type="text" class="form-input" value="${escapeHtml(item.id)}" disabled>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Tool Type</label>
-          <input type="text" class="form-input" value="${escapeHtml(item.tool_type || '')}">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Config (JSON)</label>
-          <textarea class="form-input textarea">${escapeHtml(JSON.stringify(item.config || {}, null, 2))}</textarea>
-        </div>
-      `;
-    } else if (type === 'edge') {
-      ui.inspectorContent.innerHTML = `
-        <div class="form-group">
-          <label class="form-label">Source</label>
-          <input type="text" class="form-input" value="${escapeHtml(item.source)}" disabled>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Target</label>
-          <input type="text" class="form-input" value="${escapeHtml(item.target)}" disabled>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Condition (JSON)</label>
-          <textarea class="form-input textarea">${escapeHtml(JSON.stringify(item.condition || null, null, 2))}</textarea>
-        </div>
-      `;
-    }
-    
-    document.getElementById('inspectorClose').onclick = () => {
-      ui.inspector.style.display = 'none';
-      state.selectedNode = null;
-      state.selectedEdge = null;
-      renderCanvas();
-    };
-  } catch (err) {
-    console.error('Show inspector error:', err);
-  }
-}
-
-function showView(name) {
-  try {
-    ui.views.forEach(v => v.classList.remove('active'));
-    // Scope to .view — the toggle BUTTON also carries data-view and appears
-    // earlier in the DOM, so an unscoped selector would match the button.
-    const view = document.querySelector(`.view[data-view="${name}"]`);
-    if (view) view.classList.add('active');
-    ui.viewToggles.forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  } catch (err) {
-    console.error('Show view error:', err);
-  }
-}
-
-function highlightNode(id, status) {
-  try {
-    const rect = document.querySelector(`[data-id="${id}"] .node-rect`);
-    if (rect) {
-      rect.classList.remove('running', 'completed', 'error');
-      if (status) rect.classList.add(status);
-    }
-  } catch (err) {
-    console.error('Highlight node error:', err);
-  }
-}
-
-/// Clear every node's run-state styling (before a fresh run).
-function resetHighlights() {
-  document
-    .querySelectorAll('.node-rect.running, .node-rect.completed, .node-rect.error')
-    .forEach((r) => r.classList.remove('running', 'completed', 'error'));
-}
-
-function addConsoleLine(text, cls) {
-  try {
-    const out = document.getElementById('consoleOutput');
-    const line = document.createElement('div');
-    line.className = `console-line ${cls}`;
-    line.textContent = text;
-    out.appendChild(line);
-    out.scrollTop = out.scrollHeight;
-  } catch (err) {
-    console.error('Add console line error:', err);
-  }
-}
-
-function clearConsole() {
-  try {
-    document.getElementById('consoleOutput').innerHTML = '';
-  } catch (err) {
-    console.error('Clear console error:', err);
-  }
-}
-
-function showToast(msg, type = 'info') {
-  try {
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = msg;
-    document.getElementById('toastContainer').appendChild(toast);
-    
-    setTimeout(() => {
-      try {
-        toast.style.opacity = '0';
-        setTimeout(() => {
-          try {
-            toast.remove();
-          } catch (e) {
-            console.error('Remove toast error:', e);
-          }
-        }, 300);
-      } catch (e) {
-        console.error('Toast fade error:', e);
-      }
-    }, 3000);
-  } catch (err) {
-    console.error('Show toast error:', err);
-  }
-}
-
-function toggleCategory(el) {
-  try {
-    const tools = el.nextElementSibling;
-    if (tools) tools.classList.toggle('open');
-  } catch (err) {
-    console.error('Toggle category error:', err);
-  }
-}
-
-function escapeHtml(text) {
-  const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;',
-  };
-  return String(text || '').replace(/[&<>"']/g, m => map[m]);
-}
-
-// ============================================================================
-// EVENT LISTENERS
-// ============================================================================
-
-document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    await loadAgent();
-  } catch (err) {
-    console.error('Init error:', err);
-    showToast(`Init error: ${err.message}`, 'error');
-    renderCanvasBlank('Error', 'Failed to load agent');
-  }
-});
-
-ui.btnSave.addEventListener('click', () => {
-  try {
-    saveAgent();
-  } catch (err) {
-    console.error('Save handler error:', err);
-    showToast(`Save error: ${err.message}`, 'error');
-  }
-});
-
-ui.btnCompile.addEventListener('click', () => {
-  try {
-    compileAgent();
-  } catch (err) {
-    console.error('Compile handler error:', err);
-    showToast(`Compile error: ${err.message}`, 'error');
-  }
-});
-
-ui.btnRun.addEventListener('click', () => {
-  try {
-    runAgent();
-  } catch (err) {
-    console.error('Run handler error:', err);
-    showToast(`Run error: ${err.message}`, 'error');
-  }
-});
-
-ui.btnSettings.addEventListener('click', () => {
-  try {
-    openSettings();
-  } catch (err) {
-    console.error('Settings handler error:', err);
-    showToast(`Settings error: ${err.message}`, 'error');
-  }
-});
-
-// PRD-016: re-center the graph in the viewport (after dragging / resize).
-document.getElementById('btnFit').addEventListener('click', () => {
-  try { fitToView(); } catch (err) { console.error('Fit error:', err); }
-});
-window.addEventListener('resize', () => {
-  try { if (state.spec && state.spec.graph) fitToView(); } catch (err) { /* noop */ }
-});
-
-// PRD-015: run result drawer controls
-document.getElementById('resultDrawerClose').addEventListener('click', () => {
-  document.getElementById('resultDrawer').classList.remove('open', 'collapsed');
-});
-document.getElementById('resultDrawerToggle').addEventListener('click', () => {
-  const drawer = document.getElementById('resultDrawer');
-  const collapsed = drawer.classList.toggle('collapsed');
-  document.getElementById('resultDrawerToggle').textContent = collapsed ? '▴' : '▾';
-});
-
-ui.btnUndo.addEventListener('click', () => {
-  try {
-    undoRedo('undo');
-  } catch (err) {
-    console.error('Undo handler error:', err);
-    showToast('Undo failed', 'error');
-  }
-});
-
-ui.btnRedo.addEventListener('click', () => {
-  try {
-    undoRedo('redo');
-  } catch (err) {
-    console.error('Redo handler error:', err);
-    showToast('Redo failed', 'error');
-  }
-});
-
-ui.viewToggles.forEach(btn => {
-  btn.addEventListener('click', () => {
-    try {
-      showView(btn.dataset.view);
-      if (btn.dataset.view === 'yaml') {
-        updateYAMLEditor();
-      }
-    } catch (err) {
-      console.error('View toggle error:', err);
+  edges.forEach(function(e){
+    var srcNode=null,tgtNode=null;
+    for(var i=0;i<nodes.length;i++){if(nodes[i].id===e.source)srcNode=nodes[i];if(nodes[i].id===e.target)tgtNode=nodes[i];}
+    if(!srcNode||!tgtNode)return;
+    var sp=nodePortsMap[srcNode.id];var tp=nodePortsMap[tgtNode.id];
+    var dm=e.data_map||{};
+    var targetPort=Object.keys(dm)[0]||'';var sourcePort=dm[targetPort]||'';
+    var srcIdx=0,tgtIdx=0;
+    if(sourcePort){for(var j=0;j<sp.outputs.length;j++){if(sp.outputs[j].n===sourcePort){srcIdx=j;break;}}}
+    if(targetPort){for(var j=0;j<tp.inputs.length;j++){if(tp.inputs[j].n===targetPort){tgtIdx=j;break;}}}
+    var sPos=srcNode.position||{};var tPos=tgtNode.position||{};
+    var sx=Number(sPos.x)||0;var sy=Number(sPos.y)||0;
+    var tx=Number(tPos.x)||0;var ty=Number(tPos.y)||0;
+    var x1=sx+NODE_W;var y1=sy+outY(sp.inputs,sp.outputs,srcIdx);
+    var x2=tx;var y2=ty+inY(tp.inputs,tgtIdx);
+    var sState=state.nodeState[srcNode.id]||'idle';var tState=state.nodeState[tgtNode.id]||'idle';
+    var tone='idle';
+    if(tState==='running')tone='running';
+    else if(sState==='done'&&tState==='done')tone='done';
+    else if(sState==='done'&&tState==='running')tone='running';
+    var col=tone==='done'?'var(--accent)':tone==='running'?'var(--run)':'var(--edge)';
+    svg+='<path d="'+edgePath(x1,y1,x2,y2)+'" fill="none" stroke="'+col+'" stroke-width="'+(tone==='idle'?1.6:2.2)+'" marker-end="url(#arw-'+tone+')"'+(tone==='running'?' stroke-dasharray="5 4" style="animation:dash .6s linear infinite"':'')+'/>';
+    if(e.condition){
+      var cond=e.condition;var opSym={'Eq':'=','Neq':'≠','Gt':'>','Lt':'<','Gte':'≥','Lte':'≤','In':'∈','Contains':'⊃'};
+      var label=escapeHtml((cond.field||''))+' '+(opSym[cond.op]||cond.op||'')+' '+escapeHtml(String(cond.value!=null?cond.value:''));
+      var dx=Math.max(46,Math.abs(x2-x1)*0.45);
+      var cx1v=x1+dx,cy1v=y1,cx2v=x2-dx,cy2v=y2;
+      var t=0.5;var u=1-t;
+      var bx=u*u*u*x1+3*u*u*t*cx1v+3*u*t*t*cx2v+t*t*t*x2;
+      var by=u*u*u*y1+3*u*u*t*cy1v+3*u*t*t*cy2v+t*t*t*y2;
+      var lw=label.length*6.4+12;
+      svg+='<rect x="'+(bx-lw/2)+'" y="'+(by-9)+'" width="'+lw+'" height="18" rx="4" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1"/>';
+      svg+='<text x="'+bx+'" y="'+(by+4)+'" text-anchor="middle" font-family="var(--font-mono)" font-size="10" font-weight="600" fill="var(--text-2)">'+label+'</text>';
     }
   });
-});
+  svg+='</svg>';
 
-ui.yamlEditor.addEventListener('input', () => {
-  try {
-    state.raw = ui.yamlEditor.value;
-    state.isDirty = true;
-    updateStatus();
-  } catch (err) {
-    console.error('YAML editor input error:', err);
-  }
-});
+  var html=svg;
+  nodes.forEach(function(n){
+    var cat=catFromToolType(n.tool_type);
+    html+=nodeHTML(n,nodePortsMap[n.id],cat);
+  });
+  graphEl.innerHTML=html;
+  graphEl.style.width=gW+'px';graphEl.style.height=gH+'px';
 
-document.getElementById('consoleClose').addEventListener('click', () => {
-  try {
-    showView('visual');
-  } catch (err) {
-    console.error('Console close error:', err);
-  }
-});
-
-document.getElementById('paletteSearch').addEventListener('input', (e) => {
-  try {
-    const query = (e.target.value || '').toLowerCase();
-    document.querySelectorAll('.tool-item').forEach(item => {
-      const tool = (item.dataset.tool || '').toLowerCase();
-      const matches = tool.includes(query) || item.textContent.toLowerCase().includes(query);
-      item.style.display = matches ? '' : 'none';
+  graphEl.querySelectorAll('.node').forEach(function(el){
+    el.addEventListener('mousedown',function(ev){
+      if(ev.button!==0)return;
+      ev.stopPropagation();
+      var nid=el.dataset.id;
+      state.selectedNode=nid;state.selectedEdge=null;
+      renderGraph();renderInspector();
+      var nd=null;
+      if(state.spec&&state.spec.graph)(state.spec.graph.nodes||[]).forEach(function(nn){if(nn.id===nid)nd=nn;});
+      if(!nd)return;
+      var startMx=ev.clientX,startMy=ev.clientY;
+      var sp=nd.position||{};var startX=Number(sp.x)||0;var startY=Number(sp.y)||0;
+      var moved=false;
+      var onMove=function(me){
+        moved=true;
+        var z=currentScale();
+        nd.position={x:startX+(me.clientX-startMx)/z,y:startY+(me.clientY-startMy)/z};
+        renderGraph();
+      };
+      var onUp=function(){
+        document.removeEventListener('mousemove',onMove);
+        document.removeEventListener('mouseup',onUp);
+        if(moved){state.isDirty=true;updateStatus();}
+      };
+      document.addEventListener('mousemove',onMove);
+      document.addEventListener('mouseup',onUp);
     });
-  } catch (err) {
-    console.error('Palette search error:', err);
+  });
+
+  applyTransform(gW,gH);
+  var nc=nodes.length;var ec=edges.length;
+  var countEl=$('#nodeCount');
+  if(countEl)countEl.textContent=nc+' node'+(nc!==1?'s':'')+' · '+ec+' edge'+(ec!==1?'s':'');
+}
+
+function renderBlank(title,msg){
+  graphEl.innerHTML='<div class="blank-state"><h2>'+escapeHtml(title)+'</h2><p>'+escapeHtml(msg)+'</p></div>';
+  graphEl.style.width='100%';graphEl.style.height='100%';
+}
+
+function applyTransform(gW,gH){
+  var W=canvasEl.clientWidth||800;var H=canvasEl.clientHeight||600;var pad=56;
+  var s=state.zoom!=null?state.zoom:Math.min(1,(W-pad)/(gW||1),(H-pad)/(gH||1));
+  if(state.zoom==null){
+    var offX=(W-gW*s)/2;var offY=(H-gH*s)/2;
+    state.panX=offX;state.panY=offY;
+  }
+  graphEl.style.transform='translate('+state.panX+'px,'+state.panY+'px) scale('+s+')';
+  var lbl=$('#zoomLabel');if(lbl)lbl.textContent=Math.round(s*100)+'%';
+}
+
+function currentScale(){
+  if(state.zoom!=null)return state.zoom;
+  var nodes=(state.spec&&state.spec.graph&&state.spec.graph.nodes)||[];
+  if(!nodes.length)return 1;
+  var W=canvasEl.clientWidth||800;var H=canvasEl.clientHeight||600;var pad=56;
+  var maxW=0,maxH=0;
+  nodes.forEach(function(n){
+    var pos=n.position||{};var x=Number(pos.x)||0;var y=Number(pos.y)||0;
+    var p=portsForNode(n.id,n.tool_type);
+    maxW=Math.max(maxW,x+NODE_W+20);maxH=Math.max(maxH,y+cardH(p.inputs,p.outputs)+20);
+  });
+  return Math.min(1,(W-pad)/(maxW||1),(H-pad)/(maxH||1));
+}
+
+function fitToView(){state.zoom=null;renderGraph();}
+
+function autoLayout(spec,force){
+  if(!spec||!spec.graph)return;
+  var nodes=spec.graph.nodes||[];var edges=spec.graph.edges||[];
+  if(!nodes.length)return;
+  var hasSaved=nodes.every(function(n){return n.position&&(Number(n.position.x)||Number(n.position.y));});
+  if(hasSaved&&!force)return;
+  var adj={},indeg={};
+  nodes.forEach(function(n){adj[n.id]=[];indeg[n.id]=0;});
+  edges.forEach(function(e){
+    if(adj[e.source]&&indeg[e.target]!=null){adj[e.source].push(e.target);indeg[e.target]++;}
+  });
+  var col={},work={};
+  Object.keys(indeg).forEach(function(k){work[k]=indeg[k];});
+  var q=nodes.filter(function(n){return indeg[n.id]===0;}).map(function(n){return n.id;});
+  if(!q.length&&nodes.length)q.push(nodes[0].id);
+  q.forEach(function(id){col[id]=0;});
+  while(q.length){
+    var id=q.shift();
+    (adj[id]||[]).forEach(function(t){
+      col[t]=Math.max(col[t]==null?0:col[t],(col[id]||0)+1);
+      if(--work[t]===0)q.push(t);
+    });
+  }
+  var maxCol=0;Object.values(col).forEach(function(c){maxCol=Math.max(maxCol,c);});
+  nodes.forEach(function(n){if(col[n.id]==null)col[n.id]=++maxCol;});
+  var byCol={};
+  nodes.forEach(function(n){(byCol[col[n.id]]=byCol[col[n.id]]||[]).push(n.id);});
+  var COL_STRIDE=420;var ROW_GAP=28;
+  Object.keys(byCol).forEach(function(c){
+    var ids=byCol[c];
+    var heights=ids.map(function(id){
+      var n=null;nodes.forEach(function(nn){if(nn.id===id)n=nn;});
+      var p=portsForNode(id,n?n.tool_type:'');
+      return cardH(p.inputs,p.outputs);
+    });
+    var totalH=0;heights.forEach(function(h,i){totalH+=h;if(i<heights.length-1)totalH+=ROW_GAP;});
+    var curY=200-totalH/2;
+    ids.forEach(function(id,i){
+      var n=null;nodes.forEach(function(nn){if(nn.id===id)n=nn;});
+      if(n)n.position={x:Number(c)*COL_STRIDE+40,y:curY};
+      curY+=heights[i]+ROW_GAP;
+    });
+  });
+}
+
+function renderPalette(){
+  if(!state.tools.length){$('#palGroups').innerHTML='<div style="padding:16px;color:var(--text-3);font-size:12px">No tools loaded</div>';return;}
+  var grouped={};
+  state.tools.forEach(function(t){
+    var cat=t.category||'other';
+    if(!grouped[cat])grouped[cat]=[];
+    grouped[cat].push(t);
+  });
+  var h='';
+  Object.keys(grouped).sort().forEach(function(cat){
+    h+='<div class="pal-grp">'+escapeHtml(cat.toUpperCase())+'</div>';
+    grouped[cat].forEach(function(t){
+      var cKey=catFromToolType(t.tool_type);var c=CAT[cKey]||CAT.agent;
+      var st='background:color-mix(in srgb,'+c.tint+' 14%,var(--surface));color:'+c.tint+';border-color:color-mix(in srgb,'+c.tint+' 28%,transparent)';
+      h+='<div class="pal-row" data-tool="'+escapeHtml(t.tool_type||'')+'"><span class="pal-ico" style="'+st+'">'+svgIcon(c.ico,15,false)+'</span><span style="font-size:12.5px;font-weight:500">'+escapeHtml(t.name||t.tool_type)+'</span></div>';
+    });
+  });
+  $('#palGroups').innerHTML=h;
+}
+
+function renderInspector(){
+  var insp=$('#inspector');
+  if(!state.selectedNode&&!state.selectedEdge){insp.classList.remove('open');return;}
+  insp.classList.add('open');
+
+  if(state.selectedNode&&state.spec&&state.spec.graph){
+    var nd=null;(state.spec.graph.nodes||[]).forEach(function(n){if(n.id===state.selectedNode)nd=n;});
+    if(!nd){insp.classList.remove('open');return;}
+    var cat=catFromToolType(nd.tool_type);var c=CAT[cat]||CAT.agent;
+    var ports=portsForNode(nd.id,nd.tool_type);
+    var icoStyle='background:color-mix(in srgb,'+c.tint+' 14%,var(--surface));color:'+c.tint+';border-color:color-mix(in srgb,'+c.tint+' 30%,transparent)';
+    var rows='';
+    ports.inputs.forEach(function(p){rows+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--surface)"><span style="width:8px;height:8px;border-radius:50%;border:2px solid var(--edge-strong);flex:0 0 auto"></span><span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);width:28px">in</span><span style="font-family:var(--font-mono);font-size:11.5px;flex:1">'+escapeHtml(p.n)+'</span><span class="tag" style="font-size:10px">'+escapeHtml(p.t)+'</span></div>';});
+    ports.outputs.forEach(function(p,i){rows+='<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;'+(i<ports.outputs.length-1?'border-bottom:1px solid var(--border);':'')+'background:var(--surface-2)"><span style="width:8px;height:8px;border-radius:50%;border:2px solid var(--accent);background:var(--accent-soft);flex:0 0 auto"></span><span style="font-family:var(--font-mono);font-size:10.5px;color:var(--accent-text);width:28px">out</span><span style="font-family:var(--font-mono);font-size:11.5px;flex:1">'+escapeHtml(p.n)+'</span><span class="tag" style="font-size:10px">'+escapeHtml(p.t)+'</span></div>';});
+    insp.innerHTML=
+      '<div class="insp-head"><span class="insp-ico" style="'+icoStyle+'">'+svgIcon(c.ico,18,false)+'</span><div style="flex:1;min-width:0"><div style="font-family:var(--font-mono);font-size:13px;font-weight:650">'+escapeHtml(nd.id)+'</div><div style="font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--text-3)">'+escapeHtml(c.label)+'</div></div><button class="iconbtn" id="inspClose">'+svgIcon('x',16,false)+'</button></div>'+
+      '<div class="insp-body">'+
+        '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">id</span><input class="input mono" style="height:32px" value="'+escapeHtml(nd.id)+'" data-field="id"/></div>'+
+        '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">tool_type</span><input class="input mono" style="height:32px" value="'+escapeHtml(nd.tool_type||'')+'" data-field="tool_type"/></div>'+
+        '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">config (JSON)</span><textarea class="input mono" style="height:auto;min-height:80px;resize:vertical" data-field="config">'+escapeHtml(JSON.stringify(nd.config||{},null,2))+'</textarea></div>'+
+        (rows?'<div style="display:flex;flex-direction:column;gap:8px"><span class="label">interface</span><div style="border:1px solid var(--border);border-radius:var(--r-8);overflow:hidden">'+rows+'</div></div>':'')+
+      '</div>'+
+      '<div class="insp-foot"><button class="btn ghost" style="flex:1;justify-content:center" id="inspDuplicate">Duplicate</button><button class="btn danger" style="flex:1;justify-content:center" id="inspDelete">Delete</button></div>';
+    paintIcons(insp);
+    var closeBtn=$('#inspClose');
+    if(closeBtn)closeBtn.onclick=function(){state.selectedNode=null;state.selectedEdge=null;renderGraph();renderInspector();};
+    var delBtn=$('#inspDelete');
+    if(delBtn)delBtn.onclick=function(){
+      if(!state.spec||!state.spec.graph)return;
+      var nid=nd.id;
+      state.spec.graph.nodes=state.spec.graph.nodes.filter(function(n){return n.id!==nid;});
+      state.spec.graph.edges=state.spec.graph.edges.filter(function(e){return e.source!==nid&&e.target!==nid;});
+      state.selectedNode=null;state.isDirty=true;updateStatus();renderGraph();renderInspector();
+    };
+    var dupBtn=$('#inspDuplicate');
+    if(dupBtn)dupBtn.onclick=function(){
+      if(!state.spec||!state.spec.graph)return;
+      var copy=JSON.parse(JSON.stringify(nd));
+      copy.id=nd.id+'_copy';
+      var pos=copy.position||{};copy.position={x:(Number(pos.x)||0)+40,y:(Number(pos.y)||0)+40};
+      state.spec.graph.nodes.push(copy);
+      state.selectedNode=copy.id;state.isDirty=true;updateStatus();renderGraph();renderInspector();
+    };
+    insp.querySelectorAll('[data-field]').forEach(function(el){
+      el.addEventListener('change',function(){
+        var field=el.dataset.field;
+        if(field==='config'){
+          try{nd.config=JSON.parse(el.value);}catch(e){return;}
+        } else {
+          nd[field]=el.value;
+        }
+        state.isDirty=true;updateStatus();renderGraph();
+      });
+    });
+  } else if(state.selectedEdge&&state.spec&&state.spec.graph){
+    var ed=null;(state.spec.graph.edges||[]).forEach(function(e){if(e.id===state.selectedEdge)ed=e;});
+    if(!ed){insp.classList.remove('open');return;}
+    insp.innerHTML=
+      '<div class="insp-head"><span class="insp-ico" style="background:var(--surface-2);color:var(--text-2);border-color:var(--border)">'+svgIcon('layers',18,false)+'</span><div style="flex:1;min-width:0"><div style="font-family:var(--font-mono);font-size:13px;font-weight:650">Edge</div><div style="font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--text-3)">CONNECTION</div></div><button class="iconbtn" id="inspClose">'+svgIcon('x',16,false)+'</button></div>'+
+      '<div class="insp-body">'+
+        '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">source</span><input class="input mono" style="height:32px" value="'+escapeHtml(ed.source)+'" disabled/></div>'+
+        '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">target</span><input class="input mono" style="height:32px" value="'+escapeHtml(ed.target)+'" disabled/></div>'+
+        '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">condition (JSON)</span><textarea class="input mono" style="height:auto;min-height:60px;resize:vertical" data-field="condition">'+escapeHtml(JSON.stringify(ed.condition||null,null,2))+'</textarea></div>'+
+        '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">data_map (JSON)</span><textarea class="input mono" style="height:auto;min-height:60px;resize:vertical" data-field="data_map">'+escapeHtml(JSON.stringify(ed.data_map||{},null,2))+'</textarea></div>'+
+      '</div>'+
+      '<div class="insp-foot"><button class="btn danger" style="flex:1;justify-content:center" id="inspDeleteEdge">Delete Edge</button></div>';
+    paintIcons(insp);
+    var closeBtn2=$('#inspClose');
+    if(closeBtn2)closeBtn2.onclick=function(){state.selectedNode=null;state.selectedEdge=null;renderGraph();renderInspector();};
+    var delEdgeBtn=$('#inspDeleteEdge');
+    if(delEdgeBtn)delEdgeBtn.onclick=function(){
+      state.spec.graph.edges=state.spec.graph.edges.filter(function(e){return e.id!==ed.id;});
+      state.selectedEdge=null;state.isDirty=true;updateStatus();renderGraph();renderInspector();
+    };
+    insp.querySelectorAll('[data-field]').forEach(function(el){
+      el.addEventListener('change',function(){
+        var field=el.dataset.field;
+        try{ed[field]=JSON.parse(el.value);}catch(e){return;}
+        state.isDirty=true;updateStatus();renderGraph();
+      });
+    });
+  }
+}
+
+async function api(method,path,body){
+  try{
+    var opts={method:method};
+    if(body){opts.headers={'Content-Type':'application/json'};opts.body=JSON.stringify(body);}
+    var resp=await fetch(path,opts);
+    if(!resp.ok)throw new Error(resp.status+': '+resp.statusText);
+    return await resp.json();
+  }catch(err){
+    console.error('API error on '+method+' '+path+':',err);
+    toast(err.message,'error');
+    return null;
+  }
+}
+
+async function loadAgent(){
+  try{
+    var data=await api('GET','/api/edit/agent');
+    if(!data)return false;
+    state.path=data.path||'agent';
+    state.raw=data.raw||'';
+    state.spec=data.spec||null;
+    state.parseError=data.parse_error||null;
+    var fn=state.path.split('/').pop()||'agent';
+    var fnParts=fn.split('.');
+    var nameEl=$('#filename');
+    if(nameEl)nameEl.textContent=fnParts[0]||fn;
+    updateYAMLEditor();
+    await updatePalette();
+    updateStatus();
+    if(state.parseError){
+      showView('yaml');
+      renderBlank('Parse Error',state.parseError);
+    }else if(!state.spec){
+      showView('visual');
+      renderBlank('New Agent','Switch to YAML or add nodes from Tools');
+    }else{
+      showView('visual');
+      autoLayout(state.spec);
+      renderGraph();
+    }
+    return true;
+  }catch(err){
+    console.error('Load agent error:',err);
+    toast('Load error: '+err.message,'error');
+    return false;
+  }
+}
+
+async function saveAgent(){
+  if(!state.isDirty)return;
+  try{
+    var body=state.spec?{spec:state.spec}:{raw:state.raw};
+    var data=await api('PUT','/api/edit/agent',body);
+    if(!data||!data.ok){toast(data&&data.error||'Save failed','error');return false;}
+    state.raw=data.raw||'';
+    state.isDirty=false;
+    updateYAMLEditor();updateStatus();
+    toast('Saved','success');
+    return true;
+  }catch(err){
+    console.error('Save error:',err);
+    toast('Save error: '+err.message,'error');
+    return false;
+  }
+}
+
+async function compileAgent(){
+  if(state.isCompiling)return;
+  state.isCompiling=true;
+  var btn=$('#btnCompile');if(btn)btn.disabled=true;
+  try{
+    var body=state.spec?{spec:state.spec}:{raw:state.raw};
+    var data=await api('POST','/api/edit/compile',body);
+    if(!data)return;
+    if(data.ok){toast('Compiled successfully','success');state.parseError=null;}
+    else{
+      var msg=(data.diagnostics&&data.diagnostics[0])?data.diagnostics[0].message:'Compile failed';
+      toast('Error: '+msg,'error');state.parseError=msg;
+    }
+    updateStatus();
+  }catch(err){
+    console.error('Compile error:',err);
+    toast('Compile error: '+err.message,'error');
+  }finally{
+    state.isCompiling=false;if(btn)btn.disabled=false;
+  }
+}
+
+async function undoRedo(action){
+  try{
+    var data=await api('POST','/api/edit/'+action);
+    if(!data)return;
+    state.spec=data.spec||null;state.raw=data.raw||'';
+    state.canUndo=data.can_undo||false;state.canRedo=data.can_redo||false;
+    state.isDirty=false;state.parseError=null;state.selectedNode=null;state.selectedEdge=null;
+    updateYAMLEditor();updateStatus();
+    if(state.spec){renderGraph();}else{renderBlank('Blank','Edit in YAML or start from a template');}
+  }catch(err){
+    console.error(action+' error:',err);
+    toast(action+' failed','error');
+  }
+}
+
+function isSimpleInputType(type){return !['object','array'].includes((type||'text').toLowerCase());}
+
+function createRunField(type,desc){
+  if(type==='boolean'){var f=document.createElement('input');f.type='checkbox';return f;}
+  if(type==='number'){var f2=document.createElement('input');f2.type='number';f2.className='form-input';f2.placeholder=desc;return f2;}
+  var f3=document.createElement('textarea');
+  if(isSimpleInputType(type)){f3.className='form-input run-text';f3.placeholder=desc;}
+  else{f3.className='form-input textarea';f3.placeholder=desc||(type==='array'?'[]':'{}');}
+  return f3;
+}
+
+function renderRunFields(inputs,container){
+  Object.keys(inputs).forEach(function(name){
+    var spec=inputs[name]||{};
+    var type=(spec.type||'text').toLowerCase();
+    var required=!!spec.required;var desc=spec.description||'';
+    var g=document.createElement('div');g.className='form-group';
+    g.innerHTML='<label class="form-label">'+escapeHtml(name)+
+      '<span class="form-hint'+(required?' req':'')+'">'+escapeHtml(type)+(required?' · required':'')+'</span></label>';
+    var field=createRunField(type,desc);
+    if(type==='boolean'){
+      var wrap=document.createElement('label');wrap.className='run-bool';
+      wrap.appendChild(field);wrap.appendChild(document.createTextNode(desc||name));g.appendChild(wrap);
+    }else{g.appendChild(field);}
+    field.dataset.inputName=name;field.dataset.inputType=type;field.dataset.required=required?'1':'';
+    container.appendChild(g);
+  });
+}
+
+function buildRunForm(){
+  var container=$('#runFields');
+  $('#runFormError').style.display='none';
+  container.innerHTML='';
+  var inputs=(state.spec&&state.spec.inputs)||{};
+  if(!Object.keys(inputs).length){
+    container.dataset.mode='json';
+    var g=document.createElement('div');g.className='form-group';
+    g.innerHTML='<label class="form-label">Trigger Data (JSON)</label><textarea class="form-input textarea" id="runJsonInput" placeholder="{}" spellcheck="false"></textarea>';
+    container.appendChild(g);return;
+  }
+  container.dataset.mode='form';
+  renderRunFields(inputs,container);
+}
+
+function collectRunForm(){
+  var container=$('#runFields');
+  if(container.dataset.mode==='json'){
+    var raw=($('#runJsonInput').value||'').trim()||'{}';
+    try{return{ok:true,triggerData:JSON.parse(raw)};}
+    catch(e){return{ok:false,error:'Invalid JSON in Trigger Data'};}
+  }
+  var fields=Array.from(container.querySelectorAll('[data-input-name]'));
+  var triggerData={};var missing=[];
+  fields.forEach(function(f){f.classList.remove('invalid');});
+  for(var i=0;i<fields.length;i++){
+    var f=fields[i];var name=f.dataset.inputName;var type=f.dataset.inputType;var required=f.dataset.required==='1';
+    if(type==='boolean'){triggerData[name]=f.checked;continue;}
+    var raw2=(f.value||'').trim();
+    if(!raw2){if(required){missing.push(name);f.classList.add('invalid');}continue;}
+    if(type==='number'){
+      var n=Number(raw2);if(Number.isNaN(n)){f.classList.add('invalid');return{ok:false,error:'"'+name+'" must be a number'};}
+      triggerData[name]=n;
+    }else if(!isSimpleInputType(type)){
+      try{triggerData[name]=JSON.parse(raw2);}catch(e){f.classList.add('invalid');return{ok:false,error:'Invalid JSON in "'+name+'"'};}
+    }else{triggerData[name]=raw2;}
+  }
+  if(missing.length)return{ok:false,error:'Missing required fields: '+missing.join(', '),missing:missing};
+  return{ok:true,triggerData:triggerData};
+}
+
+async function runAgent(){
+  if(state.isRunning||!state.spec){toast('No spec to run','error');return;}
+  try{
+    var modal=$('#runModal');
+    buildRunForm();
+    modal.classList.add('active');
+    $('#runStart').onclick=async function(){
+      try{
+        var collected=collectRunForm();
+        if(!collected.ok){
+          var errEl=$('#runFormError');errEl.textContent=collected.error;errEl.style.display='block';return;
+        }
+        modal.classList.remove('active');
+        var pf=await checkPreflight();
+        if(!pf.ok){showPreflightGate(pf,collected.triggerData);return;}
+        await executeRun(collected.triggerData);
+      }catch(err){toast('Run setup error: '+err.message,'error');modal.classList.remove('active');}
+    };
+    $('#runCancel').onclick=function(){modal.classList.remove('active');};
+  }catch(err){console.error('Run init error:',err);toast('Run error: '+err.message,'error');}
+}
+
+async function parseSSEStream(resp,onEvent,shouldContinue){
+  if(!shouldContinue)shouldContinue=function(){return true;};
+  var reader=resp.body.getReader();var decoder=new TextDecoder();var buffer='';
+  while(shouldContinue()){
+    var chunk=await reader.read();
+    if(chunk.done)break;
+    buffer+=decoder.decode(chunk.value,{stream:true});
+    var lines=buffer.split('\n');buffer=lines.pop()||'';
+    for(var i=0;i<lines.length;i++){
+      if(!lines[i].startsWith('data: '))continue;
+      try{onEvent(JSON.parse(lines[i].substring(6)));}catch(e){console.error('SSE parse error:',e);}
+    }
+  }
+}
+
+async function executeRun(triggerData){
+  try{
+    var createResp=await api('POST','/api/v1/agents/from-spec',state.spec);
+    if(!createResp||!createResp.id){toast('Failed to create agent instance','error');return;}
+    state.runningAgentId=createResp.id;state.isRunning=true;
+    showView('visual');
+    resetHighlights();resetRunResult();clearConsole();
+    addConsoleLine('Starting run...','info');
+    try{
+      var streamResp=await fetch('/api/v1/agents/'+state.runningAgentId+'/stream',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(triggerData)
+      });
+      if(!streamResp.ok){addConsoleLine('Stream failed: '+streamResp.statusText,'error');state.isRunning=false;return;}
+      await parseSSEStream(streamResp,handleStreamEvent,function(){return state.isRunning;});
+    }catch(err){addConsoleLine('Stream error: '+err.message,'error');}
+    finally{state.isRunning=false;}
+  }catch(err){toast('Run error: '+err.message,'error');}
+}
+
+async function checkPreflight(){
+  try{var pf=await api('GET','/api/edit/preflight');return pf||{ok:true,diagnostics:[]};}
+  catch(err){return{ok:true,diagnostics:[]};}
+}
+
+function showPreflightGate(pf,triggerData){
+  try{
+    var modal=$('#preflightModal');var body=$('#preflightBody');body.innerHTML='';
+    (pf.diagnostics||[]).forEach(function(d){
+      var row=document.createElement('div');row.style.cssText='margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border);';
+      var msg=document.createElement('div');msg.style.cssText='color:var(--err-text);font-size:13px;';
+      msg.textContent='✗ '+(d.message||'');row.appendChild(msg);
+      var action=document.createElement('div');action.style.cssText='color:var(--text-2);font-size:12px;margin-top:4px;';
+      action.textContent='→ '+(d.action||'');row.appendChild(action);
+      var m=/ollama pull (\S+)/.exec(d.action||'');
+      if(m){
+        var btn=document.createElement('button');btn.className='btn primary';btn.style.cssText='margin-top:8px;';
+        btn.textContent='Download '+m[1];
+        var prog=document.createElement('div');prog.style.cssText='font-size:12px;color:var(--text-2);margin-top:6px;font-variant-numeric:tabular-nums;';
+        btn.onclick=async function(){
+          btn.disabled=true;
+          var ok=await pullModelStream(m[1],function(line){prog.textContent=line;});
+          if(ok){modal.classList.remove('active');await executeRun(triggerData);}else{btn.disabled=false;}
+        };
+        row.appendChild(btn);row.appendChild(prog);
+      }
+      body.appendChild(row);
+    });
+    modal.classList.add('active');
+    $('#preflightClose').onclick=function(){modal.classList.remove('active');};
+  }catch(err){console.error('showPreflightGate error:',err);}
+}
+
+async function pullModelStream(name,onLine){
+  try{
+    var resp=await fetch('/api/edit/models/pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})});
+    if(!resp.ok||!resp.body){toast('Pull failed','error');return false;}
+    var ok=false;
+    await parseSSEStream(resp,function(d){
+      var pct=(d.completed&&d.total)?' '+Math.floor((d.completed*100)/d.total)+'%':'';
+      onLine((d.status||'')+pct);
+      if(d.done)ok=d.status==='success';
+    });
+    toast(ok?'Model downloaded':'Download failed',ok?'success':'error');
+    return ok;
+  }catch(err){toast('Pull error: '+err.message,'error');return false;}
+}
+
+async function openSettings(){
+  var modal=$('#settingsModal');var body=$('#settingsBody');
+  modal.classList.add('active');
+  $('#settingsClose').onclick=function(){modal.classList.remove('active');};
+  body.innerHTML='<div style="color:var(--text-3);font-size:13px;">Loading models...</div>';
+  try{
+    var results=await Promise.all([
+      api('GET','/api/edit/config').catch(function(){return{};}),
+      api('GET','/api/edit/models').catch(function(){return{catalog:[]};})
+    ]);
+    renderSettings(results[0]||{},(results[1]&&results[1].catalog)||[]);
+  }catch(err){body.innerHTML='<div style="color:var(--err-text);font-size:13px;">Could not load models: '+escapeHtml(err.message)+'</div>';}
+}
+
+function renderSettings(cfg,models){
+  var body=$('#settingsBody');body.innerHTML='';
+  var current=cfg.default_model||'';
+  var head=document.createElement('div');head.style.cssText='font-size:12px;color:var(--text-2);margin-bottom:12px;';
+  head.textContent=current?'Current default: '+(cfg.default_provider||'ollama')+' · '+current:'No default configured yet — pick one below.';
+  body.appendChild(head);
+  if(!models.length){var empty=document.createElement('div');empty.style.cssText='color:var(--text-2);font-size:13px;';empty.textContent='No catalog available.';body.appendChild(empty);return;}
+  models.forEach(function(m){
+    var isDefault=m.name===current;
+    var row=document.createElement('div');row.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);';
+    var info=document.createElement('div');info.style.cssText='flex:1;min-width:0;';
+    var title=document.createElement('div');title.style.cssText='font-size:13px;font-weight:600;color:var(--text);';
+    title.textContent=m.name+(m.recommended?' · recommended':'');
+    var sub=document.createElement('div');sub.style.cssText='font-size:11px;color:var(--text-3);margin-top:2px;';
+    var size=m.size_gb?Number(m.size_gb).toFixed(1)+' GB':'';
+    sub.textContent=[m.description,size].filter(Boolean).join(' · ');
+    info.appendChild(title);info.appendChild(sub);row.appendChild(info);
+    var tag=document.createElement('span');
+    tag.style.cssText='font-size:10px;letter-spacing:.04em;padding:2px 7px;border-radius:var(--r-full);'+(m.installed?'background:var(--accent-soft);color:var(--accent-text);':'background:var(--surface-2);color:var(--text-3);');
+    tag.textContent=m.installed?'INSTALLED':'NOT LOCAL';row.appendChild(tag);
+    var prog=document.createElement('div');prog.style.cssText='font-size:11px;color:var(--text-2);min-width:90px;text-align:right;font-variant-numeric:tabular-nums;';
+    var action=document.createElement('button');action.className='btn secondary';
+    if(isDefault){action.textContent='Default';action.className='btn primary';action.disabled=true;}
+    else if(m.installed){action.textContent='Set default';action.onclick=function(){setDefaultModel(cfg.default_provider||'ollama',m.name);};}
+    else{action.textContent='Download';action.onclick=async function(){action.disabled=true;var ok=await pullModelStream(m.name,function(line){prog.textContent=line;});if(ok)await openSettings();else action.disabled=false;};}
+    row.appendChild(prog);row.appendChild(action);body.appendChild(row);
+  });
+}
+
+async function setDefaultModel(provider,model){
+  try{
+    await api('PUT','/api/edit/config',{default_provider:provider,default_model:model});
+    toast('Default set to '+model,'success');await openSettings();
+  }catch(err){toast('Could not set default: '+err.message,'error');}
+}
+
+function handleStreamEvent(event){
+  try{
+    var name=event.event||event.event_type||'';
+    var d=event.data||event;var nodeId=d.node_id;
+    if(name==='graph.started'){addConsoleLine('Execution started','info');}
+    else if(name==='node.started'){
+      addConsoleLine('→ '+(nodeId||'?')+': running','running');
+      highlightNode(nodeId,'running');
+    }else if(name==='node.completed'){
+      var ms=d.duration_ms!=null?' ('+d.duration_ms+'ms)':'';
+      addConsoleLine('✓ '+(nodeId||'?')+': completed'+ms,'ok');
+      highlightNode(nodeId,'done');
+      state.runOutputs[nodeId]={tool_type:d.tool_type,ms:d.duration_ms,output:d.output,status:'ok'};
+      renderRunResult();
+    }else if(name==='node.error'){
+      addConsoleLine('✗ '+(nodeId||'?')+': '+(d.error||'error'),'error');
+      highlightNode(nodeId,'error');
+      state.runOutputs[nodeId]={tool_type:d.tool_type,error:d.error||'error',status:'error'};
+      renderRunResult();
+    }else if(name==='node.token'){
+      if(d.token)addConsoleLine(d.token,'info');
+    }else if(name==='graph.completed'){
+      addConsoleLine('✓ Execution completed','ok');
+      toast('Run completed','success');
+      var gms=d.total_duration_ms!=null?' · '+d.total_duration_ms+'ms':'';
+      renderRunResult({finalSnapshot:d.output,title:'Run result · '+(d.status||'Completed')+gms});
+    }else if(name==='graph.error'){
+      addConsoleLine('✗ '+(d.error||'graph error'),'error');
+      toast('Run failed','error');
+      renderRunResult({title:'Run result · Error',graphError:d.error||'graph error'});
+    }
+  }catch(err){console.error('Handle stream event error:',err);}
+}
+
+function highlightNode(id,status){
+  state.nodeState[id]=status==='completed'?'done':status;
+  renderGraph();
+}
+
+function resetHighlights(){state.nodeState={};renderGraph();}
+
+function resetRunResult(){
+  state.runOutputs={};
+  var drawer=$('#resultDrawer');if(drawer)drawer.classList.remove('open','collapsed');
+  var body=$('#resultDrawerBody');if(body)body.innerHTML='';
+}
+
+var RESULT_TEXT_KEYS=['response','output','text','result','content','message','answer'];
+function prettyValue(val){if(val==null)return'(no output)';if(typeof val==='string')return val;try{return JSON.stringify(val,null,2);}catch(e){return String(val);}}
+function isMeaningfulText(s){var t=(s||'').trim();return t.length>0&&t!=='{}'&&t!=='[]'&&t!=='null';}
+function extractResultText(output){
+  if(output==null)return null;if(typeof output==='string')return isMeaningfulText(output)?output:null;
+  if(typeof output==='object'){for(var i=0;i<RESULT_TEXT_KEYS.length;i++){var k=RESULT_TEXT_KEYS[i];if(typeof output[k]==='string'&&isMeaningfulText(output[k]))return output[k];}}
+  return null;
+}
+function pickFinalNode(){
+  var ids=Object.keys(state.runOutputs).filter(function(id){return state.runOutputs[id].status==='ok';});
+  for(var i=ids.length-1;i>=0;i--){if(extractResultText(state.runOutputs[ids[i]].output)!=null)return ids[i];}
+  var outNode=ids.find(function(id){return(state.runOutputs[id].tool_type||'').startsWith('output/');});
+  if(outNode)return outNode;
+  return ids.length?ids[ids.length-1]:null;
+}
+function setNodeBodyExpanded(head,nbody,expand){
+  nbody.style.display=expand?'block':'none';
+  head.querySelector('.result-node-caret').textContent=expand?'▾':'▸';
+}
+function resultBlock(label){
+  var block=document.createElement('div');block.className='result-block';
+  block.innerHTML='<div class="result-block-label">'+escapeHtml(label)+'</div>';return block;
+}
+function buildNodeRow(id,n){
+  var isErr=n.status==='error';
+  var row=document.createElement('div');row.className='result-node';
+  var head=document.createElement('div');head.className='result-node-head';
+  var ms=n.ms!=null?'<span class="result-node-ms">'+n.ms+'ms</span>':'';
+  head.innerHTML='<span class="result-node-caret">▸</span>'+
+    '<span class="result-node-status '+(isErr?'error':'ok')+'"></span>'+
+    '<span class="result-node-name">'+escapeHtml(id)+'</span>'+
+    '<span class="result-node-type">'+escapeHtml(n.tool_type||'')+'</span>'+ms;
+  var nbody=document.createElement('div');nbody.className='result-node-body';nbody.style.display='none';
+  if(isErr){var e=document.createElement('div');e.className='result-error-text';e.textContent=n.error||'error';nbody.appendChild(e);}
+  else{var pre=document.createElement('pre');pre.className='result-json';pre.textContent=prettyValue(n.output);nbody.appendChild(pre);}
+  head.addEventListener('click',function(){setNodeBodyExpanded(head,nbody,nbody.style.display==='none');});
+  if(isErr)setNodeBodyExpanded(head,nbody,true);
+  row.appendChild(head);row.appendChild(nbody);return row;
+}
+function buildResultBlock(){
+  var finalId=pickFinalNode();
+  if(!finalId||!state.runOutputs[finalId])return null;
+  var out=state.runOutputs[finalId].output;var text=extractResultText(out);
+  var block=resultBlock('Result · '+finalId);
+  var fin=document.createElement('div');fin.className='result-final';
+  fin.textContent=text!=null?text:prettyValue(out);block.appendChild(fin);return block;
+}
+function renderRunResult(opts){
+  opts=opts||{};
+  try{
+    var drawer=$('#resultDrawer');var body=$('#resultDrawerBody');
+    if(!drawer||!body)return;drawer.classList.add('open');
+    if(opts.title)$('#resultDrawerTitle').textContent=opts.title;
+    body.innerHTML='';
+    if(opts.graphError){var block=resultBlock('Error');var err=document.createElement('div');err.className='result-error-text';err.textContent=opts.graphError;block.appendChild(err);body.appendChild(block);return;}
+    if(opts.finalSnapshot!==undefined){var block2=buildResultBlock();if(block2)body.appendChild(block2);}
+    var ids=Object.keys(state.runOutputs);
+    if(ids.length){var block3=resultBlock('Node outputs');ids.forEach(function(id){block3.appendChild(buildNodeRow(id,state.runOutputs[id]));});body.appendChild(block3);}
+  }catch(err){console.error('renderRunResult error:',err);}
+}
+
+function updateStatus(){
+  var saved=!state.isDirty;var valid=!state.parseError;
+  var saveDot=$('#saveDot');var saveStatus=$('#saveStatus');
+  var validDot=$('#validDot');var validStatus=$('#validStatus');
+  var dirtyDot=$('#dirtyDot');
+  if(saveDot)saveDot.className='dot '+(saved?'ok':'run');
+  if(saveStatus)saveStatus.textContent=saved?'saved':'unsaved';
+  if(validDot)validDot.className='dot '+(valid?'ok':'err');
+  if(validStatus)validStatus.textContent=valid?'valid':'invalid';
+  if(dirtyDot)dirtyDot.style.display=saved?'none':'inline-block';
+  var btnUndo=$('#btnUndo');var btnRedo=$('#btnRedo');var btnRun=$('#btnRun');
+  if(btnUndo)btnUndo.disabled=!state.canUndo;
+  if(btnRedo)btnRedo.disabled=!state.canRedo;
+  if(btnRun)btnRun.disabled=!state.spec||state.parseError;
+}
+
+function updateYAMLEditor(){
+  try{
+    var editor=$('#yamlEditor');if(editor)editor.value=state.raw;
+    var yamlError=$('#yamlError');
+    if(state.parseError){if(yamlError)yamlError.style.display='block';var msgEl=$('#yamlErrorMsg');if(msgEl)msgEl.textContent=state.parseError;}
+    else{if(yamlError)yamlError.style.display='none';}
+  }catch(err){console.error('Update YAML editor error:',err);}
+}
+
+async function updatePalette(){
+  try{
+    if(!state.tools.length){
+      var data=await api('GET','/api/v1/tools');
+      if(!data){state.tools=[];return;}
+      state.tools=data;
+    }
+    renderPalette();
+  }catch(err){console.error('Update palette error:',err);}
+}
+
+function showView(name){
+  var yamlView=$('#yamlView');var consoleView=$('#consoleView');
+  var modeButtons=$('#modeSeg').querySelectorAll('button');
+  if(yamlView)yamlView.classList.toggle('active',name==='yaml');
+  if(consoleView)consoleView.classList.toggle('active',name==='console');
+  modeButtons.forEach(function(b){b.classList.toggle('active',b.dataset.mode===name);});
+  if(name==='yaml')updateYAMLEditor();
+  if(name==='visual'){renderGraph();}
+}
+
+function addConsoleLine(text,cls){
+  try{
+    var out=$('#consoleOutput');if(!out)return;
+    var line=document.createElement('div');line.className='console-line '+(cls||'');
+    line.textContent=text;out.appendChild(line);out.scrollTop=out.scrollHeight;
+  }catch(err){console.error('Add console line error:',err);}
+}
+
+function clearConsole(){try{var o=$('#consoleOutput');if(o)o.innerHTML='';}catch(err){}}
+
+function toast(msg,type){
+  try{
+    var el=document.createElement('div');el.className='toast'+(type==='error'?' error':'');
+    var ico=type==='error'?'x':'check';
+    el.innerHTML='<span class="toast-ico">'+svgIcon(ico,15,false)+'</span><div style="flex:1"><div style="font-size:12.5px;font-weight:600">'+escapeHtml(type==='error'?'Error':'Success')+'</div><div style="font-size:11.5px;color:var(--text-2);margin-top:2px">'+escapeHtml(msg)+'</div></div>';
+    $('#toasts').appendChild(el);
+    setTimeout(function(){el.style.transition='opacity .3s';el.style.opacity='0';setTimeout(function(){el.remove();},300);},2600);
+  }catch(err){console.error('Toast error:',err);}
+}
+
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  var b=$('#themeBtn');if(b){b.innerHTML=svgIcon(t==='dark'?'sun':'moon',16,false);b.dataset.done='1';}
+}
+
+canvasEl.addEventListener('wheel',function(ev){
+  ev.preventDefault();
+  var delta=ev.deltaY>0?0.92:1.08;
+  var old=state.zoom!=null?state.zoom:currentScale();
+  state.zoom=Math.max(0.15,Math.min(3,old*delta));
+  var rect=canvasEl.getBoundingClientRect();
+  var mx=ev.clientX-rect.left;var my=ev.clientY-rect.top;
+  state.panX=mx-(mx-state.panX)*(state.zoom/old);
+  state.panY=my-(my-state.panY)*(state.zoom/old);
+  renderGraph();
+},{passive:false});
+
+var canvasDrag={active:false,sx:0,sy:0,spx:0,spy:0};
+canvasEl.addEventListener('mousedown',function(ev){
+  if(ev.target!==canvasEl&&!ev.target.classList.contains('graph-edges')&&ev.target.tagName!=='svg'&&ev.target.tagName!=='path')return;
+  if(ev.button!==0)return;
+  canvasDrag.active=true;canvasDrag.sx=ev.clientX;canvasDrag.sy=ev.clientY;
+  canvasDrag.spx=state.panX;canvasDrag.spy=state.panY;
+  canvasEl.style.cursor='grabbing';
+});
+document.addEventListener('mousemove',function(ev){
+  if(!canvasDrag.active)return;
+  state.panX=canvasDrag.spx+(ev.clientX-canvasDrag.sx);
+  state.panY=canvasDrag.spy+(ev.clientY-canvasDrag.sy);
+  state.zoom=state.zoom!=null?state.zoom:currentScale();
+  renderGraph();
+});
+document.addEventListener('mouseup',function(){
+  if(canvasDrag.active){canvasDrag.active=false;canvasEl.style.cursor='';}
+});
+
+canvasEl.addEventListener('click',function(ev){
+  if(ev.target===canvasEl||ev.target.classList.contains('canvas')){
+    state.selectedNode=null;state.selectedEdge=null;renderGraph();renderInspector();
   }
 });
 
-// Cmd/Ctrl+Enter submits the run form (plain Enter keeps adding newlines in text fields).
-document.getElementById('runFields').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-    e.preventDefault();
-    document.getElementById('runStart').click();
-  }
+document.addEventListener('DOMContentLoaded',function(){
+  paintIcons(document);
+  loadAgent();
+
+  $('#themeBtn').addEventListener('click',function(){var cur=document.documentElement.getAttribute('data-theme');setTheme(cur==='dark'?'light':'dark');});
+  $('#btnFit').addEventListener('click',function(){fitToView();});
+  $('#fitBtn2').addEventListener('click',function(){fitToView();});
+  $('#zoomIn').addEventListener('click',function(){state.zoom=(state.zoom||currentScale())*1.15;renderGraph();});
+  $('#zoomOut').addEventListener('click',function(){state.zoom=(state.zoom||currentScale())*0.87;renderGraph();});
+  $('#btnSave').addEventListener('click',function(){saveAgent();});
+  $('#btnCompile').addEventListener('click',function(){compileAgent();});
+  $('#btnRun').addEventListener('click',function(){runAgent();});
+  $('#btnUndo').addEventListener('click',function(){undoRedo('undo');});
+  $('#btnRedo').addEventListener('click',function(){undoRedo('redo');});
+  $('#btnSettings').addEventListener('click',function(){openSettings();});
+
+  $('#modeSeg').querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click',function(){showView(b.dataset.mode);});
+  });
+
+  var yamlEd=$('#yamlEditor');
+  if(yamlEd)yamlEd.addEventListener('input',function(){state.raw=yamlEd.value;state.isDirty=true;updateStatus();});
+
+  var consoleClose=$('#consoleClose');
+  if(consoleClose)consoleClose.addEventListener('click',function(){showView('visual');});
+
+  var palSearch=$('#paletteSearch');
+  if(palSearch)palSearch.addEventListener('input',function(e){
+    var query=(e.target.value||'').toLowerCase();
+    document.querySelectorAll('.pal-row').forEach(function(item){
+      var tool=(item.dataset.tool||'').toLowerCase();
+      var matches=tool.includes(query)||item.textContent.toLowerCase().includes(query);
+      item.style.display=matches?'':'none';
+    });
+    document.querySelectorAll('.pal-grp').forEach(function(grp){
+      var next=grp.nextElementSibling;var anyVisible=false;
+      while(next&&next.classList.contains('pal-row')){if(next.style.display!=='none')anyVisible=true;next=next.nextElementSibling;}
+      grp.style.display=anyVisible||!query?'':'none';
+    });
+  });
+
+  $('#resultDrawerClose').addEventListener('click',function(){$('#resultDrawer').classList.remove('open','collapsed');});
+  $('#resultDrawerToggle').addEventListener('click',function(){
+    var drawer=$('#resultDrawer');drawer.classList.toggle('collapsed');
+  });
+
+  var runFieldsEl=$('#runFields');
+  if(runFieldsEl)runFieldsEl.addEventListener('keydown',function(e){
+    if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();$('#runStart').click();}
+  });
+
+  window.addEventListener('resize',function(){if(state.spec&&state.spec.graph)renderGraph();});
 });
 </script>
-
 </body>
 </html>

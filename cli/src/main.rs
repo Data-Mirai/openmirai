@@ -26,7 +26,10 @@ use openmirai_engine::{
     ExecutionStatus, GraphRunner, RegistryExecutor, ToolRegistry,
 };
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("MIRAI_VERSION");
+const BUILD: &str = env!("MIRAI_BUILD");
+const GIT_SHA: &str = env!("MIRAI_GIT_SHA");
+const BUILD_TS: &str = env!("MIRAI_BUILD_TS");
 
 #[tokio::main]
 async fn main() {
@@ -35,7 +38,8 @@ async fn main() {
     match args.first().map(|s| s.as_str()) {
         None => run_default().await,
         Some("version" | "--version" | "-V") => {
-            println!("mirai {VERSION}");
+            // Trazabilidad de runtime: nombre + versión + build number + commit + timestamp.
+            println!("mirai v{VERSION}+build.{BUILD} ({GIT_SHA}, {BUILD_TS})");
         }
         Some("run") => {
             let rest = &args[1..];

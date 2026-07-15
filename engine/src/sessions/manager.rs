@@ -253,6 +253,31 @@ impl SessionManager {
         let id = short_id();
         let tmux_session = format!("{TMUX_SESSION_PREFIX}{id}");
 
+        // SEGURIDAD (anti command-injection): `command` es el shell-command que tmux
+        // ejecuta vía `/bin/sh -c` (ver backend.rs). `model`/`effort` llegan del body
+        // del request y se interpolan crudos → RCE. Allowlist estricta: solo letras
+        // ASCII, dígitos y `.`/`_`/`-`; se rechazan espacios y metacaracteres de shell
+        // (`;`, `$`, backtick, `|`, `&`, comillas, etc.).
+        fn is_safe_arg(s: &str) -> bool {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        }
+        if let Some(model) = &params.model {
+            if !is_safe_arg(model) {
+                return Err(SessionError::Invalid(format!(
+                    "model contiene caracteres no permitidos: '{model}'"
+                )));
+            }
+        }
+        if let Some(effort) = &params.effort {
+            if !is_safe_arg(effort) {
+                return Err(SessionError::Invalid(format!(
+                    "effort contiene caracteres no permitidos: '{effort}'"
+                )));
+            }
+        }
+
         let mut command = String::from("claude");
         if let Some(model) = &params.model {
             command.push_str(&format!(" --model {model}"));
@@ -743,6 +768,37 @@ mod tests {
         // M6: identity + engine port injected into the tmux session env.
         assert!(env.contains(&("MIRAI_SESSION_ID".to_string(), rec.id.clone())));
         assert!(env.contains(&("MIRAI_PORT".to_string(), "3000".to_string())));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_shell_injection_in_model_and_effort() {
+        // Regresión de seguridad: model/effort se interpolan en el shell-command que
+        // tmux corre vía /bin/sh -c; un valor con metacaracteres sería RCE.
+        let (manager, backend, path) = manager_with_fake();
+
+        let mut evil = spawn_params();
+        evil.model = Some("opus; touch /tmp/pwned".into());
+        assert!(manager.spawn(evil).await.is_err(), "model con ';' debe rechazarse");
+
+        let mut evil2 = spawn_params();
+        evil2.effort = Some("high$(id)".into());
+        assert!(manager.spawn(evil2).await.is_err(), "effort con $(...) debe rechazarse");
+
+        let mut evil3 = spawn_params();
+        evil3.model = Some("opus foo".into()); // espacio → arg extra al shell
+        assert!(manager.spawn(evil3).await.is_err(), "model con espacio debe rechazarse");
+
+        // Nada malicioso llegó al backend.
+        assert!(
+            backend.spawned.lock().unwrap().is_empty(),
+            "ningún spawn debió ejecutarse con input malicioso"
+        );
+
+        // El camino feliz (model/effort válidos) sigue funcionando.
+        manager.spawn(spawn_params()).await.unwrap();
+        assert_eq!(backend.spawned.lock().unwrap().len(), 1);
+
         let _ = std::fs::remove_file(path);
     }
 

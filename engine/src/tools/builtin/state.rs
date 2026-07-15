@@ -9,7 +9,7 @@ use tracing::warn;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{FieldType, ToolField, ToolSpec};
+use crate::tools::base::{field, FieldType, ToolSpec};
 use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
 
 // ---------------------------------------------------------------------------
@@ -47,20 +47,8 @@ impl MemoryToolFactory {
                 category: "state".into(),
                 inputs: vec![],
                 outputs: vec![
-                    ToolField {
-                        name: "persisted_keys".into(),
-                        field_type: FieldType::Array,
-                        required: true,
-                        description: Some("List of keys that were persisted".into()),
-                        default: None,
-                    },
-                    ToolField {
-                        name: "persist_mode".into(),
-                        field_type: FieldType::String,
-                        required: true,
-                        description: Some("The persist mode used (none, cycle, execution)".into()),
-                        default: None,
-                    },
+                    field("persisted_keys", FieldType::Array, true, "List of keys that were persisted"),
+                    field("persist_mode", FieldType::String, true, "The persist mode used (none, cycle, execution)"),
                 ],
                 config_fields: vec![],
             },

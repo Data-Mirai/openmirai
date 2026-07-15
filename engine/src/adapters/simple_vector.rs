@@ -94,6 +94,8 @@ impl VectorResource for SimpleVectorResource {
         let text = text.to_string();
         let metadata_json = serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".into());
 
+        tracing::debug!(id = %id, text_len = text.len(), "Vector: upserting document");
+
         tokio::task::spawn_blocking(move || {
             let conn = conn
                 .lock()
@@ -104,7 +106,10 @@ impl VectorResource for SimpleVectorResource {
                  ON CONFLICT(id) DO UPDATE SET text = excluded.text, metadata = excluded.metadata",
                 params![id, text, metadata_json],
             )
-            .map_err(|e| ResourceError::Other(format!("upsert failed: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(id = %id, error = %e, "Vector upsert failed");
+                ResourceError::Other(format!("upsert failed: {e}"))
+            })?;
 
             Ok(())
         })
@@ -124,6 +129,9 @@ impl VectorResource for SimpleVectorResource {
 
         let conn = Arc::clone(&self.conn);
         let top_k = top_k as i64;
+        let query_str = query.to_string();
+
+        tracing::debug!(query = %query_str, top_k = top_k, "Vector: searching similarity");
 
         tokio::task::spawn_blocking(move || {
             let conn = conn
@@ -139,7 +147,10 @@ impl VectorResource for SimpleVectorResource {
                      ORDER BY rank
                      LIMIT ?2",
                 )
-                .map_err(|e| ResourceError::Other(format!("prepare failed: {e}")))?;
+                .map_err(|e| {
+                    tracing::error!(query = %query_str, error = %e, "Vector prepare search query failed");
+                    ResourceError::Other(format!("prepare failed: {e}"))
+                })?;
 
             let rows = stmt
                 .query_map(params![fts_query, top_k], |row| {
@@ -155,7 +166,10 @@ impl VectorResource for SimpleVectorResource {
                         metadata,
                     })
                 })
-                .map_err(|e| ResourceError::Other(format!("query failed: {e}")))?;
+                .map_err(|e| {
+                    tracing::error!(query = %query_str, error = %e, "Vector search query execution failed");
+                    ResourceError::Other(format!("query failed: {e}"))
+                })?;
 
             let mut results = Vec::new();
             for row in rows {

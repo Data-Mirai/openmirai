@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -8,63 +7,9 @@ use tokio::process::Command;
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{field, FieldType, ToolSpec};
-use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
+use crate::tools::base::{field, FieldType};
+use crate::tools::registry::{Tool, ToolRegistry};
 
-// ---------------------------------------------------------------------------
-// Macro
-// ---------------------------------------------------------------------------
-
-macro_rules! system_tool {
-    (
-        struct $tool:ident, factory $factory:ident;
-        tool_type = $tool_type:expr,
-        name = $name:expr,
-        description = $desc:expr,
-        category = $cat:expr,
-        inputs = [ $($input:expr),* $(,)? ],
-        outputs = [ $($output:expr),* $(,)? ],
-        config_fields = [ $($cfg:expr),* $(,)? ]
-    ) => {
-        pub struct $tool;
-
-        pub struct $factory {
-            spec: ToolSpec,
-        }
-
-        impl $factory {
-            pub fn new() -> Self {
-                Self {
-                    spec: ToolSpec {
-                        tool_type: $tool_type.into(),
-                        name: $name.into(),
-                        description: $desc.into(),
-                        version: "1.0.0".into(),
-                        category: $cat.into(),
-                        inputs: vec![$($input),*],
-                        outputs: vec![$($output),*],
-                        config_fields: vec![$($cfg),*],
-                    },
-                }
-            }
-        }
-
-        impl Default for $factory {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl ToolFactory for $factory {
-            fn create(&self) -> Arc<dyn Tool> {
-                Arc::new($tool)
-            }
-            fn spec(&self) -> &ToolSpec {
-                &self.spec
-            }
-        }
-    };
-}
 
 // ===========================================================================
 // BashTool

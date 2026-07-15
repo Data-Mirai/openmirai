@@ -4,18 +4,33 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
-## v0.7.0 (2026-06-12)
+## v0.7.0 (2026-07-15)
 
-Large media without cuts (PRD-018). No breaking changes — agent YAMLs are untouched; hosts simply stop failing on big files.
+Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. No breaking changes: the agent YAML spec, runtime, and API stay backward-compatible.
 
 ### Added
+- **Session Orchestrator (PRD-013).** Run and coordinate multiple live Claude Code sessions over `tmux` from one engine: HTTP API + SSE streaming, CLI subcommands `mirai sessions list|spawn|send|output|stop`, and a live terminal dashboard `mirai sessions watch` (terminal↔web-UI parity). Includes session hierarchy (`parent_id`), real resource-activity reported by session hooks, a static `/ui`, project listing/creation (`GET /orchestrator/projects`, native folder picker `POST /orchestrator/pick-folder`), and a "Network" service node on the canvas reflecting WebFetch/WebSearch.
 - **Media over 20MB now works (Gemini): Files API by-reference delivery (PRD-018).** `ai/transcribe` and `ai/llm_call` media above the 20MB inline limit is uploaded via resumable upload, referenced with `file_data{file_uri}`, polled until `ACTIVE`, and **deleted from the remote after the request** (best-effort; the API's 48h auto-expiry is the safety net). Hard cap is now the provider's real limit: **2GB per file** (~9.5h of audio). Providers without upload support keep the explicit 20MB error. Real-world driver: a 2-hour meeting recording (~100-200MB audio) from the Aftrmeet host.
 - **Truncation is now fail-loud (PRD-018).** `finishReason == MAX_TOKENS` returns a new explicit error (`LLMError::Truncated`, with emitted-token count) instead of silently surfacing partial text as success. A transcript that covers only the first 25 minutes of a 2h meeting must be an error, not an "answer".
-- **`ai/image_edit` tool — OpenAI GPT-Image-1 inpainting (PRD-017).** Released in this version (was on main unreleased).
-- **Transcribe prompt: punctuation + paragraph breaks; output cap removed** (was on main unreleased — transcriptions of any length complete fully; `max_tokens` optional across adapters).
+- **Voice — TTS and STT.** New `ai/tts` tool (ElevenLabs + Cartesia) with language selection for correct pronunciation and a `voice-synthesis` agent; ElevenLabs Scribe transcription route (`provider=elevenlabs`) with a `voice-transcription` agent. Transcriptions keep punctuation and drop the output-token cap.
+- **OpenMirai Studio.** Local agent visualizer shipping 5 default agents, with support for extra local sources (`sources.local.json`).
+- **`ai/image_edit` tool — OpenAI GPT-Image-1 inpainting (PRD-017).**
+- **Centralized tool macros, execution-state fork/join, field validation, and OpenTelemetry tracing (community PR #7, @alinedmooner).** Reusable `define_tool!` macros collapse per-tool boilerplate across the 11 builtin tools; execution-state fork/merge on parallel fan-out; field-level input validation (min/max value, length, regex); and an end-to-end OTel trace endpoint with server E2E tests and CI.
+- **Binary version traceability.** Every binary reports name, version, and build from a single source of truth (the `VERSION` file): `mirai --version` → `mirai v0.7.0+build.<N> (<git-sha>, <ts>)`, and `/health` / `/version` expose the same — so you always know which build produced a run.
 
 ### Changed
+- **`max_tokens` is now optional across all LLM adapters.**
 - **Gemini client timeout: 60s → 600s.** A 2h transcription generates 25-40k output tokens (~2-4 min) — the old timeout killed any long generation mid-flight. Upload/poll calls share the same generous ceiling (ACTIVE poll capped at 5 min).
+- **Visual editor `mirai edit` restyle** — premium flat black-and-white canvas with OpenMirai branding.
+
+### Fixed
+- **Voice transcription defaults to `gemini-2.5-flash`** — the LLM route returned `404 models/default` when the client sent no model (macOS ClaudeOrchestrator case).
+
+### Security
+- **Command injection (RCE) closed in session spawn.** `model` and `effort` from the spawn request were interpolated into the shell command tmux runs via `/bin/sh -c`; they are now strictly allowlisted (`[A-Za-z0-9._-]`) before the command is built, rejecting shell metacharacters. This was unauthenticated when the server runs open (`0.0.0.0` without `--api-key`) — upgrading is recommended, and running with `--api-key` is advised.
+
+### Docs
+- New bilingual (EN + ES) references — CLI, builtin tools, memory subsystem, and RAG/search subsystem (community PRs by @lualducor) — plus Rust installation instructions (@lfarizav).
 
 ---
 

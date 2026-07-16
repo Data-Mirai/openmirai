@@ -6,7 +6,10 @@
 //! `/api/v1/*` routes (tool catalog, `agents/from-spec`, `execute`, `stream`)
 //! for the palette, validation and the run/step-by-step test.
 //!
-//! Local-only: bound to loopback, single file, no auth.
+//! Local-only: bound to loopback, single file, no auth. Cross-site requests
+//! from web pages are rejected by the CORS allowlist + `cross_origin_guard`
+//! in `super` (drive-by protection); the editor UI is same-origin so it is
+//! unaffected.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -456,7 +459,15 @@ pub fn create_editor_router(app_state: AppState, editor_state: EditorState) -> R
         .route("/api/edit/config", get(config_get).put(config_put))
         .with_state(editor_state);
 
-    super::create_router(app_state).merge(editor_routes)
+    // Security gate 0.7.0: wrap the WHOLE merged router with the cross-site
+    // guard. The `/api/v1/*` routes already carry it inside create_router, but
+    // the editor routes merged here would otherwise miss it — and body-less
+    // POSTs like /api/edit/undo are "simple" cross-origin requests that
+    // execute (write the YAML file!) without any CORS preflight. The editor
+    // UI itself is same-origin on loopback, so it always passes the guard.
+    super::create_router(app_state)
+        .merge(editor_routes)
+        .layer(axum::middleware::from_fn(super::cross_origin_guard))
 }
 
 /// Start the editor server (loopback, no auth). The CLI opens the browser.

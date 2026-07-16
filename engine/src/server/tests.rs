@@ -375,3 +375,166 @@ async fn webhook_returns_received() {
     assert_eq!(json["received"], true);
     assert_eq!(json["path"], "my-hook");
 }
+
+// ---------------------------------------------------------------------------
+// Security gate 0.7.0 — CORS allowlist + cross-site guard (drive-by RCE fix)
+// ---------------------------------------------------------------------------
+
+/// Cross-origin preflight from a hostile web origin must NOT be approved:
+/// no `access-control-allow-origin` → the browser blocks the real request.
+#[tokio::test]
+async fn cors_preflight_rejects_external_origin() {
+    let app = test_app();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/agents/x/execute")
+                .header("origin", "https://evil.com")
+                .header("access-control-request-method", "POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.headers().get("access-control-allow-origin").is_none(),
+        "evil.com must not be CORS-approved"
+    );
+}
+
+/// Loopback origins (the local UIs, any port) keep working cross-origin.
+#[tokio::test]
+async fn cors_preflight_allows_loopback_origin() {
+    for origin in ["http://localhost:5173", "http://127.0.0.1:8080"] {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/v1/orchestrator/sessions")
+                    .header("origin", origin)
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some(origin),
+            "loopback origin {origin} must stay CORS-approved"
+        );
+    }
+}
+
+/// `Origin: null` (file:// pages, e.g. the Claude-Orchestrator web UI) is
+/// trusted ONLY on the orchestrator API — not on agent execute.
+#[tokio::test]
+async fn cors_null_origin_scoped_to_orchestrator() {
+    let preflight = |uri: &str| {
+        Request::builder()
+            .method("OPTIONS")
+            .uri(uri)
+            .header("origin", "null")
+            .header("access-control-request-method", "POST")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let resp = test_app()
+        .oneshot(preflight("/api/v1/orchestrator/sessions"))
+        .await
+        .unwrap();
+    assert!(
+        resp.headers().get("access-control-allow-origin").is_some(),
+        "file:// orchestrator UI must keep working"
+    );
+
+    let resp = test_app()
+        .oneshot(preflight("/api/v1/agents/x/execute"))
+        .await
+        .unwrap();
+    assert!(
+        resp.headers().get("access-control-allow-origin").is_none(),
+        "null origin must NOT reach agent execute"
+    );
+}
+
+/// Defense in depth: a "simple" cross-origin POST (no preflight, e.g.
+/// body-less stop) from a hostile origin is rejected server-side with 403.
+#[tokio::test]
+async fn cross_origin_guard_blocks_untrusted_mutations() {
+    let app = test_app();
+    let resp = app
+        .oneshot(
+            Request::post("/api/v1/orchestrator/sessions/some-id/stop")
+                .header("origin", "https://evil.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// The guard lets through: no-Origin clients (curl/SDKs), loopback origins,
+/// and same-host origins (UI served over LAN on the same port).
+#[tokio::test]
+async fn cross_origin_guard_allows_legit_clients() {
+    // curl / SDK: no Origin header → untouched (404 = router miss, not 403).
+    let resp = test_app()
+        .oneshot(
+            Request::post("/api/v1/orchestrator/sessions/some-id/stop")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Loopback origin → allowed.
+    let resp = test_app()
+        .oneshot(
+            Request::post("/api/v1/orchestrator/sessions/some-id/stop")
+                .header("origin", "http://localhost:9999")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Same-host origin (LAN) → allowed.
+    let resp = test_app()
+        .oneshot(
+            Request::post("/api/v1/orchestrator/sessions/some-id/stop")
+                .header("origin", "http://192.168.1.50:3000")
+                .header("host", "192.168.1.50:3000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn api_key_matches_is_exact() {
+    assert!(super::api_key_matches("secret-123", "secret-123"));
+    assert!(!super::api_key_matches("secret-124", "secret-123"));
+    assert!(!super::api_key_matches("secret-12", "secret-123"));
+    assert!(!super::api_key_matches("", "secret-123"));
+}
+
+#[test]
+fn host_is_loopback_classification() {
+    assert!(super::host_is_loopback("127.0.0.1"));
+    assert!(super::host_is_loopback("localhost"));
+    assert!(super::host_is_loopback("::1"));
+    assert!(!super::host_is_loopback("0.0.0.0"));
+    assert!(!super::host_is_loopback("192.168.1.10"));
+}

@@ -2,14 +2,43 @@ name: CI
 
 on:
   push:
-    branches: [ "**" ]
+    branches: [main]
   pull_request:
-    branches: [ "**" ]
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  test-rust:
-    name: Rust Unit & Integration Tests
+  fmt:
+    name: rustfmt
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test-rust:
+    name: Rust Unit & Integration Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -18,22 +47,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry and builds
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@v2
 
       - name: Cargo Check
-        run: cargo check --workspace
+        run: cargo check --workspace --all-features
 
       - name: Run Cargo Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
       - name: Build Binary for Integration Tests
         run: cargo build
@@ -55,10 +75,13 @@ jobs:
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo registry and builds
+        uses: Swatinem/rust-cache@v2
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-level: "3.10"
+          python-version: "3.10"
           cache: "pip"
 
       - name: Install Python SDK dependencies
@@ -83,6 +106,9 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and builds
+        uses: Swatinem/rust-cache@v2
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

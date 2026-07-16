@@ -84,9 +84,13 @@ const GEMINI_ALL: &[&str] = &[
 ];
 
 /// Returns the MIME types supported by a given provider (zero allocation).
+///
+/// The mock provider (`--provider mock`) accepts everything Gemini does:
+/// it is a universal-capability test double, so multimodal examples
+/// (audio/video/image) can run offline end-to-end.
 pub fn supported_mimes_for_provider(provider: &str) -> &'static [&'static str] {
     match provider {
-        "gemini" => GEMINI_ALL,
+        "gemini" | "mock" => GEMINI_ALL,
         _ => IMAGES_ONLY,
     }
 }
@@ -385,6 +389,16 @@ mod tests {
         assert!(mimes.contains(&"audio/mp4"));
         assert!(mimes.contains(&"video/mp4"));
         assert!(mimes.contains(&"image/png"));
+    }
+
+    #[test]
+    fn supported_mimes_mock_matches_gemini() {
+        // The mock is a universal test double: multimodal examples must be
+        // runnable offline with --provider mock.
+        assert_eq!(
+            supported_mimes_for_provider("mock"),
+            supported_mimes_for_provider("gemini")
+        );
     }
 
     #[test]

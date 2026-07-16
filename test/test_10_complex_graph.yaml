@@ -25,11 +25,12 @@ graph:
           priority: 3
           source: "automated"
 
+    # `field` (the value to evaluate) arrives via data_map; operator + value
+    # are static node config.
     - id: classify
       tool_type: logic/condition
       config:
-        field: priority
-        op: greater_than
+        operator: greater_than
         value: 2
 
     - id: urgent_path
@@ -53,7 +54,7 @@ graph:
     - source: trigger
       target: classify
       data_map:
-        priority: "trigger.payload"
+        field: "trigger.payload.priority"
 
     # Urgent: priority > 2
     - source: classify

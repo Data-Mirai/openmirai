@@ -6,6 +6,32 @@
 
 ---
 
+### [2026-07-16] Sesion: fixtures-verdes-release-0.7.0
+**Estado**: COMPLETADO
+**Proyecto**: OpenMirai Engine (gate de calidad de ejemplos/fixtures pre-release 0.7.0)
+**Objetivo**: Que todo `examples/`, `test/` y `agents/` corra verde con `--provider mock` (bare o con `-i` de muestra). Raíz de los fallos: (a) `logic/condition` declaraba `value: Object` (rechazaba escalares) y los fixtures usaban el esquema viejo `config: {field, op, value}`; (b) el provider mock no soportaba media de audio/video (bloqueaba los ejemplos multimodales offline).
+
+**Archivos tocados**:
+- MODIFICADO `engine/src/tools/base.rs` — nuevo `FieldType::Any` (serde "any", `matches()` → true) + tests
+- MODIFICADO `engine/src/tools/builtin/logic.rs` — condition/switch/merge/loop/human_input usan `Any` donde el valor es de forma libre; `evaluate_condition` acepta el vocabulario de operadores de las edge conditions (`equals`, `greater_than`, …) además de los cortos; tests nuevos (aliases, escalar pasa validación de spec)
+- MODIFICADO `engine/src/adapters/mock_llm.rs` — `provider_name()` = "mock" (antes caía al default "unknown") + test
+- MODIFICADO `engine/src/llm/media.rs` — provider "mock" soporta los mismos MIME que Gemini (test double universal → ejemplos multimodales corren offline) + test
+- MODIFICADO `cli/src/terminal.rs` — `type_map` devuelve `Option` (`Any` ⇒ omitir `type` en el JSON Schema de tools)
+- MODIFICADO `examples/conditional-routing.yaml`, `test/test_02/03/08/10`, `agents/support-router.yaml` — esquema nuevo de condition: `field` (valor a evaluar) llega por `data_map`; `operator`+`value` en config
+- MODIFICADO `test/test_claude_code.yaml` — data_map usa `trigger.payload.question` (alias `user_input` deprecado)
+- MODIFICADO `examples/image-editing.yaml` — header Run con sample y nota de OPENAI_API_KEY
+- MODIFICADO `USAGE.md` — fila de `logic/condition` refleja el esquema real
+
+**Decisiones tomadas**:
+- Fix de raíz en el TOOL (`FieldType::Any`), no aflojar la validación global: las comparaciones son contra escalares legítimamente.
+- El tool de condición acepta los MISMOS nombres de operador que las condiciones de edges (una sola gramática para el usuario); operador desconocido sigue siendo `false` (fail-closed).
+- `mock` = proveedor de capacidad universal (media igual a Gemini) para que los ejemplos multimodales sean verificables offline.
+- Verificación: `cargo test -p openmirai-engine --lib` 832/0, `cargo test -p openmirai-cli` 13/0, y E2E de los 25 YAML con `target/debug/mirai` (todos validan; todos corren verde bare o con `-i`; voice-synthesis/image-editing llegan hasta su API externa — requieren key real por diseño). OJO: `target/release/mirai` quedó desactualizado; recompilar release antes del gate final.
+
+**Resultado**: 25/25 fixtures validan y corren verde (los 2 de API externa fallan solo por credenciales, con wiring correcto). Sin commit (instrucción explícita: NO git en esta sesión).
+
+---
+
 ### [2026-07-09] Sesion: prd-013-orquestador-sesiones-m1-m3
 **Estado**: COMPLETADO
 **Proyecto**: OpenMirai Engine (PRD-013 — orquestador de sesiones Claude sobre tmux)

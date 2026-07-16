@@ -1,3 +1,13 @@
+# Image Editing — AI inpainting on a local image (OpenAI GPT-Image-1)
+#
+# Edits a specific area of an image. The ai/image_edit tool calls the
+# OpenAI Images API directly, so a real key is required even with
+# `--provider mock` (the mock only replaces the LLM, not this API).
+#
+# Run:
+#   OPENAI_API_KEY=sk-... mirai run examples/image-editing.yaml \
+#     --input '{"image_path": "/path/to/photo.png", "prompt": "replace the sky with a sunset"}'
+
 name: image-editing
 version: v1
 description: "Edit a specific area of an image using AI inpainting (OpenAI GPT-Image-1)"

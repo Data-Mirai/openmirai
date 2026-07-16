@@ -19,11 +19,12 @@ graph:
         payload:
           status: "unknown"
 
+    # `field` (the value to evaluate) arrives via data_map; operator + value
+    # are static node config.
     - id: check
       tool_type: logic/condition
       config:
-        field: status
-        op: equals
+        operator: equals
         value: "active"
 
     - id: active_handler
@@ -45,7 +46,7 @@ graph:
     - source: trigger
       target: check
       data_map:
-        status: "trigger.payload"
+        field: "trigger.payload.status"
 
     # Conditional: only if result = true (status was "active")
     - source: check

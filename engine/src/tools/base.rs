@@ -45,6 +45,10 @@ pub enum FieldType {
     Integer,
     /// PRD-010: A file reference — `Value::Object` with `_type: "file_ref"` and `path`.
     File,
+    /// Accepts any JSON value (string, number, boolean, array, object, null).
+    /// For fields with no fixed shape, e.g. the comparison value of
+    /// `logic/condition` or the pass-through payload of `logic/merge`.
+    Any,
 }
 
 impl fmt::Display for FieldType {
@@ -57,6 +61,7 @@ impl fmt::Display for FieldType {
             Self::Object => write!(f, "object"),
             Self::Integer => write!(f, "integer"),
             Self::File => write!(f, "file"),
+            Self::Any => write!(f, "any"),
         }
     }
 }
@@ -262,6 +267,7 @@ impl FieldType {
             FieldType::Object => value.is_object(),
             FieldType::Integer => value.is_i64() || value.is_u64(),
             FieldType::File => crate::llm::media::is_file_ref(value),
+            FieldType::Any => true,
         }
     }
 }
@@ -391,11 +397,30 @@ mod tests {
             (FieldType::Array, "\"array\""),
             (FieldType::Object, "\"object\""),
             (FieldType::Integer, "\"integer\""),
+            (FieldType::Any, "\"any\""),
         ] {
             let json = serde_json::to_string(&variant).unwrap();
             assert_eq!(json, expected);
             let back: FieldType = serde_json::from_str(&json).unwrap();
             assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
+    fn field_type_any_matches_every_json_value() {
+        for value in [
+            json!("text"),
+            json!(42),
+            json!(1.5),
+            json!(true),
+            json!(["a", "b"]),
+            json!({"k": "v"}),
+            json!(null),
+        ] {
+            assert!(
+                FieldType::Any.matches(&value),
+                "Any should match {value:?}"
+            );
         }
     }
 

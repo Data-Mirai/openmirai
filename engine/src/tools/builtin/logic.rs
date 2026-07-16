@@ -20,9 +20,9 @@ logic_tool! {
     name = "Condition",
     description = "Evaluate a boolean condition on a field value",
     inputs = [
-        field("field", FieldType::String, true, "Field name to evaluate"),
-        field("operator", FieldType::String, true, "Comparison operator: eq, neq, gt, lt, gte, lte, in, contains"),
-        field("value", FieldType::Object, true, "Value to compare against"),
+        field("field", FieldType::Any, true, "The value to evaluate (wire it via data_map, e.g. field: \"trigger.payload.priority\")"),
+        field("operator", FieldType::String, true, "Comparison operator: eq/equals, neq/not_equals, gt/greater_than, lt/less_than, gte/greater_or_equal, lte/less_or_equal, in, contains"),
+        field("value", FieldType::Any, true, "Value to compare against (any JSON type)"),
     ],
     outputs = [
         field("result", FieldType::Boolean, true, "Evaluation result"),
@@ -53,7 +53,23 @@ impl Tool for ConditionTool {
     }
 }
 
+/// Evaluate `field_val <operator> compare_val`.
+///
+/// Operator names accept the same vocabulary as edge conditions
+/// ([`ComparisonOp`](crate::core::graph::ComparisonOp)): short forms
+/// (`eq`, `neq`, `gt`, `lt`, `gte`, `lte`) and full words (`equals`,
+/// `not_equals`, `greater_than`, `less_than`, `greater_or_equal`,
+/// `less_or_equal`). Unknown operators evaluate to `false` (fail-closed).
 fn evaluate_condition(field_val: &Value, operator: &str, compare_val: &Value) -> bool {
+    let operator = match operator {
+        "equals" | "equal" => "eq",
+        "not_equals" | "not_equal" => "neq",
+        "greater_than" => "gt",
+        "less_than" => "lt",
+        "greater_or_equal" | "greater_than_or_equal" => "gte",
+        "less_or_equal" | "less_than_or_equal" => "lte",
+        other => other,
+    };
     match operator {
         "eq" => field_val == compare_val,
         "neq" => field_val != compare_val,
@@ -148,10 +164,10 @@ logic_tool! {
     name = "Merge",
     description = "Pass-through node that forwards its input data",
     inputs = [
-        field("data", FieldType::Object, false, "Data to forward"),
+        field("data", FieldType::Any, false, "Data to forward"),
     ],
     outputs = [
-        field("data", FieldType::Object, true, "Forwarded data"),
+        field("data", FieldType::Any, true, "Forwarded data"),
     ],
     config_fields = []
 }
@@ -185,7 +201,7 @@ logic_tool! {
         field("current_index", FieldType::Number, false, "Current iteration index (default 0)"),
     ],
     outputs = [
-        field("current_item", FieldType::Object, true, "Item at current index"),
+        field("current_item", FieldType::Any, true, "Item at current index"),
         field("current_index", FieldType::Number, true, "Index that was processed"),
         field("done", FieldType::Boolean, true, "Whether iteration is complete"),
     ],
@@ -236,15 +252,15 @@ logic_tool! {
     name = "Switch (Router)",
     description = "Evaluates value against N cases. Routes to matched case or default",
     inputs = [
-        field("value", FieldType::Object, true, "Value to match against cases"),
+        field("value", FieldType::Any, true, "Value to match against cases"),
     ],
     outputs = [
-        field("matched_case", FieldType::Object, true, "The matched case value or default"),
+        field("matched_case", FieldType::Any, true, "The matched case value or default"),
         field("case_index", FieldType::Number, true, "Index of matched case (-1 if default)"),
     ],
     config_fields = [
         field("cases", FieldType::Array, false, "Array of case values to match against"),
-        field("default_case", FieldType::Object, false, "Default value if no case matches"),
+        field("default_case", FieldType::Any, false, "Default value if no case matches"),
     ]
 }
 
@@ -294,7 +310,7 @@ logic_tool! {
         field("options", FieldType::Array, false, "Predefined options if applicable"),
     ],
     outputs = [
-        field("response", FieldType::Object, true, "User response"),
+        field("response", FieldType::Any, true, "User response"),
         field("responded_by", FieldType::String, true, "Identifier of user who responded"),
         field("response_time_ms", FieldType::Number, true, "Time taken to respond in ms"),
     ],
@@ -502,6 +518,41 @@ mod tests {
     #[test]
     fn condition_contains_array() {
         assert!(evaluate_condition(&json!([1, 2, 3]), "contains", &json!(2)));
+    }
+
+    #[test]
+    fn condition_accepts_edge_style_operator_names() {
+        // Same vocabulary as edge conditions (ComparisonOp).
+        assert!(evaluate_condition(&json!("a"), "equals", &json!("a")));
+        assert!(evaluate_condition(&json!("a"), "not_equals", &json!("b")));
+        assert!(evaluate_condition(&json!(10), "greater_than", &json!(5)));
+        assert!(evaluate_condition(&json!(2), "less_than", &json!(5)));
+        assert!(evaluate_condition(&json!(5), "greater_or_equal", &json!(5)));
+        assert!(evaluate_condition(&json!(5), "less_or_equal", &json!(5)));
+    }
+
+    #[test]
+    fn condition_unknown_operator_is_false() {
+        assert!(!evaluate_condition(&json!("a"), "regex", &json!("a")));
+    }
+
+    #[tokio::test]
+    async fn condition_tool_accepts_scalar_value() {
+        // `value` is FieldType::Any: a scalar comparison value must pass
+        // spec validation and evaluate correctly (regression: was Object).
+        use crate::tools::registry::ToolFactory;
+        let factory = ConditionFactory::new();
+        let spec = factory.spec();
+        let mut inputs = HashMap::new();
+        inputs.insert("field".to_string(), json!("billing"));
+        inputs.insert("operator".to_string(), json!("eq"));
+        inputs.insert("value".to_string(), json!("billing"));
+        let validated =
+            crate::tools::base::validate_node_inputs(&inputs, spec, "check").unwrap();
+
+        let tool = ConditionTool;
+        let result = tool.execute(validated, &HashMap::new(), &ctx()).await.unwrap();
+        assert_eq!(result["result"], json!(true));
     }
 
     // -- Switch -----------------------------------------------------------

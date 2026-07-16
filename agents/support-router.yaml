@@ -38,11 +38,12 @@ graph:
         temperature: 0.0
         max_tokens: 10
 
+    # `field` (el valor a evaluar) llega por data_map desde classify;
+    # operator + value son config estatica del nodo.
     - id: check
       tool_type: logic/condition
       config:
-        field: response
-        op: equals
+        operator: equals
         value: billing
 
     - id: billing_handler
@@ -82,6 +83,8 @@ graph:
 
     - source: classify
       target: check
+      data_map:
+        field: "classify.response"
 
     - source: check
       target: billing_handler

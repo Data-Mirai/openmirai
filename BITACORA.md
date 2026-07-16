@@ -6,6 +6,23 @@
 
 ---
 
+### [2026-07-16] Sesion: security-gate-cors-auth-0.7.0
+**Estado**: COMPLETADO
+**Proyecto**: OpenMirai Engine (gate de seguridad 0.7.0 — área CORS + AUTH del server)
+**Objetivo**: Cerrar el BLOQUEANTE #1 (drive-by RCE): `CorsLayer::permissive()` + server sin auth permitían que una web maliciosa hiciera POST cross-origin a `/api/v1/agents/{id}/execute` o al spawn/send del orchestrator en el server local del usuario.
+
+**Archivos tocados**:
+- MODIFICADO `engine/src/server/mod.rs` — (1) CORS pasa de `permissive()` a allowlist vía `AllowOrigin::predicate`: orígenes loopback (localhost/127.x/[::1], cualquier puerto) en toda la API; `Origin: null` (file://) SOLO en `/api/v1/orchestrator/*` (lo necesita la web UI del Claude-Orchestrator abierta por file://). (2) Nuevo middleware `cross_origin_guard`: 403 a requests mutantes (POST/PUT/DELETE/PATCH) con `Origin` presente y no confiable — cierra los "simple requests" sin preflight (p. ej. `stop` sin body); sin Origin (curl/SDK/webhooks) y same-host (UI por LAN) pasan. (3) Comparación de api-key timing-safe (digest SHA-256 vs SHA-256). (4) Warning reforzado a `error!` cuando bindea no-loopback (0.0.0.0 default) sin api-key.
+- MODIFICADO `engine/src/server/editor.rs` — el router del editor (`mirai edit`) envuelve el router mergeado con el mismo `cross_origin_guard` (los `/api/edit/undo|redo` son POST sin body → ejecutaban cross-origin sin preflight y escriben el YAML).
+- MODIFICADO `engine/src/server/tests.rs` — 7 tests nuevos: preflight rechaza evil.com, permite loopback, `null` acotado a orchestrator, guard 403 a mutación cross-site, guard deja pasar curl/loopback/same-host, api_key_matches exacto, clasificación loopback del host.
+
+**Decisiones tomadas**:
+- Opción (a) del gate (CORS allowlist) + guard de Origin como defensa en profundidad; NO se exigió api-key en endpoints (opción b) para no romper la web UI del orchestrator por file:// cuando no hay key.
+- Residual documentado: `Origin: null` también lo mandan iframes sandbox (`allow-scripts`) → los endpoints del orchestrator siguen alcanzables por esa vía SI el server corre sin `--api-key`. Con key configurada el auth middleware lo cierra del todo.
+- Los UIs legítimos quedan intactos: orchestrator UI (file:// y localhost) → permitida por predicate; mirai edit/serve UI → same-origin, no depende de CORS.
+
+**Resultado**: `cargo check -p openmirai-engine` y `--tests` verdes. Sin commit (regla del gate: NO git desde el agente).
+
 ### [2026-07-16] Sesion: fixtures-verdes-release-0.7.0
 **Estado**: COMPLETADO
 **Proyecto**: OpenMirai Engine (gate de calidad de ejemplos/fixtures pre-release 0.7.0)

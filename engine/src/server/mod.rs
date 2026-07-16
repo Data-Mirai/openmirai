@@ -18,12 +18,12 @@ mod tests;
 pub use state::*;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
@@ -129,10 +129,138 @@ pub fn create_router(state: AppState) -> Router {
             state.clone(),
             auth_middleware,
         ))
-        // Middleware: CORS
-        .layer(CorsLayer::permissive())
+        // Middleware: cross-site guard for mutating requests (defense in depth
+        // for endpoints that CORS preflights don't cover — see cross_origin_guard).
+        .layer(axum::middleware::from_fn(cross_origin_guard))
+        // Middleware: CORS — outermost so it answers preflights itself.
+        .layer(cors_layer())
         // State
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// CORS + cross-site guard (security gate 0.7.0 — drive-by RCE fix)
+// ---------------------------------------------------------------------------
+
+/// CORS restricted to local UIs, replacing `CorsLayer::permissive()`.
+///
+/// Permissive CORS reflected ANY origin, so a malicious page (https://evil.com)
+/// open in the user's browser could pass the preflight and POST to
+/// `/api/v1/agents/{id}/execute` or the orchestrator spawn/send endpoints of a
+/// locally running `mirai serve` / `mirai edit` — cross-site request that ends
+/// in command execution on the developer's machine (drive-by RCE).
+///
+/// The predicate only trusts:
+/// - **loopback origins** — `http(s)://localhost`, `127.0.0.0/8`, `[::1]`, any
+///   port: covers the mirai serve/edit UIs and any local dev server.
+/// - the literal **`null` origin, ONLY on `/api/v1/orchestrator/*`** — the
+///   Claude-Orchestrator single-file web UI is opened via `file://`, and
+///   `file://` pages send `Origin: null`. Scoping `null` to the orchestrator
+///   API keeps that UI working without re-opening `execute` and the rest.
+///
+/// Residual risk (documented): sandboxed iframes
+/// (`<iframe sandbox="allow-scripts">`) also send `Origin: null`, so a hostile
+/// page can still reach the orchestrator endpoints through one when the server
+/// runs WITHOUT `--api-key`. With a key configured the auth middleware rejects
+/// those requests — running with `MIRAI_API_KEY` closes this gap completely.
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, parts| {
+            origin_is_trusted(origin, parts.uri.path())
+        }))
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_headers(AllowHeaders::mirror_request())
+}
+
+/// Shared trust decision for CORS and the cross-site guard.
+fn origin_is_trusted(origin: &HeaderValue, path: &str) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    if origin == "null" {
+        // file:// pages (Claude-Orchestrator web UI) — orchestrator API only.
+        return path.starts_with("/api/v1/orchestrator/");
+    }
+    origin_is_loopback(origin)
+}
+
+/// `http(s)://localhost|127.x.x.x|[::1]` on any port.
+fn origin_is_loopback(origin: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+/// Reject cross-site MUTATING requests from untrusted web origins.
+///
+/// CORS preflights stop cross-origin JSON POSTs, but CORS never stops
+/// "simple" requests — a body-less POST (e.g.
+/// `/api/v1/orchestrator/sessions/{id}/stop`) or a `text/plain` form post
+/// EXECUTES server-side even though the browser hides the response. Browsers
+/// always attach `Origin` to cross-origin (and most same-origin) POSTs, so:
+/// - no `Origin` header (curl, SDKs, server-to-server webhooks) → pass;
+/// - `Origin` trusted per [`origin_is_trusted`] → pass;
+/// - `Origin` matching the request's own `Host` (same-origin UI served over
+///   LAN, e.g. `http://192.168.x.x:3000/ui`) → pass;
+/// - anything else → 403.
+pub(crate) async fn cross_origin_guard(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return next.run(req).await;
+    }
+    let Some(origin) = req.headers().get(header::ORIGIN) else {
+        return next.run(req).await;
+    };
+    let trusted = origin_is_trusted(origin, req.uri().path())
+        || match (origin.to_str(), req.headers().get(header::HOST)) {
+            (Ok(o), Some(h)) => h.to_str().is_ok_and(|h| same_host_origin(o, h)),
+            _ => false,
+        };
+    if trusted {
+        return next.run(req).await;
+    }
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"error": "cross-origin request rejected"})),
+    )
+        .into_response()
+}
+
+/// Does the `Origin` header point back at this same server (`Host` header)?
+fn same_host_origin(origin: &str, host_header: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    let Some(ohost) = url.host_str() else {
+        return false;
+    };
+    let Some(oport) = url.port_or_known_default() else {
+        return false;
+    };
+    // Host header is `host` or `host:port` (IPv6 host in brackets).
+    let (hhost, hport) = match host_header.rsplit_once(':') {
+        Some((h, p)) if !p.contains(']') && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+            (h, p.parse::<u16>().unwrap_or(0))
+        }
+        _ => (
+            host_header,
+            if url.scheme() == "https" { 443 } else { 80 },
+        ),
+    };
+    let hhost = hhost.trim_start_matches('[').trim_end_matches(']');
+    let ohost = ohost.trim_start_matches('[').trim_end_matches(']');
+    hhost.eq_ignore_ascii_case(ohost) && hport == oport
 }
 
 // ---------------------------------------------------------------------------
@@ -175,13 +303,25 @@ async fn auth_middleware(
     let provided = provided.map(str::to_string).or(query_key);
 
     match provided {
-        Some(key) if key == *expected => next.run(req).await,
+        Some(key) if api_key_matches(&key, expected) => next.run(req).await,
         _ => (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "unauthorized"})),
         )
             .into_response(),
     }
+}
+
+/// Timing-safe API-key comparison.
+///
+/// `key == expected` short-circuits at the first differing byte, so response
+/// latency leaks how many leading bytes matched — an attacker can recover the
+/// key byte-by-byte. Comparing SHA-256 digests removes the signal: any change
+/// in the guess scrambles the whole digest, so even if the digest comparison
+/// itself short-circuits, its timing says nothing about the key bytes.
+fn api_key_matches(provided: &str, expected: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(provided.as_bytes()) == Sha256::digest(expected.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -202,8 +342,22 @@ pub async fn serve(
     projects_dirs: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if api_key.is_none() {
-        tracing::warn!("No API key configured. Server is running without authentication.");
-        tracing::warn!("Set MIRAI_API_KEY or use --api-key to enable authentication.");
+        if host_is_loopback(host) {
+            tracing::warn!("No API key configured. Server is running without authentication.");
+            tracing::warn!("Set MIRAI_API_KEY or use --api-key to enable authentication.");
+        } else {
+            // Non-loopback bind (e.g. the default 0.0.0.0) without auth: the
+            // agent-execute and orchestrator endpoints amount to remote
+            // command execution for ANYONE who can reach this port.
+            tracing::error!(
+                "SECURITY: binding {host}:{port} WITHOUT an API key — \
+                 /api/v1/agents/*/execute and /api/v1/orchestrator/* allow \
+                 command execution and are reachable by anyone on the network."
+            );
+            tracing::error!(
+                "Set MIRAI_API_KEY / --api-key, or bind locally with --host 127.0.0.1."
+            );
+        }
     }
 
     let mut registry = ToolRegistry::new();
@@ -260,6 +414,17 @@ pub async fn serve(
         .await?;
     tracing::info!("Server stopped.");
     Ok(())
+}
+
+/// Is the bind host loopback-only? (`localhost`, `127.x.x.x`, `::1`.)
+fn host_is_loopback(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Expand a leading `~` / `~/` to $HOME (M7 projects roots).

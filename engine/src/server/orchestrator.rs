@@ -357,12 +357,21 @@ fn serve_ui_file(state: &AppState, rel_path: &str) -> axum::response::Response {
             .into_response();
     };
 
-    // No traversal: reject any `..` component (and absolute paths).
+    // No traversal: reject `..`, absolute paths, root-relative paths and
+    // Windows path prefixes. `Prefix`/`RootDir` matter on Windows, where a
+    // drive-relative path like `C:foo` (or a rooted `\foo`) is NOT
+    // `is_absolute()` yet makes `ui_dir.join(rel)` REPLACE the base dir,
+    // allowing reads outside `ui_dir` on this unauthenticated endpoint.
     let rel = std::path::Path::new(rel_path);
     if rel.is_absolute()
-        || rel
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
+        || rel.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -1347,6 +1356,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         let resp = app
+            .clone()
             .oneshot(
                 Request::get("/ui/..%2F..%2Fetc%2Fpasswd")
                     .body(Body::empty())
@@ -1355,6 +1365,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // Root-relative path (leading `/`) → 400. On Windows `\foo` is not
+        // `is_absolute()` but would still replace the base in `join`.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get("/ui/%2Fetc%2Fpasswd")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // Windows drive-relative path (`Component::Prefix`) → 400. `C:foo`
+        // makes `join` replace the base dir entirely. Only parses as a
+        // prefix on Windows, so assert there only.
+        #[cfg(windows)]
+        {
+            let resp = app
+                .clone()
+                .oneshot(Request::get("/ui/C:foo").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
 
         let _ = std::fs::remove_dir_all(ui_dir);
         let _ = std::fs::remove_file(registry_path);

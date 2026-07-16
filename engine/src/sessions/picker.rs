@@ -196,9 +196,13 @@ pub fn build_command(os: &str, start: Option<&str>) -> Option<(String, Vec<Strin
             let mut expr =
                 String::from("POSIX path of (choose folder with prompt \"Selecciona el proyecto\"");
             if let Some(dir) = start {
+                // AppleScript string escape: backslash FIRST, then quotes.
+                // Reversed order would double the backslashes we just
+                // inserted (`"` → `\"` → `\\"`), un-escaping the quote and
+                // re-opening the injection this guards against.
                 expr.push_str(&format!(
                     " default location POSIX file \"{}\"",
-                    dir.replace('"', "\\\"")
+                    dir.replace('\\', "\\\\").replace('"', "\\\"")
                 ));
             }
             expr.push(')');
@@ -332,6 +336,22 @@ mod tests {
 
         let (_, args) = build_command("macos", Some("/no/such/dir-xyz")).unwrap();
         assert!(!args[3].contains("default location"));
+    }
+
+    #[test]
+    fn macos_default_location_escapes_backslashes_before_quotes() {
+        // A dir name with `\` and `"` is creatable (e.g. via spawn with
+        // create_dir:true) and must not break out of the AppleScript string.
+        let dir = std::env::temp_dir().join("mirai-esc \\\" test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (_, args) = build_command("macos", dir.to_str()).unwrap();
+        // `\` → `\\` and `"` → `\"`, so the literal `\"` becomes `\\\"`.
+        assert!(
+            args[3].contains("mirai-esc \\\\\\\" test"),
+            "escaped expr: {}",
+            args[3]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

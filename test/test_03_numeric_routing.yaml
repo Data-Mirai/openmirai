@@ -18,11 +18,12 @@ graph:
         payload:
           score: 42
 
+    # `field` (the value to evaluate) arrives via data_map; operator + value
+    # are static node config.
     - id: check
       tool_type: logic/condition
       config:
-        field: score
-        op: greater_than
+        operator: greater_than
         value: 80
 
     - id: above
@@ -39,7 +40,7 @@ graph:
     - source: trigger
       target: check
       data_map:
-        score: "trigger.payload"
+        field: "trigger.payload.score"
 
     - source: check
       target: above

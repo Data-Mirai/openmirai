@@ -90,6 +90,13 @@ impl LLMResource for MockLLMResource {
         })
     }
 
+    /// Identifies as "mock". Media validation treats the mock as a
+    /// universal-capability provider (see `llm::media`), so multimodal
+    /// examples can run offline with `--provider mock`.
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+
     async fn embed(&self, text: &str, _model: &str) -> Result<Vec<f64>, ResourceError> {
         let hash = Sha256::digest(text.as_bytes());
         let vec: Vec<f64> = hash
@@ -175,6 +182,12 @@ mod tests {
         let llm = MockLLMResource::new().with_embedding_dim(16);
         let vec = llm.embed("test", "m").await.unwrap();
         assert_eq!(vec.len(), 16);
+    }
+
+    #[test]
+    fn provider_name_is_mock() {
+        let llm = MockLLMResource::new();
+        assert_eq!(llm.provider_name(), "mock");
     }
 
     #[test]

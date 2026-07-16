@@ -167,7 +167,7 @@ Short forms also work: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`.
 
 | Tool | What it does |
 |------|-------------|
-| `logic/condition` | Evaluate a boolean condition (config: field, op, value) |
+| `logic/condition` | Evaluate a boolean condition (input `field` = value to test, via data_map; config: operator, value) |
 | `logic/switch` | Multi-way routing (switch/case) |
 | `logic/loop` | Repeat until condition met |
 | `logic/merge` | Combine inputs from multiple branches (fan-in) |

@@ -1,0 +1,77 @@
+name: "Meeting Transcriber"
+description: "Transcribe reuniones, extrae insights, y permite chatear con la reunión"
+version: v1
+agent_type: managed
+
+system_prompt: |
+  Eres un asistente de reuniones. Extraes insights precisos de transcripciones
+  y respondes preguntas basándote SOLO en los datos de la reunión.
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/webhook
+      config:
+        path: /transcribe
+        method: POST
+
+    - id: extract
+      tool_type: ai/llm_call
+      config:
+        model: gemma4
+        prompt: "Extrae los insights de esta transcripción de reunión."
+        temperature: 0.3
+        max_tokens: 2048
+        output_schema: |
+          {
+            "type": "object",
+            "properties": {
+              "title": {"type": "string"},
+              "participants": {"type": "array", "items": {"type": "string"}},
+              "action_items": {"type": "array", "items": {"type": "string"}},
+              "bullet_points": {"type": "array", "items": {"type": "string"}},
+              "summary": {"type": "string"}
+            },
+            "required": ["title", "participants", "action_items", "bullet_points", "summary"]
+          }
+        schema_retries: 2
+
+    - id: embed
+      tool_type: meeting/embed
+
+    - id: chat
+      tool_type: meeting/chat
+      config:
+        model: gemma4
+
+  edges:
+    - id: e1
+      source: trigger
+      target: extract
+      data_map:
+        meeting_transcript: "trigger.body"
+
+    - id: e2
+      source: extract
+      target: embed
+      data_map:
+        transcript: "trigger.body.audio_text"
+        insights: "extract.structured_output"
+
+    - id: e3
+      source: embed
+      target: chat
+      data_map:
+        question: "trigger.body.question"
+
+triggers:
+  - type: webhook
+    path: /api/transcribe
+    method: POST
+
+config:
+  max_iterations: 50
+  timeout_ms: 120000
+  retry:
+    max_retries: 2
+    backoff: exponential

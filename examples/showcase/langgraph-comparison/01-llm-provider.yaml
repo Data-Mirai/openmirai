@@ -1,0 +1,25 @@
+name: llm-provider
+version: v1
+agent_type: managed
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          question: "Explica en 2 oraciones qué es un agente de IA."
+
+    - id: llm
+      tool_type: ai/llm_call
+      config:
+        prompt: "Responde la siguiente pregunta de forma concisa."
+        model: gemma4
+        temperature: 0.7
+        max_tokens: 1024
+
+  edges:
+    - source: trigger
+      target: llm
+      data_map:
+        user_input: trigger.payload

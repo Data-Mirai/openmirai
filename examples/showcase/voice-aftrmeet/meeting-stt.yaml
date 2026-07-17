@@ -1,0 +1,46 @@
+# Meeting STT Agent
+#
+# Audio (long, multi-speaker) → transcription.
+# Dedicated to meeting recording/import/reprocess, separate from dictation so meeting
+# transcription can be tuned independently without ever touching dictation fidelity.
+#
+# NOTE: ai/transcribe is engine-hardcoded to FAITHFUL VERBATIM (the instruction lives in
+# the mirai binary; YAML config takes only `model`). "Light structure" (punctuation /
+# paragraphs) is NOT achievable via ai/transcribe alone — it would require an ai/llm_call
+# post-node that risks paraphrasing/omitting words (forbidden). Deferred pending PM decision.
+# Today this agent = faithful verbatim, identical behavior to dictation-stt but separately tunable.
+#
+# Result in state.transcribe.text (read by host via response(from:"transcribe")).
+# Requires: datamirai-engine >= v0.5.0
+
+name: meeting-stt
+version: v1
+description: "Transcription of long, multi-speaker meeting audio"
+
+inputs:
+  audio_path:
+    type: file
+    required: true
+    description: "Meeting audio file to transcribe (.m4a, .mp3, .wav, .ogg, .flac)"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: transcribe
+      tool_type: ai/transcribe
+      config:
+        model: "gemini-2.5-flash"
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: transcribe
+      data_map:
+        file_path: "start.payload.audio_path"
+
+    - source: transcribe
+      target: respond

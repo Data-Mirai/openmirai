@@ -1,0 +1,53 @@
+# Text-to-Speech Preprocessing Agent
+#
+# Text → optimized text for natural speech synthesis.
+# Expands abbreviations, adds natural pauses, fixes grammar.
+# Actual audio synthesis happens in the host app (platform-specific).
+#
+# Requires: datamirai-engine >= v0.5.0
+
+name: tts
+version: v1
+description: "Preprocess text for natural speech synthesis"
+
+inputs:
+  text:
+    type: text
+    required: true
+    description: "Text to prepare for speech"
+  voice:
+    type: text
+    required: false
+    default: "Kore"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: preprocess
+      tool_type: ai/llm_call
+      config:
+        model: "gemini-2.5-flash"
+        prompt: |
+          Prepare the following text for text-to-speech synthesis.
+          Make it sound natural when spoken aloud:
+          - Expand abbreviations (e.g., "resp." → "response", "avg." → "average")
+          - Add natural pauses via commas where appropriate
+          - Fix any grammar or punctuation issues
+          - Keep the original language and meaning
+          - Output ONLY the prepared text, nothing else
+        temperature: 0.2
+        max_tokens: 65536
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: preprocess
+      data_map:
+        context: "start.user_input"
+
+    - source: preprocess
+      target: respond

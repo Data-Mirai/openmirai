@@ -775,6 +775,7 @@ mod tests {
                 parent_id: None,
                 no_hooks: true,
                 create_dir: false,
+                mcp: false,
             })
             .await
             .unwrap();
@@ -1027,6 +1028,7 @@ mod tests {
                 parent_id: None,
                 no_hooks: true,
                 create_dir: false,
+                mcp: false,
             })
             .await
             .unwrap();

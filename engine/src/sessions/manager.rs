@@ -100,6 +100,14 @@ pub struct SpawnParams {
     /// wrong directory).
     #[serde(default)]
     pub create_dir: bool,
+    /// MCP wiring: when true, the engine materializes a per-session
+    /// `<id>-mcp.json` (default catalog for now — see `hooks::default_mcp_servers`)
+    /// and appends `--mcp-config <file> --strict-mcp-config` to the `claude`
+    /// command, so the worker starts with ONLY those MCP servers. Off by
+    /// default (opt-in) so existing behavior is unchanged until a universe
+    /// enables it. Future: the catalog is compiled per-universe.
+    #[serde(default)]
+    pub mcp: bool,
 }
 
 fn now_rfc3339() -> String {
@@ -307,6 +315,28 @@ impl SessionManager {
                 }
                 Err(e) => {
                     tracing::warn!("orchestrator: could not write hook settings: {e}");
+                }
+            }
+        }
+
+        // MCP wiring (opt-in): materialize the per-session MCP config and pass
+        // `--mcp-config <file> --strict-mcp-config` so the worker uses ONLY the
+        // servers we compiled (strong per-universe isolation). Same
+        // per-session-artifact + append-flag pattern as `--settings`. The path
+        // is engine-controlled (never from the request body), so no injection
+        // surface. Failure to write must not block the spawn — log and continue
+        // without MCP.
+        if params.mcp {
+            let servers = super::hooks::default_mcp_servers();
+            match super::hooks::write_session_mcp_config(&self.hooks_base(), &id, &servers) {
+                Ok(mcp_cfg) => {
+                    command.push_str(&format!(
+                        " --mcp-config '{}' --strict-mcp-config",
+                        mcp_cfg.display()
+                    ));
+                }
+                Err(e) => {
+                    tracing::warn!("orchestrator: could not write mcp config: {e}");
                 }
             }
         }
@@ -774,6 +804,8 @@ mod tests {
             // Most tests assert the bare command; hook wiring has its own tests.
             no_hooks: true,
             create_dir: false,
+            // MCP is opt-in; its own test flips this on.
+            mcp: false,
         }
     }
 
@@ -891,6 +923,57 @@ mod tests {
         let settings_path = base.join(format!("hooks/{}-settings.json", rec.id));
         assert!(settings_path.exists());
         let _ = std::fs::remove_file(&settings_path);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_with_mcp_appends_config_flags_and_writes_file() {
+        // MCP wiring: with mcp=true the command gains
+        // `--mcp-config '<...>-mcp.json' --strict-mcp-config` and the config
+        // file materializes under <registry dir>/hooks/ with ONLY our servers.
+        let (manager, backend, path) = manager_with_fake();
+        let mut params = spawn_params();
+        params.mcp = true;
+        let rec = manager.spawn(params).await.unwrap();
+
+        let spawned = backend.spawned.lock().unwrap();
+        let command = &spawned[0].2;
+        assert!(
+            command.contains("--mcp-config '"),
+            "mcp on → --mcp-config in command: {command}"
+        );
+        assert!(
+            command.contains("--strict-mcp-config"),
+            "mcp on → --strict-mcp-config in command: {command}"
+        );
+        assert!(command.contains(&format!("{}-mcp.json", rec.id)));
+
+        // The config file exists and declares the atlassian server only.
+        let base = path.parent().unwrap();
+        let cfg_path = base.join(format!("hooks/{}-mcp.json", rec.id));
+        assert!(cfg_path.exists(), "mcp config file must be written");
+        let cfg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
+        let servers = cfg["mcpServers"].as_object().unwrap();
+        assert!(servers.contains_key("atlassian"), "atlassian server present");
+        assert_eq!(servers["atlassian"]["type"], "http");
+        assert_eq!(
+            servers["atlassian"]["url"],
+            crate::sessions::hooks::ATLASSIAN_MCP_URL
+        );
+        let _ = std::fs::remove_file(&cfg_path);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_without_mcp_omits_config_flags() {
+        // Default (opt-out) → no MCP flags, unchanged prior behavior.
+        let (manager, backend, path) = manager_with_fake();
+        manager.spawn(spawn_params()).await.unwrap();
+        let spawned = backend.spawned.lock().unwrap();
+        let command = &spawned[0].2;
+        assert!(!command.contains("--mcp-config"), "no mcp flags by default: {command}");
+        assert!(!command.contains("--strict-mcp-config"));
         let _ = std::fs::remove_file(path);
     }
 

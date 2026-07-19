@@ -64,6 +64,35 @@ pub struct SessionRecord {
     /// pinned to the PRD-013 contract).
     #[serde(default)]
     pub external: bool,
+    /// Permission mode for the `claude` CLI:
+    /// - `Some("bypass")` → the command carries `--dangerously-skip-permissions`
+    ///   (auto-approve every tool; "bypass-all" in the visualizer);
+    /// - `Some("default")` / `None` → no flag (the CLI's normal prompting).
+    /// Persisted so a restart / reload keeps the mode, and surfaced in
+    /// `to_api_json` so the UI can badge which sessions run in bypass.
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+}
+
+/// Canonical permission-mode string that turns on `--dangerously-skip-permissions`.
+pub const PERMISSION_MODE_BYPASS: &str = "bypass";
+
+/// Whether a `permission_mode` value means "bypass all permission prompts".
+/// Case-insensitive; every other value (incl. `None`/`"default"`) = no flag.
+fn is_bypass_mode(mode: Option<&str>) -> bool {
+    mode.map(|m| m.trim().eq_ignore_ascii_case(PERMISSION_MODE_BYPASS))
+        .unwrap_or(false)
+}
+
+/// Normalize a permission_mode into the stored canonical form:
+/// `"bypass"` (any case) → `Some("bypass")`; anything empty/`"default"`/unknown
+/// → `None` (default prompting). Keeps the persisted/API value clean.
+fn normalize_permission_mode(mode: Option<String>) -> Option<String> {
+    if is_bypass_mode(mode.as_deref()) {
+        Some(PERMISSION_MODE_BYPASS.to_string())
+    } else {
+        None
+    }
 }
 
 impl SessionRecord {
@@ -83,6 +112,9 @@ impl SessionRecord {
             "created_at": self.created_at,
             "last_activity": self.last_activity,
             "parent_id": self.parent_id,
+            // Additive field: existing UI keys are untouched; the visualizer
+            // reads this to badge "bypass-all" sessions. Null for default.
+            "permission_mode": self.permission_mode,
         })
     }
 }
@@ -120,6 +152,13 @@ pub struct SpawnParams {
     /// enables it. Future: the catalog is compiled per-universe.
     #[serde(default)]
     pub mcp: bool,
+    /// Permission mode: `"bypass"` (any case) appends
+    /// `--dangerously-skip-permissions` to the `claude` command so it
+    /// auto-approves every tool ("bypass-all"). `"default"`/`None`/unknown =
+    /// no flag (unchanged behavior). Stored on the record and reused verbatim
+    /// on `/restart`.
+    #[serde(default)]
+    pub permission_mode: Option<String>,
 }
 
 fn now_rfc3339() -> String {
@@ -256,6 +295,121 @@ impl SessionManager {
 
     // -- operations ----------------------------------------------------------
 
+    /// Environment injected into every orchestrated tmux session (and the hook
+    /// subprocesses it spawns). Single source of truth so `spawn` and `restart`
+    /// inject identically: MIRAI_SESSION_ID / MIRAI_PORT always, plus
+    /// MIRAI_API_KEY when the server runs with `--api-key` (M6 fix: without it
+    /// the activity hook's POST hits the auth middleware and 401s silently).
+    fn session_env(&self, id: &str) -> Vec<(String, String)> {
+        let mut env = vec![
+            ("MIRAI_SESSION_ID".to_string(), id.to_string()),
+            (
+                "MIRAI_PORT".to_string(),
+                self.server_port.load(Ordering::SeqCst).to_string(),
+            ),
+        ];
+        if let Some(key) = self.api_key.lock().expect("api_key mutex poisoned").clone() {
+            env.push(("MIRAI_API_KEY".to_string(), key));
+        }
+        env
+    }
+
+    /// Assemble the `claude …` shell-command a tmux session runs, from the
+    /// spawn/restart knobs. Single source of truth so `spawn` and `restart`
+    /// build identical commands. Order of flags:
+    /// `claude [--model X] [--effort Y] [--dangerously-skip-permissions]
+    ///   [--settings …] [--mcp-config … --strict-mcp-config]`.
+    ///
+    /// SEGURIDAD (anti command-injection): the string is executed via
+    /// `/bin/sh -c` (see backend.rs). `model`/`effort` come from the request
+    /// body and are interpolated raw → RCE risk. Strict allowlist: only ASCII
+    /// letters, digits and `.`/`_`/`-`; spaces and shell metacharacters
+    /// (`;`, `$`, backtick, `|`, `&`, quotes, …) are rejected with a 400. The
+    /// hook/mcp paths are engine-controlled (never from the body), so they have
+    /// no injection surface. `permission_mode` is a fixed enum-like flag (no
+    /// interpolation): only the literal `--dangerously-skip-permissions` is
+    /// ever appended.
+    fn build_claude_command(
+        &self,
+        id: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+        no_hooks: bool,
+        mcp: bool,
+        permission_mode: Option<&str>,
+    ) -> Result<String, SessionError> {
+        fn is_safe_arg(s: &str) -> bool {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        }
+        if let Some(model) = model {
+            if !is_safe_arg(model) {
+                return Err(SessionError::Invalid(format!(
+                    "model contiene caracteres no permitidos: '{model}'"
+                )));
+            }
+        }
+        if let Some(effort) = effort {
+            if !is_safe_arg(effort) {
+                return Err(SessionError::Invalid(format!(
+                    "effort contiene caracteres no permitidos: '{effort}'"
+                )));
+            }
+        }
+
+        let mut command = String::from("claude");
+        if let Some(model) = model {
+            command.push_str(&format!(" --model {model}"));
+        }
+        if let Some(effort) = effort {
+            command.push_str(&format!(" --effort {effort}"));
+        }
+
+        // Permission mode: "bypass" → auto-approve every tool. This is the
+        // "bypass-all" toggle the visualizer flips before a restart.
+        if is_bypass_mode(permission_mode) {
+            command.push_str(" --dangerously-skip-permissions");
+        }
+
+        // M6: register the activity-reporting hook unless opted out. Failure
+        // to write the hook files must not block the spawn — log and continue.
+        if !no_hooks {
+            match super::hooks::write_session_settings(&self.hooks_base(), id) {
+                Ok(settings) => {
+                    command.push_str(&format!(" --settings '{}'", settings.display()));
+                }
+                Err(e) => {
+                    tracing::warn!("orchestrator: could not write hook settings: {e}");
+                }
+            }
+        }
+
+        // MCP wiring (opt-in): materialize the per-session MCP config and pass
+        // `--mcp-config <file> --strict-mcp-config` so the worker uses ONLY the
+        // servers we compiled (strong per-universe isolation). Same
+        // per-session-artifact + append-flag pattern as `--settings`. The path
+        // is engine-controlled (never from the request body), so no injection
+        // surface. Failure to write must not block the spawn — log and continue
+        // without MCP.
+        if mcp {
+            let servers = super::hooks::default_mcp_servers();
+            match super::hooks::write_session_mcp_config(&self.hooks_base(), id, &servers) {
+                Ok(mcp_cfg) => {
+                    command.push_str(&format!(
+                        " --mcp-config '{}' --strict-mcp-config",
+                        mcp_cfg.display()
+                    ));
+                }
+                Err(e) => {
+                    tracing::warn!("orchestrator: could not write mcp config: {e}");
+                }
+            }
+        }
+
+        Ok(command)
+    }
+
     /// Spawn a new session: `tmux new-session -d -s mirai-<id> -c <dir> "claude …"`.
     pub async fn spawn(&self, params: SpawnParams) -> Result<SessionRecord, SessionError> {
         if params.project_dir.trim().is_empty() {
@@ -292,90 +446,21 @@ impl SessionManager {
         let id = short_id();
         let tmux_session = format!("{TMUX_SESSION_PREFIX}{id}");
 
-        // SEGURIDAD (anti command-injection): `command` es el shell-command que tmux
-        // ejecuta vía `/bin/sh -c` (ver backend.rs). `model`/`effort` llegan del body
-        // del request y se interpolan crudos → RCE. Allowlist estricta: solo letras
-        // ASCII, dígitos y `.`/`_`/`-`; se rechazan espacios y metacaracteres de shell
-        // (`;`, `$`, backtick, `|`, `&`, comillas, etc.).
-        fn is_safe_arg(s: &str) -> bool {
-            !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-        }
-        if let Some(model) = &params.model {
-            if !is_safe_arg(model) {
-                return Err(SessionError::Invalid(format!(
-                    "model contiene caracteres no permitidos: '{model}'"
-                )));
-            }
-        }
-        if let Some(effort) = &params.effort {
-            if !is_safe_arg(effort) {
-                return Err(SessionError::Invalid(format!(
-                    "effort contiene caracteres no permitidos: '{effort}'"
-                )));
-            }
-        }
-
-        let mut command = String::from("claude");
-        if let Some(model) = &params.model {
-            command.push_str(&format!(" --model {model}"));
-        }
-        if let Some(effort) = &params.effort {
-            command.push_str(&format!(" --effort {effort}"));
-        }
-
-        // M6: register the activity-reporting hook unless opted out. Failure
-        // to write the hook files must not block the spawn — log and continue.
-        if !params.no_hooks {
-            match super::hooks::write_session_settings(&self.hooks_base(), &id) {
-                Ok(settings) => {
-                    command.push_str(&format!(" --settings '{}'", settings.display()));
-                }
-                Err(e) => {
-                    tracing::warn!("orchestrator: could not write hook settings: {e}");
-                }
-            }
-        }
-
-        // MCP wiring (opt-in): materialize the per-session MCP config and pass
-        // `--mcp-config <file> --strict-mcp-config` so the worker uses ONLY the
-        // servers we compiled (strong per-universe isolation). Same
-        // per-session-artifact + append-flag pattern as `--settings`. The path
-        // is engine-controlled (never from the request body), so no injection
-        // surface. Failure to write must not block the spawn — log and continue
-        // without MCP.
-        if params.mcp {
-            let servers = super::hooks::default_mcp_servers();
-            match super::hooks::write_session_mcp_config(&self.hooks_base(), &id, &servers) {
-                Ok(mcp_cfg) => {
-                    command.push_str(&format!(
-                        " --mcp-config '{}' --strict-mcp-config",
-                        mcp_cfg.display()
-                    ));
-                }
-                Err(e) => {
-                    tracing::warn!("orchestrator: could not write mcp config: {e}");
-                }
-            }
-        }
+        // Build the `claude …` shell-command (model/effort/hooks/mcp/permission).
+        // Centralized so `spawn` and `restart` produce the exact same command,
+        // and the anti-injection allowlist lives in one place.
+        let command = self.build_claude_command(
+            &id,
+            params.model.as_deref(),
+            params.effort.as_deref(),
+            params.no_hooks,
+            params.mcp,
+            params.permission_mode.as_deref(),
+        )?;
 
         // M6: the session (and its hook subprocesses) must know who it is and
-        // where the engine listens.
-        let mut env = vec![
-            ("MIRAI_SESSION_ID".to_string(), id.clone()),
-            (
-                "MIRAI_PORT".to_string(),
-                self.server_port.load(Ordering::SeqCst).to_string(),
-            ),
-        ];
-        // M6 fix (code review): when the server runs with --api-key, the
-        // activity hook must authenticate too — without MIRAI_API_KEY in the
-        // session env the hook's POST hits the auth middleware and dies with
-        // a silent 401 (the hook never fails loudly by design).
-        if let Some(key) = self.api_key.lock().expect("api_key mutex poisoned").clone() {
-            env.push(("MIRAI_API_KEY".to_string(), key));
-        }
+        // where the engine listens (single source of truth for the env).
+        let env = self.session_env(&id);
 
         self.backend
             .spawn(&tmux_session, &params.project_dir, &command, &env)?;
@@ -396,6 +481,7 @@ impl SessionManager {
             first_prompt_sent: false,
             parent_id,
             external: false,
+            permission_mode: normalize_permission_mode(params.permission_mode),
         };
 
         self.sessions
@@ -500,6 +586,127 @@ impl SessionManager {
         Ok(updated)
     }
 
+    /// Restart a tmux session in place: kill the current tmux, re-spawn `claude`
+    /// with (optionally) new `permission_mode` / `model` / `effort`, KEEPING the
+    /// same session id (the visualizer's node, edges and history stay attached).
+    ///
+    /// Any of `permission_mode` / `model` / `effort` left `None` KEEPS the
+    /// current value; passing `permission_mode: Some("default")` explicitly
+    /// clears bypass. This is the "change to bypass-all and restart" flow from
+    /// the visualizer.
+    ///
+    /// Only valid for tmux-backed sessions — external (bridge) nodes have no
+    /// tmux to respawn (use the bridge endpoints for those).
+    ///
+    /// Emits `session_status_changed` twice so the UI can animate the swap:
+    /// `stopped` (old process gone) → `starting` (new process booting), each
+    /// with the `{id, status, last_activity}` contract shape. Returns the
+    /// updated record.
+    pub async fn restart(
+        &self,
+        id: &str,
+        permission_mode: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
+    ) -> Result<SessionRecord, SessionError> {
+        // Snapshot the current record (also validates existence + tmux-backed).
+        let current = self
+            .get(id)
+            .await
+            .ok_or_else(|| SessionError::NotFound(id.to_string()))?;
+        if current.external {
+            return Err(SessionError::Invalid(format!(
+                "session '{id}' is an external node; restart applies to tmux sessions only"
+            )));
+        }
+
+        // Resolve the new config: an unset knob keeps the current value; an
+        // explicit permission_mode overrides (incl. clearing bypass with
+        // "default"). Normalized so the record/API stay canonical.
+        let new_permission_mode = match permission_mode {
+            Some(m) => normalize_permission_mode(Some(m)),
+            None => current.permission_mode.clone(),
+        };
+        let new_model = model.or_else(|| current.model.clone());
+        let new_effort = effort.or_else(|| current.effort.clone());
+
+        // Build the new command FIRST — if model/effort fail the injection
+        // allowlist we bail out BEFORE killing the running tmux (a bad restart
+        // must not leave the session dead). Restart keeps hooks ON (no_hooks =
+        // false) so activity/status keep flowing across the swap, and leaves
+        // MCP off (mcp = false) so we don't re-materialize the per-session MCP
+        // config — the existing file (if any) is still on disk under this id.
+        let command = self.build_claude_command(
+            id,
+            new_model.as_deref(),
+            new_effort.as_deref(),
+            false, // no_hooks = false → hooks stay on across the restart
+            false, // mcp = false → don't re-materialize the MCP config
+            new_permission_mode.as_deref(),
+        )?;
+
+        let tmux_session = current.tmux_session.clone();
+        let project_dir = current.project_dir.clone();
+
+        // 1) Kill the old tmux (best-effort: it may already be gone) and emit
+        //    `stopped` so the UI shows the swap starting.
+        if self.backend.session_exists(&tmux_session) {
+            self.backend.kill(&tmux_session)?;
+        }
+        {
+            let last_activity = now_rfc3339();
+            {
+                let mut sessions = self.sessions.write().await;
+                if let Some(rec) = sessions.get_mut(id) {
+                    rec.status = SessionStatus::Stopped;
+                    rec.last_activity = last_activity.clone();
+                }
+            }
+            self.emit(
+                EventType::SessionStatusChanged,
+                id,
+                json!({ "id": id, "status": SessionStatus::Stopped, "last_activity": last_activity }),
+            );
+        }
+
+        // 2) Re-spawn claude under the SAME tmux session name + id, with the
+        //    new command/flags and the same env injection as a fresh spawn.
+        let env = self.session_env(id);
+        self.backend
+            .spawn(&tmux_session, &project_dir, &command, &env)?;
+
+        // Drop the stale pane snapshot so the poll loop treats the fresh
+        // process's output as new (not diffed against the dead session).
+        self.last_pane.lock().await.remove(id);
+
+        // 3) Update the record: new config, status back to `starting`, and a
+        //    fresh first_prompt gate (the ultracode keyword should re-prepend
+        //    on the next prompt to the rebooted session).
+        let now = now_rfc3339();
+        let updated = {
+            let mut sessions = self.sessions.write().await;
+            let rec = sessions
+                .get_mut(id)
+                .ok_or_else(|| SessionError::NotFound(id.to_string()))?;
+            rec.status = SessionStatus::Starting;
+            rec.model = new_model;
+            rec.effort = new_effort;
+            rec.permission_mode = new_permission_mode;
+            rec.first_prompt_sent = false;
+            rec.last_activity = now.clone();
+            rec.clone()
+        };
+        self.persist().await?;
+
+        self.emit(
+            EventType::SessionStatusChanged,
+            id,
+            json!({ "id": id, "status": SessionStatus::Starting, "last_activity": now }),
+        );
+
+        Ok(updated)
+    }
+
     // -- external nodes / bridge ---------------------------------------------
 
     /// Register an EXTERNAL node — a session running on another substrate (the
@@ -558,6 +765,8 @@ impl SessionManager {
             first_prompt_sent: false,
             parent_id,
             external: true,
+            // No tmux → permissions are meaningless for external nodes.
+            permission_mode: None,
         };
 
         self.sessions
@@ -991,6 +1200,8 @@ mod tests {
             create_dir: false,
             // MCP is opt-in; its own test flips this on.
             mcp: false,
+            // Default = no bypass flag; the bypass test sets this explicitly.
+            permission_mode: None,
         }
     }
 
@@ -1186,6 +1397,178 @@ mod tests {
         assert_eq!(
             manager2.get(&child.id).await.unwrap().parent_id.as_deref(),
             Some(parent.id.as_str())
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_with_bypass_adds_dangerously_skip_permissions() {
+        // permission_mode "bypass" → the claude command carries the flag; the
+        // record + api_json expose it. Default = no flag (own test below).
+        let (manager, backend, path) = manager_with_fake();
+        let mut params = spawn_params();
+        params.permission_mode = Some("bypass".into());
+        let rec = manager.spawn(params).await.unwrap();
+
+        let spawned = backend.spawned.lock().unwrap();
+        let command = &spawned[0].2;
+        assert!(
+            command.contains("--dangerously-skip-permissions"),
+            "bypass must add the flag: {command}"
+        );
+        assert_eq!(rec.permission_mode.as_deref(), Some("bypass"));
+        assert_eq!(rec.to_api_json()["permission_mode"], json!("bypass"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_default_permission_mode_omits_the_flag() {
+        // No permission_mode (and "default"/unknown) → no flag, mode stored None.
+        let (manager, backend, path) = manager_with_fake();
+        manager.spawn(spawn_params()).await.unwrap();
+
+        let mut params = spawn_params();
+        params.permission_mode = Some("default".into());
+        let rec = manager.spawn(params).await.unwrap();
+
+        let spawned = backend.spawned.lock().unwrap();
+        for entry in spawned.iter() {
+            assert!(
+                !entry.2.contains("--dangerously-skip-permissions"),
+                "default/none must NOT add the flag: {}",
+                entry.2
+            );
+        }
+        assert_eq!(rec.permission_mode, None);
+        assert_eq!(rec.to_api_json()["permission_mode"], serde_json::Value::Null);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn restart_respawns_with_bypass_same_id_and_emits_status() {
+        // Spawn default (no bypass) → restart into bypass. Assert: same id,
+        // new claude command carries the flag, status back to starting, and the
+        // SSE emits stopped → starting.
+        let (manager, backend, path) = manager_with_fake();
+        let rec = manager.spawn(spawn_params()).await.unwrap();
+        let mut rx = manager.subscribe();
+
+        assert!(!backend.spawned.lock().unwrap()[0]
+            .2
+            .contains("--dangerously-skip-permissions"));
+
+        let updated = manager
+            .restart(&rec.id, Some("bypass".into()), None, None)
+            .await
+            .unwrap();
+
+        // Same id (re-attach), status starting, bypass recorded.
+        assert_eq!(updated.id, rec.id);
+        assert_eq!(updated.status, SessionStatus::Starting);
+        assert_eq!(updated.permission_mode.as_deref(), Some("bypass"));
+        assert_eq!(updated.tmux_session, rec.tmux_session);
+        // model/effort preserved from the original spawn.
+        assert_eq!(updated.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(updated.effort.as_deref(), Some("high"));
+
+        // The re-spawn used the SAME tmux session name and now has the flag.
+        let spawned = backend.spawned.lock().unwrap();
+        assert_eq!(spawned.len(), 2, "restart re-spawned");
+        assert_eq!(spawned[1].0, rec.tmux_session, "same tmux name (re-attach)");
+        assert!(
+            spawned[1].2.contains("--dangerously-skip-permissions"),
+            "restart command carries bypass: {}",
+            spawned[1].2
+        );
+        drop(spawned);
+
+        // SSE: stopped then starting (contract shape {id,status,last_activity}).
+        let ev1 = rx.recv().await.unwrap();
+        assert_eq!(ev1.event_type, EventType::SessionStatusChanged);
+        assert_eq!(ev1.data["id"], json!(rec.id));
+        assert_eq!(ev1.data["status"], json!("stopped"));
+        assert!(ev1.data["last_activity"].is_string());
+        let ev2 = rx.recv().await.unwrap();
+        assert_eq!(ev2.event_type, EventType::SessionStatusChanged);
+        assert_eq!(ev2.data["status"], json!("starting"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn restart_keeps_bypass_when_mode_omitted_and_can_clear_it() {
+        // A session already in bypass: restart without permission_mode keeps it;
+        // restart with "default" clears it.
+        let (manager, backend, path) = manager_with_fake();
+        let mut params = spawn_params();
+        params.permission_mode = Some("bypass".into());
+        let rec = manager.spawn(params).await.unwrap();
+
+        // Omitted mode → keep bypass.
+        let kept = manager.restart(&rec.id, None, None, None).await.unwrap();
+        assert_eq!(kept.permission_mode.as_deref(), Some("bypass"));
+        assert!(backend.spawned.lock().unwrap()[1]
+            .2
+            .contains("--dangerously-skip-permissions"));
+
+        // Explicit "default" → clear bypass, no flag.
+        let cleared = manager
+            .restart(&rec.id, Some("default".into()), None, None)
+            .await
+            .unwrap();
+        assert_eq!(cleared.permission_mode, None);
+        assert!(!backend.spawned.lock().unwrap()[2]
+            .2
+            .contains("--dangerously-skip-permissions"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn restart_rejects_external_node_and_unknown_id() {
+        let (manager, _backend, path) = manager_with_fake();
+        assert!(matches!(
+            manager.restart("ghost", None, None, None).await,
+            Err(SessionError::NotFound(_))
+        ));
+
+        let ext = manager
+            .register_external(
+                None,
+                Some("bridge".into()),
+                "external work".into(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            manager.restart(&ext.id, Some("bypass".into()), None, None).await,
+            Err(SessionError::Invalid(_))
+        ));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn restart_rejects_shell_injection_before_killing_tmux() {
+        // A malicious model on restart must be rejected AND leave the running
+        // tmux alive (fail before the kill).
+        let (manager, backend, path) = manager_with_fake();
+        let rec = manager.spawn(spawn_params()).await.unwrap();
+        assert!(backend.session_exists(&rec.tmux_session));
+
+        let err = manager
+            .restart(&rec.id, None, Some("opus; rm -rf /".into()), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SessionError::Invalid(_)));
+        // Session still alive; no extra spawn happened.
+        assert!(backend.session_exists(&rec.tmux_session));
+        assert_eq!(backend.spawned.lock().unwrap().len(), 1);
+        assert_eq!(
+            manager.get(&rec.id).await.unwrap().status,
+            SessionStatus::Starting
         );
         let _ = std::fs::remove_file(path);
     }
@@ -1514,9 +1897,11 @@ mod tests {
             first_prompt_sent: true,
             parent_id: Some("root".into()),
             external: false,
+            permission_mode: Some("bypass".into()),
         };
         let v = rec.to_api_json();
         let obj = v.as_object().unwrap();
+        assert_eq!(v["permission_mode"], serde_json::json!("bypass"));
         let expected = [
             "id",
             "name",
@@ -1530,6 +1915,7 @@ mod tests {
             "created_at",
             "last_activity",
             "parent_id",
+            "permission_mode",
         ];
         assert_eq!(obj.len(), expected.len());
         for key in expected {

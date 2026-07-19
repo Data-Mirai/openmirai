@@ -164,6 +164,42 @@ pub(crate) async fn orchestrator_stop(
     Ok(Json(json!({ "id": record.id, "status": record.status })))
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct RestartRequest {
+    /// `"bypass"` → restart with `--dangerously-skip-permissions`; `"default"`
+    /// → restart without it (clears bypass). Omitted → keep the current mode.
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    /// Optional new model; omitted keeps the current one.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Optional new effort; omitted keeps the current one.
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
+/// POST /api/v1/orchestrator/sessions/{id}/restart
+///
+/// Kill this session's tmux and re-spawn `claude` with new flags
+/// (permission_mode / model / effort), KEEPING the same id so the visualizer's
+/// node and edges stay attached. This is the "flip a session to bypass-all and
+/// restart" action. Only valid for tmux-backed sessions (external nodes → 400).
+/// Emits `session_status_changed` (stopped → starting). Returns 200 with the
+/// updated record (same shape as `GET /sessions/{id}`, minus `output_tail`).
+pub(crate) async fn orchestrator_restart(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<RestartRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let record = state
+        .orchestrator
+        .restart(&id, req.permission_mode, req.model, req.effort)
+        .await
+        .map_err(session_error_response)?;
+
+    Ok(Json(record.to_api_json()))
+}
+
 // ---------------------------------------------------------------------------
 // External nodes (bridge) — register nodes that live on ANOTHER substrate
 // (e.g. the Claude Code FleetView subagents of a chat session) so they appear
@@ -842,6 +878,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restart_flips_to_bypass_keeps_id_and_respawns_with_flag() {
+        let (app, backend, path) = test_app();
+        let created = spawn_session(&app).await;
+        let id = created["id"].as_str().unwrap().to_string();
+
+        // Original spawn had no bypass flag.
+        assert!(!backend.spawned.lock().unwrap()[0]
+            .2
+            .contains("--dangerously-skip-permissions"));
+
+        // POST /restart with permission_mode "bypass".
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/orchestrator/sessions/{id}/restart"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({ "permission_mode": "bypass" })).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp.into_body()).await;
+        // Same id, back to starting, bypass surfaced in the record.
+        assert_eq!(body["id"], id);
+        assert_eq!(body["status"], "starting");
+        assert_eq!(body["permission_mode"], "bypass");
+
+        // Re-spawned under the SAME tmux name, now carrying the flag.
+        let spawned = backend.spawned.lock().unwrap();
+        assert_eq!(spawned.len(), 2);
+        assert_eq!(spawned[1].0, format!("mirai-{id}"));
+        assert!(spawned[1].2.contains("--dangerously-skip-permissions"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn restart_unknown_session_is_404() {
+        let (app, _backend, path) = test_app();
+        let resp = app
+            .oneshot(
+                Request::post("/api/v1/orchestrator/sessions/ghost/restart")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&json!({})).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
     async fn events_endpoint_streams_session_created() {
         let (state, _backend, path) = test_state();
         let app = create_router(state.clone());
@@ -883,6 +974,7 @@ mod tests {
                 no_hooks: true,
                 create_dir: false,
                 mcp: false,
+                permission_mode: None,
             })
             .await
             .unwrap();
@@ -1136,6 +1228,7 @@ mod tests {
                 no_hooks: true,
                 create_dir: false,
                 mcp: false,
+                permission_mode: None,
             })
             .await
             .unwrap();

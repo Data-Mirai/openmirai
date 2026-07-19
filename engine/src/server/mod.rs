@@ -34,8 +34,9 @@ use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
     orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
     orchestrator_list_projects, orchestrator_pick_folder, orchestrator_record_activity,
-    orchestrator_register_external, orchestrator_send, orchestrator_set_external_status,
-    orchestrator_stop, orchestrator_unregister_external, serve_ui, serve_ui_index,
+    orchestrator_register_external, orchestrator_restart, orchestrator_send,
+    orchestrator_set_external_status, orchestrator_stop, orchestrator_unregister_external,
+    serve_ui, serve_ui_index,
 };
 
 // ---------------------------------------------------------------------------
@@ -115,6 +116,13 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/orchestrator/sessions/{id}/stop",
             post(orchestrator_stop),
+        )
+        // Restart a tmux session in place with new flags (permission_mode /
+        // model / effort), keeping the same id. The "bypass-all + restart"
+        // action from the visualizer.
+        .route(
+            "/api/v1/orchestrator/sessions/{id}/restart",
+            post(orchestrator_restart),
         )
         .route(
             "/api/v1/orchestrator/sessions/{id}/activity",

@@ -23,7 +23,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::events::EventType;
-use crate::sessions::{SessionError, SpawnParams};
+use crate::sessions::{SessionError, SessionStatus, SpawnParams};
 
 use super::state::{AppState, ErrorResponse};
 
@@ -158,6 +158,113 @@ pub(crate) async fn orchestrator_stop(
     let record = state
         .orchestrator
         .stop(&id)
+        .await
+        .map_err(session_error_response)?;
+
+    Ok(Json(json!({ "id": record.id, "status": record.status })))
+}
+
+// ---------------------------------------------------------------------------
+// External nodes (bridge) — register nodes that live on ANOTHER substrate
+// (e.g. the Claude Code FleetView subagents of a chat session) so they appear
+// in the visualizer graph WITHOUT the engine spawning them over tmux.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RegisterExternalRequest {
+    pub name: Option<String>,
+    pub objective: String,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub project_dir: Option<String>,
+    /// Optional caller-provided id (idempotent re-register). Otherwise minted.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Initial status; defaults to `working`. One of the UI status values.
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// Parse a status string into the enum via the same lowercase serde mapping the
+/// UI uses (working|waiting|permission|stopped|error|starting). Rejects unknown
+/// values with a clear 400.
+fn parse_status(raw: &str) -> Result<SessionStatus, SessionError> {
+    serde_json::from_value::<SessionStatus>(Value::String(raw.trim().to_lowercase()))
+        .map_err(|_| {
+            SessionError::Invalid(format!(
+                "invalid status '{raw}' (want working|waiting|permission|stopped|error|starting)"
+            ))
+        })
+}
+
+/// POST /api/v1/orchestrator/sessions/register — register an external node.
+/// Returns `{id}` (201). Emits `session_created` with the full node record.
+pub(crate) async fn orchestrator_register_external(
+    State(state): State<AppState>,
+    Json(req): Json<RegisterExternalRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
+    let status = match &req.status {
+        Some(s) => Some(parse_status(s).map_err(session_error_response)?),
+        None => None,
+    };
+    let record = state
+        .orchestrator
+        .register_external(
+            req.id,
+            req.name,
+            req.objective,
+            req.parent_id,
+            req.model,
+            req.effort,
+            req.project_dir,
+            status,
+        )
+        .await
+        .map_err(session_error_response)?;
+
+    Ok((StatusCode::CREATED, Json(json!({ "id": record.id }))))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExternalStatusRequest {
+    pub status: String,
+    #[serde(default)]
+    pub activity: Option<String>,
+}
+
+/// POST /api/v1/orchestrator/sessions/{id}/status — update an external node's
+/// status (+ optional activity label). Emits `session_status_changed` (and
+/// `session_activity` when `activity` is present). → 200 `{id, status}`.
+pub(crate) async fn orchestrator_set_external_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ExternalStatusRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let status = parse_status(&req.status).map_err(session_error_response)?;
+    let record = state
+        .orchestrator
+        .set_external_status(&id, status, req.activity.as_deref())
+        .await
+        .map_err(session_error_response)?;
+
+    Ok(Json(json!({ "id": record.id, "status": record.status })))
+}
+
+/// POST /api/v1/orchestrator/sessions/{id}/unregister
+/// (also DELETE /api/v1/orchestrator/sessions/{id}) — mark an external node
+/// stopped. Emits `session_stopped` → `{id}`. → 200 `{id, status}`.
+pub(crate) async fn orchestrator_unregister_external(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let record = state
+        .orchestrator
+        .unregister_external(&id)
         .await
         .map_err(session_error_response)?;
 

@@ -52,6 +52,18 @@ pub struct SessionRecord {
     /// Session that spawned this one (M6: orchestrator→child edges). Nullable.
     #[serde(default)]
     pub parent_id: Option<String>,
+    /// EXTERNAL node (bridge): registered by an external substrate (e.g. the
+    /// Claude Code FleetView subagents of a chat session) rather than spawned
+    /// by the engine over tmux. External nodes have NO tmux session behind them
+    /// (`tmux_session` is empty), so they must be skipped by the tmux
+    /// reconciliation on startup and by the status poll — otherwise the engine
+    /// would immediately mark them `stopped` (their tmux session "doesn't
+    /// exist"). They still appear in the registry, `GET /sessions` and the SSE
+    /// stream exactly like normal sessions, so the UI renders them unchanged.
+    /// Internal bookkeeping — excluded from `to_api_json` (the UI shape stays
+    /// pinned to the PRD-013 contract).
+    #[serde(default)]
+    pub external: bool,
 }
 
 impl SessionRecord {
@@ -212,7 +224,14 @@ impl SessionManager {
             let mut sessions = self.sessions.write().await;
             for mut rec in loaded {
                 // Reconcile: active in registry but gone in tmux → stopped.
-                if rec.status.is_active() && !self.backend.session_exists(&rec.tmux_session) {
+                // EXTERNAL nodes have no tmux session behind them (they live on
+                // another substrate), so the tmux check would wrongly stop them
+                // — skip reconciliation for them. They're ephemeral: if a
+                // restart loses them, the external substrate re-registers.
+                if !rec.external
+                    && rec.status.is_active()
+                    && !self.backend.session_exists(&rec.tmux_session)
+                {
                     rec.status = SessionStatus::Stopped;
                 }
                 sessions.insert(rec.id.clone(), rec);
@@ -376,6 +395,7 @@ impl SessionManager {
             last_activity: now,
             first_prompt_sent: false,
             parent_id,
+            external: false,
         };
 
         self.sessions
@@ -476,6 +496,165 @@ impl SessionManager {
         self.persist().await?;
 
         // Contract shape (PRD-013 UI): session_stopped → {id}.
+        self.emit(EventType::SessionStopped, id, json!({ "id": id }));
+        Ok(updated)
+    }
+
+    // -- external nodes / bridge ---------------------------------------------
+
+    /// Register an EXTERNAL node — a session running on another substrate (the
+    /// Claude Code FleetView subagents of a chat session) that the engine did
+    /// NOT spawn over tmux. It appears in the registry, `GET /sessions` and the
+    /// SSE stream exactly like a normal session so the visualizer renders it
+    /// with no UI change, but there is no tmux behind it: `tmux_session` is
+    /// empty and it's skipped by the tmux reconciliation and the status poll.
+    ///
+    /// Emits `session_created` with the full node record (contract shape).
+    /// `id` may be provided (idempotent re-register updates the existing node);
+    /// otherwise a short id is minted like the tmux sessions.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_external(
+        &self,
+        id: Option<String>,
+        name: Option<String>,
+        objective: String,
+        parent_id: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
+        project_dir: Option<String>,
+        status: Option<SessionStatus>,
+    ) -> Result<SessionRecord, SessionError> {
+        if objective.trim().is_empty() {
+            return Err(SessionError::Invalid("objective is required".into()));
+        }
+
+        let id = id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(short_id);
+
+        // Unknown parent → normalized to None (same contract as spawn: never
+        // reject on a stale/unknown parent). A node may point at another
+        // external node or at a real tmux session.
+        let parent_id = match parent_id {
+            Some(p) if self.sessions.read().await.contains_key(&p) => Some(p),
+            _ => None,
+        };
+
+        let now = now_rfc3339();
+        let record = SessionRecord {
+            id: id.clone(),
+            name: name.unwrap_or_else(|| id.clone()),
+            project_dir: project_dir.unwrap_or_default(),
+            objective,
+            status: status.unwrap_or(SessionStatus::Working),
+            model,
+            effort,
+            ultracode: false,
+            // No tmux behind an external node.
+            tmux_session: String::new(),
+            created_at: now.clone(),
+            last_activity: now,
+            first_prompt_sent: false,
+            parent_id,
+            external: true,
+        };
+
+        self.sessions
+            .write()
+            .await
+            .insert(id.clone(), record.clone());
+        self.persist().await?;
+
+        self.emit(EventType::SessionCreated, &id, record.to_api_json());
+        Ok(record)
+    }
+
+    /// Update an external node's status (bridge). Emits `session_status_changed`
+    /// → `{id, status, last_activity}`. When `activity` is provided it ALSO
+    /// records a resource-activity entry and emits `session_activity` (a free
+    /// text label under the `tool` field, `action: "exec"`), so the visualizer
+    /// can show what the node is doing. Works on external nodes only — a
+    /// tmux-backed session is driven by the poll loop, not this endpoint.
+    pub async fn set_external_status(
+        &self,
+        id: &str,
+        status: SessionStatus,
+        activity: Option<&str>,
+    ) -> Result<SessionRecord, SessionError> {
+        let last_activity = now_rfc3339();
+        let updated = {
+            let mut sessions = self.sessions.write().await;
+            let rec = sessions
+                .get_mut(id)
+                .ok_or_else(|| SessionError::NotFound(id.to_string()))?;
+            if !rec.external {
+                return Err(SessionError::Invalid(format!(
+                    "session '{id}' is not an external node; use /stop for tmux sessions"
+                )));
+            }
+            rec.status = status;
+            rec.last_activity = last_activity.clone();
+            rec.clone()
+        };
+        self.persist().await?;
+
+        self.emit(
+            EventType::SessionStatusChanged,
+            id,
+            json!({
+                "id": id,
+                "status": status,
+                "last_activity": last_activity,
+            }),
+        );
+
+        // Optional free-text activity label → session_activity, so the graph
+        // can show the node's current step (mirrors the M6 activity shape).
+        if let Some(label) = activity {
+            let label = label.trim();
+            if !label.is_empty() {
+                let entry = json!({
+                    "id": id,
+                    "tool": label,
+                    "action": "exec",
+                    "path": serde_json::Value::Null,
+                    "ts": last_activity,
+                });
+                {
+                    let mut act = self.activity.lock().await;
+                    let ring = act.entry(id.to_string()).or_default();
+                    ring.push_back(entry.clone());
+                    while ring.len() > ACTIVITY_RING_MAX {
+                        ring.pop_front();
+                    }
+                }
+                self.emit(EventType::SessionActivity, id, entry);
+            }
+        }
+
+        Ok(updated)
+    }
+
+    /// Unregister an external node (bridge): mark it `stopped` and emit
+    /// `session_stopped` → `{id}`. Only valid for external nodes.
+    pub async fn unregister_external(&self, id: &str) -> Result<SessionRecord, SessionError> {
+        let updated = {
+            let mut sessions = self.sessions.write().await;
+            let rec = sessions
+                .get_mut(id)
+                .ok_or_else(|| SessionError::NotFound(id.to_string()))?;
+            if !rec.external {
+                return Err(SessionError::Invalid(format!(
+                    "session '{id}' is not an external node; use /stop for tmux sessions"
+                )));
+            }
+            rec.status = SessionStatus::Stopped;
+            rec.last_activity = now_rfc3339();
+            rec.clone()
+        };
+        self.persist().await?;
+
         self.emit(EventType::SessionStopped, id, json!({ "id": id }));
         Ok(updated)
     }
@@ -605,12 +784,14 @@ impl SessionManager {
     // -- status polling ------------------------------------------------------
 
     /// Number of sessions whose tmux session should still be alive.
+    /// External nodes are excluded — they aren't backed by tmux, so they must
+    /// not by themselves keep the ~2s poll loop awake.
     pub async fn active_count(&self) -> usize {
         self.sessions
             .read()
             .await
             .values()
-            .filter(|r| r.status.is_active())
+            .filter(|r| r.status.is_active() && !r.external)
             .count()
     }
 
@@ -623,7 +804,11 @@ impl SessionManager {
             let sessions = self.sessions.read().await;
             sessions
                 .values()
-                .filter(|r| r.status.is_active())
+                // Skip EXTERNAL nodes: they have no tmux session behind them,
+                // so `session_exists` would fail and the poll would mark them
+                // stopped. Their status is driven by the bridge via
+                // `set_external_status` / `unregister_external`, not by polling.
+                .filter(|r| r.status.is_active() && !r.external)
                 .map(|r| (r.id.clone(), r.tmux_session.clone(), r.status))
                 .collect()
         };
@@ -1328,6 +1513,7 @@ mod tests {
             last_activity: "2026-07-09T00:00:00Z".into(),
             first_prompt_sent: true,
             parent_id: Some("root".into()),
+            external: false,
         };
         let v = rec.to_api_json();
         let obj = v.as_object().unwrap();

@@ -34,7 +34,8 @@ use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
     orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
     orchestrator_list_projects, orchestrator_pick_folder, orchestrator_record_activity,
-    orchestrator_send, orchestrator_stop, serve_ui, serve_ui_index,
+    orchestrator_register_external, orchestrator_send, orchestrator_set_external_status,
+    orchestrator_stop, orchestrator_unregister_external, serve_ui, serve_ui_index,
 };
 
 // ---------------------------------------------------------------------------
@@ -83,9 +84,25 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/orchestrator/sessions",
             post(orchestrator_create_session).get(orchestrator_list_sessions),
         )
+        // External nodes (bridge): register/drive nodes living on ANOTHER
+        // substrate (FleetView subagents) so they show in the graph without a
+        // tmux spawn. `register` is a static segment — declared before the
+        // `{id}` route so it never gets captured as an id.
+        .route(
+            "/api/v1/orchestrator/sessions/register",
+            post(orchestrator_register_external),
+        )
+        .route(
+            "/api/v1/orchestrator/sessions/{id}/status",
+            post(orchestrator_set_external_status),
+        )
+        .route(
+            "/api/v1/orchestrator/sessions/{id}/unregister",
+            post(orchestrator_unregister_external),
+        )
         .route(
             "/api/v1/orchestrator/sessions/{id}",
-            get(orchestrator_get_session),
+            get(orchestrator_get_session).delete(orchestrator_unregister_external),
         )
         .route(
             "/api/v1/orchestrator/sessions/{id}/send",

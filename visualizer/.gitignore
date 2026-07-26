@@ -1,3 +1,8 @@
 # Fuentes locales extra del visualizador (rutas de agentes fuera del repo).
 # Es una preferencia LOCAL de cada maquina — no se comparte.
 sources.local.json
+
+# Historial de runs reales (preferencia local, generado por corridas)
+runs.local.json
+# Symlink local para servir /ui (mirai serve busca index.html)
+index.html

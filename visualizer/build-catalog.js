@@ -56,6 +56,15 @@ try {
 if (!fs.existsSync(JSYAML)) { console.error('ERROR: falta ' + JSYAML + ' (copia js-yaml.min.js ahi).'); process.exit(1); }
 const jsyaml = fs.readFileSync(JSYAML, 'utf8');
 
+// Historial de ejecuciones REALES por id de agente (git-ignorado, preferencia local).
+// visualizer/runs.local.json = { "<agent-id>": [ { "status":"success|error", "tMinAgo":N, "durationSec":N, "summary":"..." } ] }
+// Se generan corriendo agentes de verdad contra el engine (Ollama/…); pueblan el dashboard (Inicio + Detalle).
+let runsByAgent = {};
+try {
+  const runsCfg = path.join(VIS, 'runs.local.json');
+  if (fs.existsSync(runsCfg)) runsByAgent = JSON.parse(fs.readFileSync(runsCfg, 'utf8')) || {};
+} catch (e) { console.error('AVISO: runs.local.json invalido, se ignora:', e.message); }
+
 let html = fs.readFileSync(HTML, 'utf8');
 const re = /<!-- @BUILD_INJECT@[\s\S]*?<script>\n'use strict';/;
 if (!re.test(html)) { console.error('ERROR: marcador @BUILD_INJECT@ no encontrado en mirai-app.html'); process.exit(1); }
@@ -63,6 +72,7 @@ if (!re.test(html)) { console.error('ERROR: marcador @BUILD_INJECT@ no encontrad
 const inject = '<!-- @BUILD_INJECT@ (generado por build-catalog.js — no editar a mano) -->\n'
   + '<script>' + jsyaml + '</script>\n'
   + '<script>window.MIRAI_DEFAULT_SOURCES=' + JSON.stringify(sources) + ';</script>\n'
+  + '<script>window.MIRAI_RUNS=' + JSON.stringify(runsByAgent) + ';</script>\n'
   + "<script>\n'use strict';";
 
 html = html.replace(re, inject);

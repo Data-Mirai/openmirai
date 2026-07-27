@@ -1,0 +1,119 @@
+# Orquestador Mirai — Crear workflow (graph-agent: un proceso hecho una vez -> plantilla YAML)
+#
+# El meta-workflow del flywheel: toma la DESCRIPCION de un proceso que ya se ejecuto a mano
+# y lo destila en un grafo YAML reusable de OpenMirai.
+#   descripcion -> disenar (LLM: descompone en nodos+edges validos del motor) -> generar_yaml
+#     (LLM: emite el YAML crudo) -> guardar (filesystem/write_file en agents/) -> respond
+#
+# HONESTIDAD: este grafo PRODUCE un archivo YAML; NO lo registra ni lo valida por si mismo.
+# Tras generarlo, hay que correr `mirai validate <ruta>` y `node visualizer/build-catalog.js`
+# para que aparezca en el Studio. Ese cierre (validar + registrar + reintentar si el YAML
+# sale invalido) HOY lo hace la sesion-centro; cablearlo como lazo automatico
+# (Loop Engineering: generar -> validar -> reintentar) es la integracion profunda (deck).
+#
+# Run:
+#   mirai run agents/orquestador/crear-workflow.yaml --provider gemini --api-key $KEY \
+#     --input '{"nombre":"onboarding-cliente","descripcion":"Recibe datos de un cliente nuevo, infiere su marca, crea la empresa en la plataforma y agenda el kickoff",
+#               "salida_path":"agents/onboarding-cliente.yaml"}'
+# Validar:
+#   mirai validate agents/orquestador/crear-workflow.yaml
+
+name: orquestador-crear-workflow
+version: v1
+description: "Graph-agent: convierte la descripcion de un proceso ejecutado una vez en un workflow YAML reusable de OpenMirai (disena el grafo, emite el YAML y lo guarda en agents/)."
+
+inputs:
+  nombre:
+    type: text
+    required: true
+    description: "Nombre/slug del workflow nuevo (sera el `name` del YAML)"
+  descripcion:
+    type: text
+    required: true
+    description: "Descripcion en lenguaje natural del proceso que se quiere plantillar"
+  salida_path:
+    type: text
+    required: false
+    default: "agents/generado.yaml"
+    description: "Ruta donde se escribe el YAML generado"
+
+outputs:
+  workflow_guardado_en:
+    type: text
+    description: "Ruta del YAML generado"
+  diseno:
+    type: text
+    description: "El diseno de nodos+edges que sustenta el YAML"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO 1 — DISENAR. Descompone el proceso en nodos y edges validos del motor.
+    - id: disenar
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-pro
+        temperature: 0.3
+        max_tokens: 1500
+        system_prompt: |
+          Eres el nodo DISENADOR del orquestador Mirai (un graph-agent). Trabajas SIEMPRE
+          en espanol. Conoces los tool_type reales del motor OpenMirai y solo usas esos:
+            trigger/manual, trigger/webhook, trigger/heartbeat, trigger/schedule,
+            ai/llm_call, ai/transcribe, ai/tts, ai/claude_code,
+            logic/condition, logic/switch, logic/loop, logic/wait, logic/human_input, logic/merge,
+            filesystem/read_file, filesystem/write_file, filesystem/file_info,
+            mcp/call, data/web_scrape, output/response.
+        prompt: |
+          En el contexto recibes `descripcion` -> un proceso hecho a mano. Disena el grafo:
+          lista los NODOS (id + tool_type + para que sirve) y los EDGES (source->target +
+          que data_map fluye). Un solo trigger de entrada y un output/response al final.
+          No inventes tool_types fuera de la lista. Devuelve SOLO el diseno en bullets.
+
+    # PASO 2 — GENERAR el YAML crudo a partir del diseno.
+    - id: generar_yaml
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-pro
+        temperature: 0.1
+        max_tokens: 4000
+        system_prompt: |
+          Eres el nodo EMISOR de YAML del orquestador Mirai. Emites un spec de OpenMirai
+          VALIDO y renderizable: claves name/version/description/inputs/outputs/graph con
+          graph.nodes (id, tool_type, config?) y graph.edges (source, target, data_map?).
+        prompt: |
+          En el contexto recibes `nombre` y `diseno`. Emite el archivo YAML COMPLETO del
+          workflow, usando `nombre` como `name`, siguiendo EXACTAMENTE el formato de los
+          agentes de OpenMirai. Devuelve UNICAMENTE el YAML, sin ``` ni texto antes/despues.
+
+    # PASO 3 — Guardar el YAML en disco (en agents/ para que build-catalog lo tome).
+    - id: guardar
+      tool_type: filesystem/write_file
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: disenar
+      data_map:
+        descripcion: "start.payload.descripcion"
+
+    - source: disenar
+      target: generar_yaml
+      data_map:
+        nombre: "start.payload.nombre"
+        diseno: "disenar.response"
+
+    - source: generar_yaml
+      target: guardar
+      data_map:
+        content: "generar_yaml.response"
+        path: "start.payload.salida_path"
+
+    - source: guardar
+      target: respond
+      data_map:
+        workflow_guardado_en: "guardar.path"
+        diseno: "disenar.response"

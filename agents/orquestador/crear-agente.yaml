@@ -1,0 +1,132 @@
+# Orquestador Mirai — Crear agente (spawn de sesion colgada del centro)
+#
+# Parametriza el POST /api/v1/orchestrator/sessions del motor OpenMirai (:4321).
+#   objetivo+proyecto -> preparar_brief (LLM afina objetivo y elige modelo/effort)
+#                     -> validar_ruta (existe la carpeta del proyecto?)
+#                     -> spawn (mcp/call -> orquestador: crea sesion tmux+claude)
+#                     -> respond (devuelve {id, tmux_session})
+#
+# HONESTIDAD: el nodo `spawn` modela la llamada real como un mcp/call al servidor de
+# orquestacion. En vivo, ese POST HOY lo hace la sesion-centro a mano (curl/fetch), como
+# se probo creando la sesion `acme-plataforma`. Cablear que el MOTOR ejecute este nodo
+# contra su propia API de orquestacion es la integracion profunda del flywheel (ver deck).
+# Payload real del endpoint: {name?, project_dir, objective, model?, effort?, ultracode?}.
+#
+# Run:
+#   mirai run agents/orquestador/crear-agente.yaml --provider gemini --api-key $KEY \
+#     --input '{"objetivo":"Arrancar la web de Acme en feature-x y validar en preview",
+#               "proyecto":"acme","project_dir":"/home/user/Documents/Projects/Acme-web"}'
+# Validar:
+#   mirai validate agents/orquestador/crear-agente.yaml
+
+name: orquestador-crear-agente
+version: v1
+description: "Spawnea una sesion/agente colgada del centro: afina el objetivo, valida la ruta del proyecto y llama al endpoint de orquestacion (POST /sessions)."
+
+inputs:
+  objetivo:
+    type: text
+    required: true
+    description: "El objetivo ejecutable (0->1) que tendra el agente nuevo"
+  proyecto:
+    type: text
+    required: true
+    description: "El tag/proyecto del centro (acme, datamirai, centro, ...)"
+  project_dir:
+    type: text
+    required: true
+    description: "Ruta absoluta del repo/carpeta donde correra la sesion (cwd del tmux+claude)"
+  model:
+    type: text
+    required: false
+    default: "opus"
+    description: "Modelo de la sesion nueva (opus por defecto = mejor recurso)"
+  effort:
+    type: text
+    required: false
+    default: "high"
+    description: "Nivel de esfuerzo (high/max) para la sesion nueva"
+
+outputs:
+  sesion:
+    type: json
+    description: "Respuesta del orquestador: {id, tmux_session} de la sesion creada"
+  brief:
+    type: text
+    description: "El objetivo afinado que se le paso a la sesion"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO 1 — Afinar el brief. Modelo fuerte: el objetivo se gana la calidad.
+    - id: preparar_brief
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-pro
+        temperature: 0.3
+        max_tokens: 700
+        system_prompt: |
+          Eres el nodo de SPAWN del orquestador Mirai. Trabajas SIEMPRE en espanol, senior,
+          directo. Preparas el brief con el que arranca una sesion-agente nueva del centro,
+          siguiendo el metodo Back to My Center (objetivo claro -> validaciones -> plan -> loop).
+        prompt: |
+          En el contexto recibes `objetivo` y `proyecto`. Redacta el BRIEF de arranque de la
+          sesion nueva: objetivo acotado 0->1 + las validaciones/criterios de aceptacion que
+          demostraran que se cumplio (Loop Engineering: las validaciones son el contrato) +
+          el primer paso ejecutable. Bullet-first, sin paja. Devuelve SOLO el brief listo para
+          pasar como `objective` del POST /sessions.
+
+    # PASO 2 — Validar que la carpeta del proyecto exista (evita spawnear en el vacio).
+    - id: validar_ruta
+      tool_type: filesystem/file_info
+
+    # PASO 3 — SPAWN. Modela el POST /api/v1/orchestrator/sessions.
+    # config: server_name + tool_name apuntan al servidor de orquestacion (:4321).
+    # arguments llega por data_map (project_dir, objective afinado, model, effort).
+    - id: spawn
+      tool_type: mcp/call
+      config:
+        server_name: mirai-orchestrator
+        tool_name: create_session
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: preparar_brief
+      data_map:
+        objetivo: "start.payload.objetivo"
+        proyecto: "start.payload.proyecto"
+
+    - source: start
+      target: validar_ruta
+      data_map:
+        path: "start.payload.project_dir"
+
+    # Fan-in a spawn: el brief afinado + los parametros arman los `arguments` del POST /sessions.
+    # Nota data_map: cada value es UNA referencia JSONPath (string). El nodo `spawn` (mcp/call)
+    # recibe cada campo del payload del POST como argumento suelto; el server de orquestacion
+    # los ensambla en el body {name, project_dir, objective, model, effort}. El validar_ruta
+    # corre antes en el mismo camino (dependencia de orden) para no spawnear en el vacio.
+    - source: preparar_brief
+      target: spawn
+      data_map:
+        objective: "preparar_brief.response"
+        project_dir: "start.payload.project_dir"
+        name: "start.payload.proyecto"
+        model: "start.payload.model"
+        effort: "start.payload.effort"
+
+    - source: validar_ruta
+      target: spawn
+      data_map:
+        ruta_existe: "validar_ruta.exists"
+
+    - source: spawn
+      target: respond
+      data_map:
+        sesion: "spawn.result"
+        brief: "preparar_brief.response"

@@ -142,6 +142,30 @@ a{color:inherit;text-decoration:none}
 .cfg-row:last-child{border-bottom:none}
 .cfg-k{font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);min-width:74px;flex:0 0 auto;padding-top:1px}
 .cfg-v{font-family:var(--font-mono);font-size:11px;color:var(--text);text-align:right;flex:1;word-break:break-word}
+/* paso a paso (workflow detail) */
+.steps{display:flex;flex-direction:column;gap:11px}
+.step{display:flex;gap:13px;align-items:flex-start;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-12);padding:14px 15px;box-shadow:var(--sh-1)}
+.step-n{width:26px;height:26px;border-radius:var(--r-full);flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:12px;font-weight:700;color:#fff}
+.step-body{flex:1;min-width:0}
+.step-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:5px}
+.step-ico{width:26px;height:26px;border-radius:var(--r-8);border:1px solid;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.step-id{font-family:var(--font-mono);font-size:12.5px;font-weight:650;color:var(--text)}
+.step-cat{font-family:var(--font-mono);font-size:9.5px;font-weight:700;letter-spacing:.5px;padding:2px 6px;border-radius:var(--r-4);border:1px solid}
+.step-tool{font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);margin-left:auto}
+.step-does{font-size:12.5px;color:var(--text-2);line-height:1.5;margin:0 0 8px}
+.step-cfg{display:flex;flex-wrap:wrap;gap:6px}
+.step-kv{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:10.5px;padding:3px 8px;border-radius:var(--r-6);background:var(--surface-2);border:1px solid var(--border)}
+.step-kv b{color:var(--text);font-weight:600}
+.step-kv .kk{color:var(--text-3)}
+/* workflow-en-agente (identity view) */
+.wfrow{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-12);padding:15px 16px;box-shadow:var(--sh-1);cursor:pointer;transition:border-color .14s,box-shadow .14s,transform .07s}
+.wfrow:hover{border-color:var(--border-strong);box-shadow:var(--sh-2);transform:translateY(-1px)}
+.wfrow-top{display:flex;align-items:center;gap:12px;margin-bottom:9px}
+.wfrow-ico{width:34px;height:34px;border-radius:var(--r-10);border:1px solid;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.wfrow-models{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.model-pill{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:var(--r-full);border:1px solid var(--accent-border);background:var(--accent-soft);color:var(--accent-text)}
+.model-pill.muted{border-color:var(--border-2);background:var(--surface-2);color:var(--text-3)}
+.flowmini.wrap{flex-wrap:wrap;row-gap:9px}
 .yamlview{position:absolute;inset:0;background:var(--surface);display:none;flex-direction:column;z-index:6}
 .yaml-head{height:40px;flex:0 0 auto;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface)}
 .yaml-pre{flex:1;margin:0;overflow:auto;padding:16px 20px;font-family:var(--font-mono);font-size:12.5px;line-height:1.65;color:var(--text);background:var(--canvas-bg);white-space:pre;tab-size:2}
@@ -598,6 +622,54 @@ function renderCollection(){if(!CATALOG.length){$('#content').innerHTML='<div cl
   $('#content').querySelectorAll('.chip').forEach(function(ch){ch.addEventListener('click',function(){colFilter=ch.dataset.filter;renderCollection();});});
   wireGoto();}
 
+/* ===== Describir qué hace un nodo + extraer su config legible (compartido por
+   la vista de workflow "paso a paso" y por los workflows dentro de un agente) ===== */
+function nodeDoes(n){var t=n.tool||'';var rc=n.rawConfig||{};
+  var M={
+    'trigger/manual':'Punto de entrada: recibe el input del usuario y arranca el flujo.',
+    'trigger/webhook':'Punto de entrada: se dispara al recibir una petición HTTP externa.',
+    'ai/llm_call':'Llama a un modelo de lenguaje con un prompt para razonar/generar texto.',
+    'ai/transcribe':'Transcribe audio a texto (y diariza por hablante si aplica).',
+    'ai/image_edit':'Edita o genera una imagen con un modelo visual.',
+    'data/web_scrape':'Extrae el contenido de una URL de la web.',
+    'data/read_file':'Lee un archivo del disco y expone su contenido.',
+    'filesystem/read_file':'Lee un archivo del disco y expone su contenido.',
+    'data/write_file':'Escribe el resultado en un archivo del disco.',
+    'filesystem/write_file':'Escribe el resultado en un archivo del disco.',
+    'transform/condition':'Bifurca el flujo según una condición sobre los datos.',
+    'logic/condition':'Bifurca el flujo según una condición sobre los datos.',
+    'output/response':'Devuelve la respuesta final del workflow.'
+  };
+  if(M[t])return M[t];
+  var ns=String(t).split('/')[0];
+  if(ns==='ai')return 'Paso de IA ('+t+').';
+  if(ns==='data'||ns==='filesystem')return 'Paso de datos ('+t+').';
+  if(ns==='trigger')return 'Disparador del flujo ('+t+').';
+  if(ns==='output')return 'Salida del flujo ('+t+').';
+  if(ns==='transform'||ns==='logic')return 'Lógica de control ('+t+').';
+  return 'Paso '+t+'.';}
+/* claves de config más útiles primero, para el resumen compacto de un nodo */
+function nodeCfgSummary(n){var rc=n.rawConfig||{};var order=['model','provider','temperature','base_url','url','path','prompt','system','system_prompt','instructions','field','value','operator'];
+  var out=[];var seen={};
+  order.forEach(function(k){if(rc[k]!=null&&rc[k]!==''){seen[k]=1;var v=rc[k];if(typeof v==='object')v=JSON.stringify(v);v=String(v).replace(/\s+/g,' ').trim();if(v.length>90)v=v.slice(0,89)+'…';out.push({k:k,v:v});}});
+  Object.keys(rc).forEach(function(k){if(seen[k])return;var v=rc[k];if(v==null||v==='')return;if(typeof v==='object')v=JSON.stringify(v);v=String(v).replace(/\s+/g,' ').trim();if(v.length>90)v=v.slice(0,89)+'…';out.push({k:k,v:v});});
+  return out;}
+/* modelos que usa un workflow (de sus nodos ai/llm_call) — para el resumen del agente */
+function workflowModels(a){var ms=[];(a.nodes||[]).forEach(function(n){if(n.tool==='ai/llm_call'){var m=(n.rawConfig||{}).model;ms.push(m||'(modelo del provider)');}});
+  var uniq=[];ms.forEach(function(m){if(uniq.indexOf(m)<0)uniq.push(m);});return uniq;}
+function stepHTML(a){var order=topoOrder(a);
+  return '<div class="steps">'+order.map(function(nid,i){var n=(a.nodes||[]).filter(function(x){return x.id===nid;})[0];if(!n)return '';
+    var c=CAT[n.cat]||CAT.data;var kvs=nodeCfgSummary(n);
+    var cfgH=kvs.length?('<div class="step-cfg">'+kvs.map(function(kv){return '<span class="step-kv"><span class="kk">'+esc(kv.k)+'</span><b>'+esc(kv.v)+'</b></span>';}).join('')+'</div>'):'';
+    return '<div class="step">'+
+      '<span class="step-n" style="background:'+c.tint+'">'+(i+1)+'</span>'+
+      '<div class="step-body"><div class="step-top">'+
+        '<span class="step-ico" style="background:color-mix(in srgb,'+c.tint+' 13%,var(--surface));color:'+c.tint+';border-color:color-mix(in srgb,'+c.tint+' 30%,transparent)">'+svgIcon(c.ico,15,false)+'</span>'+
+        '<span class="step-id">'+esc(n.id)+'</span>'+
+        '<span class="step-cat" style="color:'+c.tint+';border-color:color-mix(in srgb,'+c.tint+' 30%,transparent);background:color-mix(in srgb,'+c.tint+' 9%,var(--surface))">'+c.label+'</span>'+
+        '<span class="step-tool">'+esc(n.tool)+'</span></div>'+
+      '<p class="step-does">'+esc(nodeDoes(n))+'</p>'+cfgH+'</div></div>';}).join('')+'</div>';}
+
 /* ================= AGENTES (identidades que combinan workflows) ================= */
 function identityCard(idn){var col=idn.accent||'#0e9f6e';
   var chips=idn.workflows.map(function(wid){var a=agentById(wid);var wc=a?(a.accent||tagColor(a.tag)):'#8a8d88';
@@ -616,7 +688,15 @@ function renderAgentsView(){
   paintIcons($('#content'));wireGoto();}
 function renderIdentity(id){var idn=identityById(id);if(!idn){location.hash='#/agents';return;}
   var col=idn.accent||'#0e9f6e';var runs=identityRuns(idn);
-  var wfCards=idn.workflows.map(function(wid){var a=agentById(wid);if(!a)return '';return agentCard(a);}).join('');
+  var wfCards=idn.workflows.map(function(wid){var a=agentById(wid);if(!a)return '';
+    var wc=a.accent||tagColor(a.tag);var mods=workflowModels(a);
+    var modelH=mods.length?mods.map(function(m){var muted=/provider/.test(m);return '<span class="model-pill'+(muted?' muted':'')+'">'+svgIcon('ai',11,false)+esc(m)+'</span>';}).join(''):'<span class="model-pill muted">sin modelo IA</span>';
+    return '<div class="wfrow" data-goto="#/agent/'+a.id+'/canvas" title="Abrir '+esc(a.name)+' en el canvas">'+
+      '<div class="wfrow-top"><span class="wfrow-ico" style="background:color-mix(in srgb,'+wc+' 13%,var(--surface));color:'+wc+';border-color:color-mix(in srgb,'+wc+' 28%,transparent)">'+svgIcon('flow',17,false)+'</span>'+
+        '<div style="flex:1;min-width:0"><div class="card-title" style="font-size:13.5px">'+esc(a.name)+'</div><div class="card-id">'+esc(a.id)+'.yaml · '+a.nodes.length+' nodos · '+a.edges.length+' edges</div></div>'+
+        '<span class="btn ghost sm" style="pointer-events:none">'+svgIcon('layers',13,false)+'Canvas</span></div>'+
+      '<div class="card-desc" style="min-height:0;margin-bottom:9px">'+esc(a.description)+'</div>'+
+      '<span class="label" style="display:block;margin-bottom:5px">modelos que usa</span><div class="wfrow-models">'+modelH+'</div></div>';}).join('');
   var runRows=runs.length?runs.slice(0,12).map(function(x){var r=x.run,a=x.agent;var cls=r.status==='success'?'ok':'err';
     return '<tr data-goto="#/agent/'+a.id+'"><td><span style="display:inline-flex;align-items:center;gap:8px"><span class="dot '+cls+'"></span>'+r.status+'</span></td><td>'+esc(a.name)+'</td><td>'+agoStr(r.tMinAgo)+'</td><td>'+r.durationSec+'s</td><td>'+esc(r.summary)+'</td></tr>';}).join(''):
     '<tr><td colspan="5" style="color:var(--text-3)">Sin ejecuciones — corre uno de sus workflows con <code style="font-family:var(--font-mono)">mirai run</code>.</td></tr>';
@@ -626,7 +706,7 @@ function renderIdentity(id){var idn=identityById(id);if(!idn){location.hash='#/a
     '<div style="flex:1;min-width:0;padding-top:2px"><h1 class="page-h" style="margin:0">'+esc(idn.name)+'</h1>'+
     '<div class="card-id" style="margin-top:4px">identidad · combina '+idn.workflows.length+' workflows</div><p style="font-size:13.5px;color:var(--text-2);margin:9px 0 0;max-width:660px;line-height:1.55">'+esc(idn.persona)+'</p></div></div>'+
     '<div class="metabar"><div class="mb"><span class="mb-k">Workflows</span><span class="mb-v">'+idn.workflows.length+'</span></div><div class="mb"><span class="mb-k">Ejecuciones</span><span class="mb-v">'+runs.length+'</span></div><div class="mb"><span class="mb-k">Exitosas</span><span class="mb-v">'+runs.filter(function(x){return x.run.status==="success";}).length+'</span></div></div>'+
-    '<div class="section-h">Workflows que combina</div><div class="grid">'+wfCards+'</div>'+
+    '<div class="section-h">Workflows a los que tiene acceso <span class="cnt">· modelo y config · click para abrir el paso a paso</span></div><div class="grid">'+wfCards+'</div>'+
     '<div class="section-h">Ejecuciones del agente <span class="cnt">· todos sus workflows</span></div><table class="rtable"><thead><tr><th>Estado</th><th>Workflow</th><th>Cuando</th><th>Duracion</th><th>Resumen</th></tr></thead><tbody>'+runRows+'</tbody></table></div>';
   paintIcons($('#content'));wireGoto();}
 
@@ -668,7 +748,8 @@ function renderDetail(id){var a=agentById(id);if(!a){location.hash='#/workflows'
     '<div class="dh-actions"><button class="btn secondary big" data-goto="#/agent/'+a.id+'/canvas" data-yaml="1"><span data-ico="code"></span>Ver YAML</button><button class="btn primary big" data-goto="#/agent/'+a.id+'/canvas"><span data-ico="layers"></span>Abrir en canvas</button></div></div>'+
     pathbar+
     '<div class="metabar"><div class="mb"><span class="mb-k">Nodos</span><span class="mb-v">'+a.nodes.length+'</span></div><div class="mb"><span class="mb-k">Edges</span><span class="mb-v">'+a.edges.length+'</span></div><div class="mb"><span class="mb-k">Etapas</span><span class="mb-v">'+((a._maxStage!=null?a._maxStage:Math.max.apply(null,a.nodes.map(function(n){return n.stage;})))+1)+'</span></div><div class="mb"><span class="mb-k">Ultima apertura</span><span class="mb-v">'+agoFromTs(openedAt(a))+'</span></div></div>'+
-    '<div class="section-h">Flujo</div><div class="flowmini">'+flow+'</div>'+
+    '<div class="section-h">Flujo <span class="cnt">· '+a.nodes.length+' pasos</span></div><div class="flowmini wrap">'+flow+'</div>'+
+    '<div class="section-h">Paso a paso <span class="cnt">· qué hace cada nodo y su config</span></div>'+stepHTML(a)+
     '<div class="section-h">Ejecuciones</div><table class="rtable"><thead><tr><th>Estado</th><th>Cuando</th><th>Duracion</th><th>Resumen</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" style="color:var(--text-3)">Sin ejecuciones registradas — corre <code style="font-family:var(--font-mono)">mirai run</code> para verlas aqui.</td></tr>')+'</tbody></table></div>';
   paintIcons($('#content'));wireGoto();
   $('#content').querySelectorAll('[data-copy]').forEach(function(el){el.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();var p=el.dataset.copy;if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(p).then(function(){toast('Copiado','ruta al portapapeles');});}else toast('Copiar',p);});});}

@@ -4,5 +4,7 @@ sources.local.json
 
 # Historial de runs reales (preferencia local, generado por corridas)
 runs.local.json
+# Identidades (agentes) que combinan workflows — override local; hay seed en el HTML
+agents.local.json
 # Symlink local para servir /ui (mirai serve busca index.html)
 index.html

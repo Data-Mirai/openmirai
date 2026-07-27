@@ -65,6 +65,14 @@ try {
   if (fs.existsSync(runsCfg)) runsByAgent = JSON.parse(fs.readFileSync(runsCfg, 'utf8')) || {};
 } catch (e) { console.error('AVISO: runs.local.json invalido, se ignora:', e.message); }
 
+// Identidades (AGENTES) = personas que COMBINAN workflows. El motor no las modela (1 .yaml = 1 workflow),
+// el visualizador las expone. visualizer/agents.local.json = [ { "id","name","persona","accent","workflows":["<wf-id>",...] } ]
+let identities = [];
+try {
+  const idCfg = path.join(VIS, 'agents.local.json');
+  if (fs.existsSync(idCfg)) identities = JSON.parse(fs.readFileSync(idCfg, 'utf8')) || [];
+} catch (e) { console.error('AVISO: agents.local.json invalido, se ignora:', e.message); }
+
 let html = fs.readFileSync(HTML, 'utf8');
 const re = /<!-- @BUILD_INJECT@[\s\S]*?<script>\n'use strict';/;
 if (!re.test(html)) { console.error('ERROR: marcador @BUILD_INJECT@ no encontrado en mirai-app.html'); process.exit(1); }
@@ -73,6 +81,7 @@ const inject = '<!-- @BUILD_INJECT@ (generado por build-catalog.js — no editar
   + '<script>' + jsyaml + '</script>\n'
   + '<script>window.MIRAI_DEFAULT_SOURCES=' + JSON.stringify(sources) + ';</script>\n'
   + '<script>window.MIRAI_RUNS=' + JSON.stringify(runsByAgent) + ';</script>\n'
+  + '<script>window.MIRAI_IDENTITIES=' + JSON.stringify(identities) + ';</script>\n'
   + "<script>\n'use strict';";
 
 html = html.replace(re, inject);

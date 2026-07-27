@@ -1,0 +1,149 @@
+# Orquestador Mirai — Delegar tarea (manda instruccion a un agente vivo + monitorea)
+#
+#   agente_id+tarea -> componer (LLM redacta la instruccion clara) -> enviar (mcp/call ->
+#     orquestador: POST /sessions/{id}/send) -> esperar (logic/wait: da tiempo a procesar)
+#                    -> leer_salida (mcp/call -> orquestador: GET /sessions/{id}/output)
+#                    -> evaluar (LLM: quedo hecho? necesita atencion?) -> respond
+#
+# HONESTIDAD: enviar/leer_salida modelan los endpoints reales del orquestador
+# (send / output). En vivo, HOY los invoca la sesion-centro a mano. El wait es un poll
+# simple (1 tiro), no un lazo de reintento fino — para monitoreo continuo esta
+# supervisar-flota.yaml. Cablearlo por el motor = integracion profunda (ver deck).
+#
+# Run:
+#   mirai run agents/orquestador/delegar-tarea.yaml --provider gemini --api-key $KEY \
+#     --input '{"agente_id":"sapilabs-plataforma","tarea":"Corre los tests E2E de la vista Agentes y reporta verde/rojo"}'
+# Validar:
+#   mirai validate agents/orquestador/delegar-tarea.yaml
+
+name: orquestador-delegar-tarea
+version: v1
+description: "Delega una tarea a un agente/sesion vivo: compone la instruccion, la envia (POST /sessions/{id}/send), espera, lee la salida y evalua si quedo hecho o necesita atencion."
+
+inputs:
+  agente_id:
+    type: text
+    required: true
+    description: "El id de la sesion/agente vivo al que se delega (ej sapilabs-plataforma)"
+  tarea:
+    type: text
+    required: true
+    description: "La tarea a delegar, en lenguaje natural"
+  espera_seg:
+    type: number
+    required: false
+    default: 30
+    description: "Segundos a esperar antes de leer la salida del agente (poll simple)"
+
+outputs:
+  veredicto:
+    type: json
+    description: "Evaluacion: {estado, necesita_atencion, resumen} tras leer la salida del agente"
+  instruccion_enviada:
+    type: text
+    description: "La instruccion exacta que se le mando al agente"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO 1 — Componer la instruccion clara para el agente.
+    - id: componer
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-flash
+        temperature: 0.3
+        max_tokens: 600
+        system_prompt: |
+          Eres el nodo de DELEGACION del orquestador Mirai. Espanol, directo, senior.
+          Conviertes una tarea cruda en UNA instruccion accionable y sin ambiguedad para
+          un agente-sesion (Claude Code corriendo en un tmux del centro).
+        prompt: |
+          En el contexto recibes `tarea`. Redacta la instruccion que se enviara al agente:
+          objetivo claro + como sabremos que quedo (validacion) + que reportar de vuelta.
+          Bullet-first, breve. Devuelve SOLO la instruccion lista para enviar.
+
+    # PASO 2 — ENVIAR. Modela POST /api/v1/orchestrator/sessions/{id}/send.
+    - id: enviar
+      tool_type: mcp/call
+      config:
+        server_name: mirai-orchestrator
+        tool_name: send_message
+
+    # PASO 3 — Esperar a que el agente procese (poll simple).
+    - id: esperar
+      tool_type: logic/wait
+      config:
+        delay_seconds: 30
+
+    # PASO 4 — LEER SALIDA. Modela GET /api/v1/orchestrator/sessions/{id}/output.
+    - id: leer_salida
+      tool_type: mcp/call
+      config:
+        server_name: mirai-orchestrator
+        tool_name: get_output
+
+    # PASO 5 — Evaluar la salida: hecho? necesita atencion de Gabriel?
+    - id: evaluar
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-pro
+        temperature: 0.2
+        max_tokens: 600
+        system_prompt: |
+          Eres el nodo EVALUADOR del orquestador Mirai. Espanol, escuetamente honesto.
+          Lees la salida cruda de un agente y decides su estado real, sin optimismo falso.
+        prompt: |
+          En el contexto recibes `salida` -> lo ultimo que produjo el agente. Evalua:
+            - `estado`: hecho | en_progreso | bloqueado | error.
+            - `necesita_atencion`: true si hay que escalar a Gabriel (bloqueo, duda, error).
+            - `resumen`: una frase con lo que paso.
+          Celebra SOLO lo realmente terminado. Devuelve SOLO el JSON del esquema.
+        output_schema: |
+          {
+            "type": "object",
+            "properties": {
+              "estado": {"type": "string", "enum": ["hecho", "en_progreso", "bloqueado", "error"]},
+              "necesita_atencion": {"type": "boolean"},
+              "resumen": {"type": "string"}
+            },
+            "required": ["estado", "necesita_atencion", "resumen"]
+          }
+        schema_retries: 2
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: componer
+      data_map:
+        tarea: "start.payload.tarea"
+
+    # data_map: cada value es UNA referencia JSONPath (string). El nodo mcp/call recibe cada
+    # campo suelto y el server de orquestacion los ensambla en el body del POST /sessions/{id}/send.
+    - source: componer
+      target: enviar
+      data_map:
+        session_id: "start.payload.agente_id"
+        message: "componer.response"
+
+    - source: enviar
+      target: esperar
+
+    - source: esperar
+      target: leer_salida
+      data_map:
+        session_id: "start.payload.agente_id"
+
+    - source: leer_salida
+      target: evaluar
+      data_map:
+        salida: "leer_salida.result"
+
+    - source: evaluar
+      target: respond
+      data_map:
+        veredicto: "evaluar.structured_output"
+        instruccion_enviada: "componer.response"

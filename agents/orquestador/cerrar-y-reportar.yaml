@@ -1,0 +1,124 @@
+# Orquestador Mirai — Cerrar y reportar (agente termina -> recoge, reporta, actualiza tracking)
+#
+#   agente_id -> recoger (mcp/call -> orquestador: GET /sessions/{id}/output = resultado final)
+#             -> destilar_reporte (LLM: BLUF -> TL;DR + detalle, metodo del centro)
+#             -> guardar_reporte (filesystem/write_file en workspace/<proyecto>/output/)
+#             -> parar_sesion (mcp/call -> orquestador: POST /sessions/{id}/stop) -> respond
+#
+# HONESTIDAD: recoger/parar_sesion modelan endpoints reales (output / stop). El reporte se
+# escribe con el estandar BLUF del centro (data-out). Lo que NO hace este grafo: tocar
+# dashboard/data.js ni commit+push (eso lo hace la sesion-centro con criterio). "Actualizar
+# tracking" aqui = dejar el reporte MD; el update del tablero es paso humano-asistido. En
+# vivo estos endpoints los llama la sesion-centro a mano; cablearlo por el motor = deck.
+#
+# Run:
+#   mirai run agents/orquestador/cerrar-y-reportar.yaml --provider gemini --api-key $KEY \
+#     --input '{"agente_id":"sapilabs-plataforma","proyecto":"sapilabs",
+#               "reporte_path":"workspace/sapilabs/output/2026-07-27-cierre-sesion.md"}'
+# Validar:
+#   mirai validate agents/orquestador/cerrar-y-reportar.yaml
+
+name: orquestador-cerrar-y-reportar
+version: v1
+description: "Cierra una sesion terminada: recoge su resultado final, destila un reporte BLUF (data-out del centro), lo guarda en output/ y para la sesion (POST /sessions/{id}/stop)."
+
+inputs:
+  agente_id:
+    type: text
+    required: true
+    description: "El id de la sesion/agente que termino"
+  proyecto:
+    type: text
+    required: true
+    description: "El tag/proyecto del centro al que pertenece (para la ruta de output/)"
+  reporte_path:
+    type: text
+    required: false
+    default: "workspace/centro/output/cierre-sesion.md"
+    description: "Ruta del reporte MD a generar (convencion YYYY-MM-DD-nombre)"
+
+outputs:
+  reporte_guardado_en:
+    type: text
+    description: "Ruta del reporte de cierre generado"
+  parada:
+    type: json
+    description: "Respuesta del orquestador al detener la sesion"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO 1 — RECOGER el resultado final. Modela GET /sessions/{id}/output.
+    - id: recoger
+      tool_type: mcp/call
+      config:
+        server_name: mirai-orchestrator
+        tool_name: get_output
+
+    # PASO 2 — DESTILAR el reporte con el estandar BLUF del centro.
+    - id: destilar_reporte
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-pro
+        temperature: 0.35
+        max_tokens: 2500
+        system_prompt: |
+          Eres el redactor de CIERRE del orquestador Mirai. Espanol, senior, BLUF: la decision
+          y el resultado ARRIBA (TL;DR escaneable), el detalle debajo de "---" y opcional.
+          Fuente de verdad: solo el resultado del agente. Celebra solo lo realmente terminado.
+        prompt: |
+          En el contexto recibes `resultado` -> lo ultimo que produjo el agente que termino.
+          Redacta el REPORTE DE CIERRE en Markdown con estructura BLUF:
+            # {titulo = veredicto de lo que se logro}
+            > proyecto: {proyecto} · fecha · tipo: cierre-sesion · que es (una frase)
+            ## TL;DR  (bullets: que quedo hecho / que sigue / que quedo abierto)
+            ---
+            ## Detalle  (que hizo el agente, evidencia, archivos tocados; NO repite el TL;DR)
+          Devuelve UNICAMENTE el Markdown, sin texto antes ni despues.
+
+    # PASO 3 — Guardar el reporte (data-out del loop del centro).
+    - id: guardar_reporte
+      tool_type: filesystem/write_file
+
+    # PASO 4 — PARAR la sesion. Modela POST /sessions/{id}/stop.
+    - id: parar_sesion
+      tool_type: mcp/call
+      config:
+        server_name: mirai-orchestrator
+        tool_name: stop_session
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    # data_map: cada value es UNA referencia JSONPath (string). El nodo mcp/call recibe el
+    # session_id suelto; el server de orquestacion lo usa en GET /sessions/{id}/output.
+    - source: start
+      target: recoger
+      data_map:
+        session_id: "start.payload.agente_id"
+
+    - source: recoger
+      target: destilar_reporte
+      data_map:
+        resultado: "recoger.result"
+        proyecto: "start.payload.proyecto"
+
+    - source: destilar_reporte
+      target: guardar_reporte
+      data_map:
+        content: "destilar_reporte.response"
+        path: "start.payload.reporte_path"
+
+    - source: guardar_reporte
+      target: parar_sesion
+      data_map:
+        session_id: "start.payload.agente_id"
+
+    - source: parar_sesion
+      target: respond
+      data_map:
+        reporte_guardado_en: "guardar_reporte.path"
+        parada: "parar_sesion.result"

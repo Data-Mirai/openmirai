@@ -345,7 +345,7 @@ function layerStages(nodes,edges){var byId={};nodes.forEach(function(n){byId[n.i
   while(q.length&&seen<cap){var id=q.shift();seen++;adj[id].forEach(function(t){if(byId[t].stage<byId[id].stage+1)byId[t].stage=byId[id].stage+1;indeg[t]--;if(indeg[t]===0)q.push(t);});}}
 function convertYamlToAgent(y,meta){
   y=y||{};var g=y.graph||{};var rawNodes=g.nodes||[];var rawEdges=g.edges||[];
-  var nodes=rawNodes.map(function(n){return {id:n.id,tool:n.tool_type||'?',cat:deriveCat(n.tool_type),config:flattenConfig(n.config),inputs:[],outputs:[],stage:0};});
+  var nodes=rawNodes.map(function(n){var rc=(n.config&&typeof n.config==='object')?JSON.parse(JSON.stringify(n.config)):{};return {id:n.id,tool:n.tool_type||'?',cat:deriveCat(n.tool_type),rawConfig:rc,config:flattenConfig(rc),inputs:[],outputs:[],stage:0};});
   var byId={};nodes.forEach(function(n){byId[n.id]=n;});
   function ensurePort(node,arr,name){if(!node||name==null)return;name=String(name);if(!node[arr].some(function(p){return p.n===name;}))node[arr].push({n:name,t:inferType(name)});}
   var edges=[];
@@ -449,6 +449,54 @@ function renderPalette(){var PAL=[{group:'TRIGGERS',tools:[['trigger','manual'],
     var st='background:color-mix(in srgb,'+c.tint+' 14%,var(--surface));color:'+c.tint+';border-color:color-mix(in srgb,'+c.tint+' 28%,transparent)';
     h+='<div class="pal-row"><span class="pal-ico" style="'+st+'">'+svgIcon(c.ico,15,false)+'</span><span style="font-family:var(--font-mono);font-size:11.5px">'+t[1]+'</span></div>';});});
   $('#palGroups').innerHTML=h;}
+/* ===== Model source (Local / Nube-con-key / Headless-suscripcion) ===== */
+/* NOTA HONESTA: el engine fija UN provider global al arrancar (llm_factory en
+   server/helpers.rs:170). El nodo hoy solo respeta `model` por-paso; `provider`
+   y `base_url` por-nodo NO los lee el binario -> cambiarlos de verdad exige
+   relanzar el engine con --provider/--base-url (o recompilar para hacer el
+   adapter node-aware). Este selector deja la eleccion escrita en la config del
+   nodo (se refleja en el YAML) y muestra el comando de arranque exacto. */
+var MODEL_SOURCES={
+  local:{label:'Local',hint:'Ollama / LM Studio (infra local)',provider:'ollama',base_url:'http://localhost:11434',model:'gemma4:latest',
+    cmd:function(m){return 'mirai serve --port 4321 --ui-dir visualizer --provider ollama'+(m?'  # nodo usa model: '+m:'');}},
+  cloud:{label:'Nube (API key)',hint:'Gemini / OpenAI / Claude via API key',provider:'gemini',base_url:'',model:'gemini-2.5-flash',
+    cmd:function(m){return 'mirai serve --port 4321 --ui-dir visualizer --provider gemini --api-key $GOOGLE_API_KEY';}},
+  headless:{label:'Headless (suscripcion)',hint:'claude -p via proxy OpenAI-compat :8787',provider:'openai',base_url:'http://127.0.0.1:8787/v1',model:'claude-code-subscription',
+    cmd:function(m){return 'node tools/claude-code-proxy.js &  # luego:\nmirai serve --port 4321 --ui-dir visualizer --provider openai --base-url http://127.0.0.1:8787/v1 --api-key sk-local-noop';}}};
+function sourceOfNode(n){var rc=n.rawConfig||{};var p=rc.provider,b=rc.base_url;
+  if(p==='ollama'||(b&&/11434|1234|lmstudio/.test(String(b))))return 'local';
+  if((b&&/8787/.test(String(b)))||rc.model==='claude-code-subscription')return 'headless';
+  if(p==='gemini'||p==='claude'||p==='anthropic'||p==='openai'||p==='groq'||p==='openrouter'||p==='nvidia')return (b&&/8787/.test(String(b)))?'headless':'cloud';
+  return 'cloud';}
+function setNodeSource(nodeId,srcKey){var n=byId(nodeId);if(!n)return;var s=MODEL_SOURCES[srcKey];if(!s)return;
+  n.rawConfig=n.rawConfig||{};n.rawConfig.provider=s.provider;
+  if(s.base_url)n.rawConfig.base_url=s.base_url;else delete n.rawConfig.base_url;
+  if(!n.rawConfig.model)n.rawConfig.model=s.model;
+  n.config=flattenConfig(n.rawConfig);curAgent._yaml=null;renderInspector();
+  toast('Fuente del modelo',s.label+' -> provider: '+s.provider);}
+function setNodeModel(nodeId,val){var n=byId(nodeId);if(!n)return;n.rawConfig=n.rawConfig||{};
+  if(val)n.rawConfig.model=val;else delete n.rawConfig.model;n.config=flattenConfig(n.rawConfig);curAgent._yaml=null;
+  var kv=(n.config||[]).filter(function(x){return x.k==='model';})[0];}
+function modelSourcePanel(n){if(n.tool!=='ai/llm_call')return '';
+  var cur=sourceOfNode(n);var rc=n.rawConfig||{};var s=MODEL_SOURCES[cur];
+  var segs='';['local','cloud','headless'].forEach(function(k){var a=k===cur;
+    segs+='<button data-msrc="'+k+'" class="'+(a?'active':'')+'" style="flex:1;justify-content:center;font-size:11px;padding:6px 4px">'+MODEL_SOURCES[k].label+'</button>';});
+  var bu=rc.base_url?esc(String(rc.base_url)):'(default del provider)';
+  var cmd=esc(s.cmd(rc.model||''));
+  return '<div style="display:flex;flex-direction:column;gap:8px">'+
+    '<span class="label">fuente del modelo</span>'+
+    '<div class="seg" style="display:flex;width:100%">'+segs+'</div>'+
+    '<div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);padding:0 2px">'+esc(s.hint)+'</div>'+
+    '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">modelo</span>'+
+      '<input id="msModel" class="input mono" style="font-size:12px" value="'+esc(rc.model||'')+'" placeholder="'+esc(s.model)+'"/></div>'+
+    '<div style="display:flex;gap:10px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-3);padding:0 2px">'+
+      '<span>provider: <b style="color:var(--text-2)">'+esc(rc.provider||s.provider)+'</b></span>'+
+      '<span>base_url: <b style="color:var(--text-2)">'+bu+'</b></span></div>'+
+    '<div style="border:1px dashed var(--border-2);border-radius:var(--r-8);padding:8px 10px;background:var(--surface-2)">'+
+      '<div style="font-size:10px;font-weight:600;color:var(--text-3);letter-spacing:.4px;margin-bottom:4px">ARRANQUE DEL ENGINE PARA ESTA FUENTE</div>'+
+      '<code style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-2);white-space:pre-wrap;word-break:break-word">'+cmd+'</code>'+
+      '<div style="font-size:10px;color:var(--text-3);margin-top:6px">El provider es global del engine (se fija al arrancar). El nodo elige el <b>model</b> por-paso; provider/base_url por-nodo requieren relanzar el engine.</div>'+
+    '</div></div>';}
 function renderInspector(){var n=byId(selectedId)||curAgent.nodes[0];var c=CAT[n.cat]||CAT.data;
   var icoStyle='background:color-mix(in srgb,'+c.tint+' 14%,var(--surface));color:'+c.tint+';border-color:color-mix(in srgb,'+c.tint+' 30%,transparent)';
   var cfg='';(n.config||[]).forEach(function(kv){cfg+='<div class="cfg-row"><span class="cfg-k">'+esc(kv.k)+'</span><span class="cfg-v">'+esc(kv.v)+'</span></div>';});
@@ -460,8 +508,13 @@ function renderInspector(){var n=byId(selectedId)||curAgent.nodes[0];var c=CAT[n
   $('#inspector').innerHTML='<div class="insp-head"><span class="insp-ico" style="'+icoStyle+'">'+svgIcon(c.ico,18,false)+'</span><div style="flex:1;min-width:0"><div style="font-family:var(--font-mono);font-size:13px;font-weight:650">'+esc(n.id)+'</div><div style="font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--text-3)">'+c.label+'</div></div></div>'+
     '<div class="insp-body"><div style="display:flex;flex-direction:column;gap:5px"><span class="label">id</span><div class="input mono" style="display:flex;align-items:center;height:32px">'+esc(n.id)+'</div></div>'+
     '<div style="display:flex;flex-direction:column;gap:5px"><span class="label">tool_type</span><div class="input mono" style="display:flex;align-items:center;height:32px">'+esc(n.tool)+'</div></div>'+
+    modelSourcePanel(n)+
     '<div style="display:flex;flex-direction:column;gap:8px"><span class="label">config</span><div class="cfg-box">'+cfg+'</div></div>'+
-    '<div style="display:flex;flex-direction:column;gap:8px"><span class="label">interface</span><div style="border:1px solid var(--border);border-radius:var(--r-8);overflow:hidden">'+rows+'</div></div></div>';}
+    '<div style="display:flex;flex-direction:column;gap:8px"><span class="label">interface</span><div style="border:1px solid var(--border);border-radius:var(--r-8);overflow:hidden">'+rows+'</div></div></div>';
+  var nid=n.id;
+  $('#inspector').querySelectorAll('[data-msrc]').forEach(function(b){b.addEventListener('click',function(){setNodeSource(nid,b.dataset.msrc);});});
+  var mm=$('#msModel');if(mm){mm.addEventListener('change',function(){setNodeModel(nid,mm.value.trim());renderInspector();});
+    mm.addEventListener('keydown',function(e){if(e.key==='Enter'){setNodeModel(nid,mm.value.trim());renderInspector();}});}}
 function yv(v){if(/^\[.*\]$/.test(v))return v;if(/[:*#${}]|, /.test(v))return '"'+v+'"';return v;}
 function toYAML(A){var t=A.nodes.filter(function(n){return n.cat==='trigger';})[0]||A.nodes[0];var rest=A.nodes.filter(function(n){return n!==t;});var L=[];
   L.push('# '+A.id+'.yaml -- OpenMirai');L.push('name: '+yv(A.name));L.push('version: v1');L.push('description: '+yv(A.description));L.push('');

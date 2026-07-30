@@ -1,0 +1,58 @@
+# leer-flota — snapshot de la flota desde el centro (workflow OpenMirai)
+#
+# Leer el SoT de la flota expresado como EJECUCIÓN DE WORKFLOW: un único nodo
+# `net/http_request` hace GET /api/v1/fleet/agents y devuelve la lista completa
+# de miembros (agentes / nodos / bridges) con su último estado conocido.
+#
+# `base_url` lo inyecta el endpoint de run
+# (/api/v1/workflows/leer-flota/run) apuntando a ESTE mismo motor, así que el
+# workflow lee el SoT del propio centro que lo ejecuta.
+#
+# Run:
+#   POST /api/v1/workflows/leer-flota/run
+#   { "trigger_data": {} }
+
+name: leer-flota
+version: v1
+description: "Snapshot del SoT de la flota: GET /fleet/agents y devuelve {agents, count}. Un solo HTTP node contra la API del motor."
+
+inputs: {}
+
+outputs:
+  agents:
+    type: json
+    description: "Lista de miembros de la flota con su último estado conocido"
+  count:
+    type: text
+    description: "Número de miembros en la flota"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO ÚNICO — leer el SoT de la flota.
+    - id: read_fleet
+      tool_type: net/http_request
+      config:
+        method: GET
+        url: "${base_url}/api/v1/fleet/agents"
+
+    - id: respond
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: start
+      target: read_fleet
+      data_map:
+        base_url: "start.payload.base_url"
+
+    # net/http_request aplana las claves top-level de la respuesta JSON
+    # ({agents, count}) en el output del nodo.
+    - source: read_fleet
+      target: respond
+      data_map:
+        agents: "read_fleet.agents"
+        count: "read_fleet.count"

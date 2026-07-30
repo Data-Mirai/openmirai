@@ -11,10 +11,8 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
-use crate::fleet::FleetStore;
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
-use crate::sessions::{SessionManager, TmuxBackend};
 use crate::tools::registry::{RegistryExecutor, ToolRegistry};
 /// Shared application state passed to all handlers via axum's `State`.
 ///
@@ -51,28 +49,6 @@ pub struct AppState {
     pub memory_store: AgentMemoryStore,
     /// Background scheduler for live agent cycles (PRD-008).
     pub scheduler: Arc<Scheduler>,
-    /// Orchestrated Claude sessions over tmux (PRD-013).
-    ///
-    /// Created with the real [`TmuxBackend`] by default; `serve()` loads and
-    /// reconciles the persistent registry and starts polling. Tests replace
-    /// this field with a manager over a fake backend before building the
-    /// router.
-    pub orchestrator: Arc<SessionManager>,
-    /// Directory served as the static web UI under `/ui` (PRD-013 M6).
-    /// `None` → `/ui` answers 404 with a clear message.
-    pub ui_dir: Option<std::path::PathBuf>,
-    /// Roots scanned for first-level project directories (PRD-013 M7,
-    /// `--projects-dirs a:b:c` or MIRAI_PROJECTS_DIRS). Empty → /projects
-    /// lists session dirs only.
-    pub projects_dirs: Vec<std::path::PathBuf>,
-    /// Native host folder picker (PRD-013 M9). One dialog at a time.
-    pub folder_picker: Arc<crate::sessions::picker::FolderPicker>,
-    /// Fleet SoT — SQLite (WAL) source of truth for the agent fleet.
-    ///
-    /// `AppState::new` defaults to an in-memory store; `serve()` swaps in the
-    /// file-backed one at `~/.openmirai/fleet.db` so the fleet survives
-    /// restarts. Tests reach it directly for setup/asserts.
-    pub fleet: Arc<FleetStore>,
     /// Async workflow runs registry (run_id → record). Populated by
     /// `POST /api/v1/workflows/{name}/run`, read by `GET /api/v1/runs/{id}`.
     pub runs: Arc<RwLock<HashMap<String, crate::server::workflows::RunRecord>>>,
@@ -109,16 +85,6 @@ impl AppState {
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             memory_store: AgentMemoryStore::new(),
             scheduler: Arc::new(Scheduler::new()),
-            orchestrator: Arc::new(SessionManager::new(
-                Arc::new(TmuxBackend::new()),
-                SessionManager::default_registry_path(),
-            )),
-            ui_dir: None,
-            projects_dirs: Vec::new(),
-            folder_picker: Arc::new(crate::sessions::picker::FolderPicker::new()),
-            fleet: Arc::new(
-                FleetStore::in_memory().expect("in-memory fleet store must open"),
-            ),
             runs: Arc::new(RwLock::new(HashMap::new())),
             workflows_dirs: Vec::new(),
             server_port: 0,

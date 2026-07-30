@@ -30,6 +30,8 @@ pub enum FleetStatus {
     Waiting,
     /// Alive, idle, ready for work.
     Idle,
+    /// Finished its objective — the managed run completed successfully.
+    Done,
     /// Reported an error condition.
     Error,
     /// No real status reported yet.
@@ -45,6 +47,7 @@ impl FleetStatus {
             FleetStatus::Working => "working",
             FleetStatus::Waiting => "waiting",
             FleetStatus::Idle => "idle",
+            FleetStatus::Done => "done",
             FleetStatus::Error => "error",
             FleetStatus::Unknown => "unknown",
         }
@@ -184,6 +187,7 @@ mod tests {
             FleetStatus::Working,
             FleetStatus::Waiting,
             FleetStatus::Idle,
+            FleetStatus::Done,
             FleetStatus::Error,
             FleetStatus::Unknown,
         ] {

@@ -22,10 +22,10 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::core::events::EventType;
+use openmirai_engine::core::events::EventType;
 use crate::sessions::{SessionError, SessionStatus, SpawnParams};
 
-use super::state::{AppState, ErrorResponse};
+use super::state::{MiraiState, ErrorResponse};
 
 /// Default lines for `/output` and the detail `output_tail`.
 const DEFAULT_OUTPUT_LINES: usize = 100;
@@ -52,7 +52,7 @@ fn session_error_response(err: SessionError) -> (StatusCode, Json<ErrorResponse>
 
 /// POST /api/v1/orchestrator/sessions
 pub(crate) async fn orchestrator_create_session(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Json(params): Json<SpawnParams>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
     let record = state
@@ -71,7 +71,7 @@ pub(crate) async fn orchestrator_create_session(
 }
 
 /// GET /api/v1/orchestrator/sessions
-pub(crate) async fn orchestrator_list_sessions(State(state): State<AppState>) -> Json<Value> {
+pub(crate) async fn orchestrator_list_sessions(State(state): State<MiraiState>) -> Json<Value> {
     let list: Vec<Value> = state
         .orchestrator
         .list()
@@ -84,7 +84,7 @@ pub(crate) async fn orchestrator_list_sessions(State(state): State<AppState>) ->
 
 /// GET /api/v1/orchestrator/sessions/{id}
 pub(crate) async fn orchestrator_get_session(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let record = state
@@ -111,7 +111,7 @@ pub(crate) struct SendRequest {
 
 /// POST /api/v1/orchestrator/sessions/{id}/send
 pub(crate) async fn orchestrator_send(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
     Json(req): Json<SendRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
@@ -136,7 +136,7 @@ pub(crate) struct OutputQuery {
 
 /// GET /api/v1/orchestrator/sessions/{id}/output?lines=N
 pub(crate) async fn orchestrator_output(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
     Query(query): Query<OutputQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -152,7 +152,7 @@ pub(crate) async fn orchestrator_output(
 
 /// POST /api/v1/orchestrator/sessions/{id}/stop
 pub(crate) async fn orchestrator_stop(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let record = state
@@ -187,7 +187,7 @@ pub(crate) struct RestartRequest {
 /// Emits `session_status_changed` (stopped → starting). Returns 200 with the
 /// updated record (same shape as `GET /sessions/{id}`, minus `output_tail`).
 pub(crate) async fn orchestrator_restart(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
     Json(req): Json<RestartRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -241,7 +241,7 @@ fn parse_status(raw: &str) -> Result<SessionStatus, SessionError> {
 /// POST /api/v1/orchestrator/sessions/register — register an external node.
 /// Returns `{id}` (201). Emits `session_created` with the full node record.
 pub(crate) async fn orchestrator_register_external(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Json(req): Json<RegisterExternalRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
     let status = match &req.status {
@@ -277,7 +277,7 @@ pub(crate) struct ExternalStatusRequest {
 /// status (+ optional activity label). Emits `session_status_changed` (and
 /// `session_activity` when `activity` is present). → 200 `{id, status}`.
 pub(crate) async fn orchestrator_set_external_status(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
     Json(req): Json<ExternalStatusRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -295,7 +295,7 @@ pub(crate) async fn orchestrator_set_external_status(
 /// (also DELETE /api/v1/orchestrator/sessions/{id}) — mark an external node
 /// stopped. Emits `session_stopped` → `{id}`. → 200 `{id, status}`.
 pub(crate) async fn orchestrator_unregister_external(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let record = state
@@ -310,7 +310,7 @@ pub(crate) async fn orchestrator_unregister_external(
 /// POST /api/v1/orchestrator/sessions/{id}/activity — resource activity
 /// reported by the Claude Code PostToolUse hook (M6). → 202.
 pub(crate) async fn orchestrator_record_activity(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
     Json(req): Json<ActivityRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<ErrorResponse>)> {
@@ -340,7 +340,7 @@ pub(crate) struct ActivityQuery {
 /// (in-memory ring buffer) as `{events: [...]}` in CHRONOLOGICAL order
 /// (canonical envelope fixed by the M6 web UI).
 pub(crate) async fn orchestrator_get_activity(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(id): Path<String>,
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -370,7 +370,7 @@ pub(crate) async fn orchestrator_get_activity(
 ///
 /// Auth: besides the X-API-Key header, this endpoint accepts the key as a
 /// `?api_key=` query param (EventSource cannot set headers).
-pub(crate) async fn orchestrator_events(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn orchestrator_events(State(state): State<MiraiState>) -> impl IntoResponse {
     use axum::body::Body;
     use tokio_stream::wrappers::ReceiverStream;
 
@@ -426,7 +426,7 @@ pub(crate) async fn orchestrator_events(State(state): State<AppState>) -> impl I
 /// of session project_dirs (source "session") and first-level subdirs of the
 /// configured roots (source "scan"); dedup by path, session wins; session
 /// entries first, then scan, alphabetical within each group.
-pub(crate) async fn orchestrator_list_projects(State(state): State<AppState>) -> Json<Value> {
+pub(crate) async fn orchestrator_list_projects(State(state): State<MiraiState>) -> Json<Value> {
     let projects = state.orchestrator.list_projects(&state.projects_dirs).await;
     Json(json!({ "projects": projects }))
 }
@@ -443,7 +443,7 @@ pub(crate) struct PickFolderRequest {
 /// picker on this host. Runs async — the server keeps serving while the
 /// dialog is open.
 pub(crate) async fn orchestrator_pick_folder(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Json(req): Json<PickFolderRequest>,
 ) -> axum::response::Response {
     use crate::sessions::picker::PickOutcome;
@@ -477,19 +477,19 @@ pub(crate) async fn orchestrator_pick_folder(
 // ---------------------------------------------------------------------------
 
 /// GET /ui → index.html of the configured UI directory.
-pub(crate) async fn serve_ui_index(State(state): State<AppState>) -> axum::response::Response {
+pub(crate) async fn serve_ui_index(State(state): State<MiraiState>) -> axum::response::Response {
     serve_ui_file(&state, "index.html")
 }
 
 /// GET /ui/{*path} → static file from the configured UI directory.
 pub(crate) async fn serve_ui(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Path(path): Path<String>,
 ) -> axum::response::Response {
     serve_ui_file(&state, &path)
 }
 
-fn serve_ui_file(state: &AppState, rel_path: &str) -> axum::response::Response {
+fn serve_ui_file(state: &MiraiState, rel_path: &str) -> axum::response::Response {
     let Some(ui_dir) = &state.ui_dir else {
         return (
             StatusCode::NOT_FOUND,
@@ -567,22 +567,37 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::server::create_router;
-    use crate::server::state::{AppState, LLMFactory};
+    use crate::server::state::MiraiState;
     use crate::sessions::{FakeBackend, SessionBackend, SessionManager};
-    use crate::tools::registry::ToolRegistry;
-    use crate::utils::short_id;
+    use openmirai_engine::server::{core_app_state, AppState, LLMFactory};
+    use openmirai_engine::utils::short_id;
 
     fn test_llm_factory() -> LLMFactory {
-        use crate::adapters::MockLLMResource;
+        use openmirai_engine::MockLLMResource;
         Arc::new(|| Box::new(MockLLMResource::new()))
     }
 
-    /// AppState whose orchestrator runs on a FakeBackend + temp registry.
-    fn test_state() -> (AppState, Arc<FakeBackend>, std::path::PathBuf) {
+    /// A core engine [`AppState`] with builtin tools, no api key.
+    fn test_core() -> AppState {
+        core_app_state(test_llm_factory(), None, 0)
+    }
+
+    /// Compose the full command-center router around `state` (no api key).
+    fn router(state: MiraiState) -> Router {
+        create_router(test_core(), state)
+    }
+
+    /// Same, but with an api key gating the shared security middleware.
+    fn router_with_key(state: MiraiState, api_key: Option<String>) -> Router {
+        create_router(core_app_state(test_llm_factory(), api_key, 0), state)
+    }
+
+    /// MiraiState whose orchestrator runs on a FakeBackend + temp registry.
+    fn test_state() -> (MiraiState, Arc<FakeBackend>, std::path::PathBuf) {
         let backend = Arc::new(FakeBackend::new());
         let registry_path =
             std::env::temp_dir().join(format!("mirai-orch-http-test-{}.json", short_id()));
-        let mut state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
+        let mut state = MiraiState::new();
         state.orchestrator = Arc::new(SessionManager::new(
             backend.clone(),
             registry_path.clone(),
@@ -592,7 +607,7 @@ mod tests {
 
     fn test_app() -> (Router, Arc<FakeBackend>, std::path::PathBuf) {
         let (state, backend, path) = test_state();
-        (create_router(state), backend, path)
+        (router(state), backend, path)
     }
 
     async fn body_json(body: Body) -> Value {
@@ -935,7 +950,7 @@ mod tests {
     #[tokio::test]
     async fn events_endpoint_streams_session_created() {
         let (state, _backend, path) = test_state();
-        let app = create_router(state.clone());
+        let app = router(state.clone());
 
         // Open the SSE stream, then spawn a session and read the event.
         let resp = app
@@ -1009,13 +1024,9 @@ mod tests {
         let backend = Arc::new(FakeBackend::new());
         let registry_path =
             std::env::temp_dir().join(format!("mirai-orch-sse-auth-{}.json", short_id()));
-        let mut state = AppState::new(
-            ToolRegistry::new(),
-            test_llm_factory(),
-            Some("secret".into()),
-        );
+        let mut state = MiraiState::new();
         state.orchestrator = Arc::new(SessionManager::new(backend, registry_path.clone()));
-        let app = create_router(state);
+        let app = router_with_key(state, Some("secret".into()));
 
         // No key at all → 401.
         let resp = app
@@ -1059,13 +1070,9 @@ mod tests {
         let backend = Arc::new(FakeBackend::new());
         let registry_path =
             std::env::temp_dir().join(format!("mirai-orch-auth-test-{}.json", short_id()));
-        let mut state = AppState::new(
-            ToolRegistry::new(),
-            test_llm_factory(),
-            Some("secret".into()),
-        );
+        let mut state = MiraiState::new();
         state.orchestrator = Arc::new(SessionManager::new(backend, registry_path.clone()));
-        let app = create_router(state);
+        let app = router_with_key(state, Some("secret".into()));
 
         // Without key → 401.
         let resp = app
@@ -1197,7 +1204,7 @@ mod tests {
     #[tokio::test]
     async fn activity_flows_through_sse() {
         let (state, _backend, path) = test_state();
-        let app = create_router(state.clone());
+        let app = router(state.clone());
 
         let resp = app
             .clone()
@@ -1272,7 +1279,7 @@ mod tests {
         std::fs::create_dir_all(root.join("scanned-app")).unwrap();
         let mut state = state;
         state.projects_dirs = vec![root.clone()];
-        let app = create_router(state.clone());
+        let app = router(state.clone());
 
         // One session (source: session).
         spawn_session(&app).await;
@@ -1388,7 +1395,7 @@ mod tests {
             Box::new(HttpFakeRunner { outcome, hold_ms }),
             std::time::Duration::from_secs(2),
         ));
-        (create_router(state), path)
+        (router(state), path)
     }
 
     async fn post_pick(app: &Router, body: Value) -> (StatusCode, Value) {
@@ -1516,14 +1523,10 @@ mod tests {
         let backend = Arc::new(FakeBackend::new());
         let registry_path =
             std::env::temp_dir().join(format!("mirai-ui-reg-{}.json", short_id()));
-        let mut state = AppState::new(
-            ToolRegistry::new(),
-            test_llm_factory(),
-            Some("secret".into()),
-        );
+        let mut state = MiraiState::new();
         state.orchestrator = Arc::new(SessionManager::new(backend, registry_path.clone()));
         state.ui_dir = Some(ui_dir.clone());
-        let app = create_router(state);
+        let app = router_with_key(state, Some("secret".into()));
 
         let resp = app
             .clone()

@@ -16,7 +16,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
-use crate::utils::now_epoch;
+use openmirai_engine::utils::now_epoch;
 
 use super::types::{FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, StatusUpdate};
 
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn open_enables_wal_on_disk() {
-        let dir = std::env::temp_dir().join(format!("mirai-fleet-wal-{}", crate::utils::short_id()));
+        let dir = std::env::temp_dir().join(format!("mirai-fleet-wal-{}", openmirai_engine::utils::short_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fleet.db");
         let store = FleetStore::open(path.to_str().unwrap()).unwrap();
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn persists_across_reopen() {
         let dir =
-            std::env::temp_dir().join(format!("mirai-fleet-persist-{}", crate::utils::short_id()));
+            std::env::temp_dir().join(format!("mirai-fleet-persist-{}", openmirai_engine::utils::short_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fleet.db");
         let p = path.to_str().unwrap();

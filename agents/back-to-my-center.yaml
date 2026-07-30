@@ -1,0 +1,165 @@
+# Back to My Center — Idea-dump → clasificación → borrador de nota (loop del centro de mando)
+#
+# Recibe un TEXTO CRUDO (un volcado de idea/tarea de Gabriel) y produce:
+#   1) una CLASIFICACIÓN estructurada (proyecto/tag destino, tipo, prioridad, próximo paso)
+#      -> hecha con un modelo RÁPIDO y BARATO (gemini-2.5-flash-lite): es una tarea de rutina.
+#   2) un BORRADOR DE NOTA corto en Markdown (listo para caer en INBOX.md / output/)
+#      -> hecho con un modelo FUERTE (gemini-2.5-pro): la síntesis se gana el modelo caro.
+#
+# ESTO ES LA PRUEBA MULTIMODELO: dos nodos ai/llm_call en el MISMO grafo con `model` DISTINTO
+# por nodo. El engine inyecta el string `model` literal en la URL de la API del proveedor activo
+# (ver engine/src/llm/gemini.rs:502), así que el modelo se elige por-PASO sin cambiar de proveedor.
+#
+# Run (pídele la key a Gabriel — NO leer .env):
+#   mirai run agents/back-to-my-center.yaml --provider gemini --api-key $GOOGLE_API_KEY \
+#     --input '{"idea": "Hay que blindar el cobro de Athens antes de facturar, atribución anti-fuga"}'
+#
+#   # con ruta de nota propia:
+#   mirai run agents/back-to-my-center.yaml --provider gemini --api-key $GOOGLE_API_KEY \
+#     --input '{"idea": "...", "nota_path": "workspace/centro/output/2026-07-18-idea.md"}'
+#
+# Validar sin correr (no requiere key):
+#   mirai validate agents/back-to-my-center.yaml
+
+name: back-to-my-center
+version: v1
+description: "Loop del centro: recibe un idea-dump crudo, lo clasifica (modelo rápido) y destila un borrador de nota (modelo fuerte). Ejercita el patrón multimodelo por-nodo."
+
+inputs:
+  idea:
+    type: text
+    required: true
+    description: "El texto crudo volcado por Gabriel (idea, tarea o pensamiento sin procesar)"
+  nota_path:
+    type: text
+    required: false
+    default: "notes/back-to-my-center-nota.md"
+    description: "Ruta del borrador de nota Markdown a generar (se crea la carpeta si no existe)"
+
+outputs:
+  clasificacion:
+    type: json
+    description: "Clasificación estructurada: proyecto/tag, tipo, prioridad, próximo paso"
+  nota_guardada_en:
+    type: text
+    description: "Ruta del borrador de nota generado"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO 1 — CLASIFICAR. Tarea de rutina, alto volumen -> MODELO RÁPIDO/BARATO.
+    # Devuelve JSON validado contra un esquema (el engine reintenta si no cumple).
+    - id: clasificar
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-flash-lite
+        system_prompt: |
+          Eres el clasificador del centro de mando de Gabriel (back-to-my-center),
+          su hub para volcar ideas de todos sus proyectos y convertirlas en tareas.
+          Trabajas SIEMPRE en español, directo, sin relleno. Tu único trabajo es
+          clasificar el texto crudo que recibes: NO redactes la nota, solo etiquétala.
+        prompt: |
+          Clasifica el idea-dump que viene en el contexto de sesión. Elige el `proyecto`
+          de EXACTAMENTE esta lista (el tag del tablero); si nada encaja, usa "centro":
+            athens, sapilabs, datamirai, timeless, herramientas, centro, personal,
+            parqueaderos, startup-life, libros, legal.
+          `tipo` = uno de: tarea | reporte | idea.
+          `prioridad` = uno de: alta | media | baja.
+          `proximo_paso` = el siguiente paso ejecutable de valor (0→1), en una frase.
+          `titulo` = un título corto (≤8 palabras) para la nota.
+          Devuelve SOLO el JSON del esquema, sin texto antes ni después.
+        temperature: 0.0
+        max_tokens: 400
+        output_schema: |
+          {
+            "type": "object",
+            "properties": {
+              "proyecto": {"type": "string"},
+              "tipo": {"type": "string", "enum": ["tarea", "reporte", "idea"]},
+              "prioridad": {"type": "string", "enum": ["alta", "media", "baja"]},
+              "titulo": {"type": "string"},
+              "proximo_paso": {"type": "string"}
+            },
+            "required": ["proyecto", "tipo", "prioridad", "titulo", "proximo_paso"]
+          }
+        schema_retries: 2
+
+    # PASO 2 — DESTILAR. Síntesis de valor permanente -> MODELO FUERTE.
+    # Recibe por fan-in tanto la idea cruda (context) como la clasificación (clasif).
+    - id: destilar
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-pro
+        system_prompt: |
+          Eres el redactor senior del centro de mando de Gabriel. Trabajas SIEMPRE en
+          español, tono directo y ejecutivo, bullet-first, sin walls of text ni paja.
+          Tu fuente de verdad es EXCLUSIVAMENTE la idea cruda y su clasificación: no
+          inventes datos, nombres ni fechas que no aparezcan. Norte del centro: 0→1
+          ejecutable sobre la visión (back to basics).
+        prompt: |
+          En el contexto de sesión recibes dos piezas:
+            - idea_cruda -> el volcado original de Gabriel, sin procesar.
+            - clasif     -> la clasificación en JSON (proyecto, tipo, prioridad, título, próximo paso).
+
+          Redacta un BORRADOR DE NOTA corto y accionable en ESPAÑOL. Devuelve ÚNICAMENTE
+          Markdown válido, sin texto antes ni después, con esta estructura exacta:
+
+          # {título de la clasificación}
+
+          > Proyecto: {proyecto} · Tipo: {tipo} · Prioridad: {prioridad}
+
+          ## Qué es
+          - 1 a 3 bullets que capturan la idea en limpio (qué quiso decir Gabriel).
+
+          ## Próximo paso (0→1)
+          - El siguiente paso ejecutable de valor (usa `proximo_paso` de la clasificación y afínalo).
+
+          ## Contexto / notas
+          - Bullets con matices, dudas abiertas o dependencias que aparezcan en la idea cruda.
+            Si no hay, escribe "- (sin contexto adicional en el volcado)".
+
+          Reglas: no rellenes; si algo no está en la idea cruda, no lo inventes. Bullet-first.
+        temperature: 0.4
+        max_tokens: 1200
+
+    # PASO 3 — Guardar el borrador en disco (ruta por data_map, no config).
+    - id: guardar
+      tool_type: filesystem/write_file
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    # La idea cruda entra al clasificador como contexto de sesión.
+    - source: start
+      target: clasificar
+      data_map:
+        context: "start.payload.idea"
+
+    # Fan-in a `destilar`: llega TANTO la clasificación (nodo 1) COMO la idea cruda (trigger).
+    # El engine une el data_map de todas las aristas entrantes, así que `destilar` ve ambas.
+    - source: clasificar
+      target: destilar
+      data_map:
+        clasif: "clasificar.response"
+
+    - source: start
+      target: destilar
+      data_map:
+        idea_cruda: "start.payload.idea"
+
+    # El borrador redactado se escribe a disco en `nota_path`.
+    - source: destilar
+      target: guardar
+      data_map:
+        content: "destilar.response"
+        path: "start.payload.nota_path"
+
+    # Salida final: dónde quedó la nota + la clasificación estructurada.
+    - source: guardar
+      target: respond
+      data_map:
+        nota_guardada_en: "guardar.path"
+        clasificacion: "clasificar.structured_output"

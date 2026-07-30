@@ -6,10 +6,8 @@
 //! - [`helpers`]: Agent execution helpers shared by handlers
 
 pub mod editor;
-pub mod fleet;
 pub mod handlers;
 pub mod helpers;
-pub mod orchestrator;
 pub mod state;
 pub mod workflows;
 
@@ -30,25 +28,20 @@ use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
 
-use self::fleet::{fleet_events, fleet_list_agents, fleet_status};
 use self::handlers::*;
 use self::helpers::rag_search;
 use self::workflows::{get_run, workflow_run};
-use self::orchestrator::{
-    orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
-    orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
-    orchestrator_list_projects, orchestrator_pick_folder, orchestrator_record_activity,
-    orchestrator_register_external, orchestrator_restart, orchestrator_send,
-    orchestrator_set_external_status, orchestrator_stop, orchestrator_unregister_external,
-    serve_ui, serve_ui_index,
-};
 
 // ---------------------------------------------------------------------------
 // Router factory
 // ---------------------------------------------------------------------------
 
-/// Build the axum router with all endpoints wired up.
-pub fn create_router(state: AppState) -> Router {
+/// Build the core engine router: routes only, state applied, NO middleware.
+///
+/// The AgentMirai layer (the `mirai` crate) merges its own orchestrator /
+/// fleet / UI routes onto this and then wraps the whole thing with
+/// [`apply_security`], so core and command-center endpoints share one policy.
+pub fn core_router(state: AppState) -> Router {
     Router::new()
         // Health / version — always public (no auth, no version prefix)
         .route("/health", get(health))
@@ -84,75 +77,9 @@ pub fn create_router(state: AppState) -> Router {
         // Universe
         .route("/api/v1/universe/message", post(universe_message))
         .route("/api/v1/universe/groupchat", post(groupchat))
-        // Orchestrated Claude sessions over tmux (PRD-013)
-        .route(
-            "/api/v1/orchestrator/sessions",
-            post(orchestrator_create_session).get(orchestrator_list_sessions),
-        )
-        // External nodes (bridge): register/drive nodes living on ANOTHER
-        // substrate (FleetView subagents) so they show in the graph without a
-        // tmux spawn. `register` is a static segment — declared before the
-        // `{id}` route so it never gets captured as an id.
-        .route(
-            "/api/v1/orchestrator/sessions/register",
-            post(orchestrator_register_external),
-        )
-        .route(
-            "/api/v1/orchestrator/sessions/{id}/status",
-            post(orchestrator_set_external_status),
-        )
-        .route(
-            "/api/v1/orchestrator/sessions/{id}/unregister",
-            post(orchestrator_unregister_external),
-        )
-        .route(
-            "/api/v1/orchestrator/sessions/{id}",
-            get(orchestrator_get_session).delete(orchestrator_unregister_external),
-        )
-        .route(
-            "/api/v1/orchestrator/sessions/{id}/send",
-            post(orchestrator_send),
-        )
-        .route(
-            "/api/v1/orchestrator/sessions/{id}/output",
-            get(orchestrator_output),
-        )
-        .route(
-            "/api/v1/orchestrator/sessions/{id}/stop",
-            post(orchestrator_stop),
-        )
-        // Restart a tmux session in place with new flags (permission_mode /
-        // model / effort), keeping the same id. The "bypass-all + restart"
-        // action from the visualizer.
-        .route(
-            "/api/v1/orchestrator/sessions/{id}/restart",
-            post(orchestrator_restart),
-        )
-        .route(
-            "/api/v1/orchestrator/sessions/{id}/activity",
-            post(orchestrator_record_activity).get(orchestrator_get_activity),
-        )
-        .route("/api/v1/orchestrator/events", get(orchestrator_events))
-        // Fleet SoT (SQLite/WAL): back-way status ingress, list, live SSE.
-        .route("/api/v1/fleet/status", post(fleet_status))
-        .route("/api/v1/fleet/agents", get(fleet_list_agents))
-        .route("/api/v1/fleet/events", get(fleet_events))
         // Workflows: run a workflow by name (async → run_id) + poll the run.
         .route("/api/v1/workflows/{name}/run", post(workflow_run))
         .route("/api/v1/runs/{id}", get(get_run))
-        // Known projects for the create-session picker (PRD-013 M7)
-        .route(
-            "/api/v1/orchestrator/projects",
-            get(orchestrator_list_projects),
-        )
-        // Native host folder picker (PRD-013 M9)
-        .route(
-            "/api/v1/orchestrator/pick-folder",
-            post(orchestrator_pick_folder),
-        )
-        // Static web UI served by the engine (PRD-013 M6) — no auth (localhost)
-        .route("/ui", get(serve_ui_index))
-        .route("/ui/{*path}", get(serve_ui))
         // Metrics
         .route("/api/v1/metrics", get(get_metrics))
         // RAG + Eval
@@ -160,18 +87,32 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/eval", post(eval_session))
         // Webhooks (no version prefix)
         .route("/webhooks/{*path}", post(webhook_handler))
+        // State
+        .with_state(state)
+}
+
+/// Wrap a finalized router with the shared security middleware stack.
+///
+/// Reused by the engine's [`create_router`] and by the AgentMirai composed
+/// router so every endpoint shares ONE auth / CORS / cross-site policy.
+/// `api_key` gates the auth middleware; `None` runs without authentication
+/// (localhost convenience — see [`serve`]). The `null`-origin exception is
+/// still scoped to `/api/v1/orchestrator/*` inside [`origin_is_trusted`].
+pub fn apply_security(router: Router, api_key: Option<String>) -> Router {
+    router
         // Middleware: API key auth (if configured)
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ))
+        .layer(axum::middleware::from_fn_with_state(api_key, auth_middleware))
         // Middleware: cross-site guard for mutating requests (defense in depth
         // for endpoints that CORS preflights don't cover — see cross_origin_guard).
         .layer(axum::middleware::from_fn(cross_origin_guard))
         // Middleware: CORS — outermost so it answers preflights itself.
         .layer(cors_layer())
-        // State
-        .with_state(state)
+}
+
+/// Build the core engine router with the security stack applied.
+pub fn create_router(state: AppState) -> Router {
+    let api_key = state.api_key.clone();
+    apply_security(core_router(state), api_key)
 }
 
 // ---------------------------------------------------------------------------
@@ -304,11 +245,11 @@ fn same_host_origin(origin: &str, host_header: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 async fn auth_middleware(
-    State(state): State<AppState>,
+    State(api_key): State<Option<String>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let expected = match &state.api_key {
+    let expected = match &api_key {
         Some(k) => k,
         None => return next.run(req).await,
     };
@@ -366,95 +307,43 @@ fn api_key_matches(provided: &str, expected: &str) -> bool {
 // serve()
 // ---------------------------------------------------------------------------
 
-/// Start the HTTP server. Supports graceful shutdown on SIGTERM / SIGINT.
+/// Emit the no-API-key security warning for a bind (`host:port`).
 ///
-/// `ui_dir` (PRD-013 M6): directory served as static files under `/ui`
-/// (`--ui-dir` flag or `MIRAI_UI_DIR` env). `None` → `/ui` answers 404 with
-/// a clear message.
-pub async fn serve(
-    host: &str,
-    port: u16,
+/// Shared by the engine's core [`serve`] and the AgentMirai layer's
+/// `mirai::serve`, so both surface the same drive-by-RCE caveat.
+pub fn warn_if_no_api_key(host: &str, port: u16, api_key: &Option<String>) {
+    if api_key.is_some() {
+        return;
+    }
+    if host_is_loopback(host) {
+        tracing::warn!("No API key configured. Server is running without authentication.");
+        tracing::warn!("Set MIRAI_API_KEY or use --api-key to enable authentication.");
+    } else {
+        // Non-loopback bind (e.g. the default 0.0.0.0) without auth: the
+        // agent-execute and orchestrator endpoints amount to remote command
+        // execution for ANYONE who can reach this port.
+        tracing::error!(
+            "SECURITY: binding {host}:{port} WITHOUT an API key — \
+             /api/v1/agents/*/execute and /api/v1/orchestrator/* allow \
+             command execution and are reachable by anyone on the network."
+        );
+        tracing::error!("Set MIRAI_API_KEY / --api-key, or bind locally with --host 127.0.0.1.");
+    }
+}
+
+/// Build the core engine [`AppState`] with builtin tools + workflow run dirs.
+///
+/// `port` is injected as `server_port` so `net/http_request` workflow nodes can
+/// call back into this same engine via `base_url`. The AgentMirai layer builds
+/// this and layers its own [`MiraiState`](crate) alongside it.
+pub fn core_app_state(
     llm_factory: state::LLMFactory,
     api_key: Option<String>,
-    ui_dir: Option<String>,
-    projects_dirs: Option<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if api_key.is_none() {
-        if host_is_loopback(host) {
-            tracing::warn!("No API key configured. Server is running without authentication.");
-            tracing::warn!("Set MIRAI_API_KEY or use --api-key to enable authentication.");
-        } else {
-            // Non-loopback bind (e.g. the default 0.0.0.0) without auth: the
-            // agent-execute and orchestrator endpoints amount to remote
-            // command execution for ANYONE who can reach this port.
-            tracing::error!(
-                "SECURITY: binding {host}:{port} WITHOUT an API key — \
-                 /api/v1/agents/*/execute and /api/v1/orchestrator/* allow \
-                 command execution and are reachable by anyone on the network."
-            );
-            tracing::error!(
-                "Set MIRAI_API_KEY / --api-key, or bind locally with --host 127.0.0.1."
-            );
-        }
-    }
-
+    port: u16,
+) -> AppState {
     let mut registry = ToolRegistry::new();
     register_all_builtin_tools(&mut registry);
     let mut state = AppState::new(registry, llm_factory, api_key);
-    state.ui_dir = ui_dir.map(std::path::PathBuf::from);
-    // M7: roots for the /projects scan — colon-separated, `~` expanded.
-    state.projects_dirs = projects_dirs
-        .as_deref()
-        .unwrap_or_default()
-        .split(':')
-        .filter(|p| !p.trim().is_empty())
-        .map(expand_home)
-        .collect();
-    if !state.projects_dirs.is_empty() {
-        tracing::info!(
-            "projects scan roots: {}",
-            state
-                .projects_dirs
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-    if let Some(dir) = &state.ui_dir {
-        if dir.is_dir() {
-            tracing::info!("serving web UI at /ui from {}", dir.display());
-        } else {
-            tracing::warn!("--ui-dir {} is not a directory; /ui will 404", dir.display());
-        }
-    }
-
-    // PRD-013: load the persistent session registry, reconcile against real
-    // tmux state, and start the ~2s status poll (no-op without active sessions).
-    if let Err(e) = state.orchestrator.initialize().await {
-        tracing::warn!("orchestrator: failed to load session registry: {e}");
-    }
-    // M6: sessions must report activity to THIS port.
-    state.orchestrator.set_server_port(port);
-    // M6 fix (code review): with --api-key the activity hook must authenticate
-    // too — inject the key into spawned sessions (MIRAI_API_KEY) or every hook
-    // POST dies with a silent 401 at the auth middleware.
-    state.orchestrator.set_api_key(state.api_key.clone());
-    state.orchestrator.start_polling();
-
-    // Fleet SoT: swap the in-memory default for a WAL-mode file-backed store so
-    // the fleet survives restarts. Falls back to the in-memory store on error.
-    let fleet_path = crate::fleet::FleetStore::default_path();
-    if let Some(parent) = fleet_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    match crate::fleet::FleetStore::open(&fleet_path.to_string_lossy()) {
-        Ok(store) => {
-            tracing::info!("fleet SoT at {}", fleet_path.display());
-            state.fleet = std::sync::Arc::new(store);
-        }
-        Err(e) => tracing::warn!("fleet: falling back to in-memory store: {e}"),
-    }
 
     // Workflows: the run endpoint resolves `{name}.yaml` here, and injects this
     // port as base_url so net/http_request nodes call back into this engine.
@@ -477,9 +366,17 @@ pub async fn serve(
             .collect::<Vec<_>>()
             .join(", ")
     );
+    state
+}
 
-    let app = create_router(state);
-
+/// Bind `host:port` and serve `app` with graceful shutdown on SIGTERM / SIGINT.
+///
+/// Shared by the engine's core [`serve`] and by `mirai::serve`.
+pub async fn bind_and_serve(
+    host: &str,
+    port: u16,
+    app: Router,
+) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("openmirai-engine listening on {addr}");
@@ -490,8 +387,25 @@ pub async fn serve(
     Ok(())
 }
 
+/// Start the core engine HTTP server (no AgentMirai layer).
+///
+/// The full command-center server (orchestrator + fleet + UI) is
+/// `mirai::serve`, which the `mirai` binary uses. This core `serve` is for
+/// library users embedding only the graph/agent engine.
+pub async fn serve(
+    host: &str,
+    port: u16,
+    llm_factory: state::LLMFactory,
+    api_key: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    warn_if_no_api_key(host, port, &api_key);
+    let state = core_app_state(llm_factory, api_key, port);
+    let app = create_router(state);
+    bind_and_serve(host, port, app).await
+}
+
 /// Is the bind host loopback-only? (`localhost`, `127.x.x.x`, `::1`.)
-fn host_is_loopback(host: &str) -> bool {
+pub fn host_is_loopback(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
@@ -502,7 +416,7 @@ fn host_is_loopback(host: &str) -> bool {
 }
 
 /// Expand a leading `~` / `~/` to $HOME (M7 projects roots).
-fn expand_home(path: &str) -> std::path::PathBuf {
+pub fn expand_home(path: &str) -> std::path::PathBuf {
     let path = path.trim();
     if path == "~" || path.starts_with("~/") {
         if let Ok(home) = std::env::var("HOME") {

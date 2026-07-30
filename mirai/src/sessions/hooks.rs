@@ -215,7 +215,7 @@ mod tests {
     use super::*;
 
     fn temp_base() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mirai-hooks-test-{}", crate::utils::short_id()));
+        let dir = std::env::temp_dir().join(format!("mirai-hooks-test-{}", openmirai_engine::utils::short_id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

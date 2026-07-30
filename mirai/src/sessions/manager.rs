@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::core::events::{EventEmitter, EventType};
-use crate::utils::short_id;
+use openmirai_engine::core::events::{EventEmitter, EventType};
+use openmirai_engine::utils::short_id;
 
 use super::backend::TMUX_SESSION_PREFIX;
 use super::status::detect_status;
@@ -244,7 +244,7 @@ impl SessionManager {
 
     /// Subscribe to orchestrator events (session_created, session_status_changed,
     /// session_output, session_stopped).
-    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::core::events::ExecutionEvent> {
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<openmirai_engine::core::events::ExecutionEvent> {
         self.events.subscribe()
     }
 

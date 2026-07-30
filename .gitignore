@@ -4,8 +4,9 @@ target/
 Cargo.lock.bak
 
 # Binaries (distributed via GitHub Releases, not git)
-mirai
-mirai.exe
+# Anchored to repo root so the `mirai/` crate directory stays tracked.
+/mirai.bin
+/mirai.exe
 releases/
 
 # Python

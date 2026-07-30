@@ -6,6 +6,29 @@
 
 ---
 
+### [2026-07-30] Sesion: refactor-agentmirai-separacion
+**Estado**: COMPLETADO
+**Proyecto**: OpenMirai Engine — separar la capa AgentMirai del motor
+**Objetivo**: Aislar el command-center (sesiones tmux, flota SoT, rutas /orchestrator + /fleet + /ui) en un crate `mirai` dep de `openmirai-engine`, dejando el engine como motor puro de grafos.
+
+**Archivos tocados**:
+- CREADO `mirai/` (Cargo.toml, src/lib.rs, src/server/{mod,state,tests}.rs) — crate command-center.
+- MOVIDO (git mv) `engine/src/{sessions,fleet}/` y `engine/src/server/{orchestrator,fleet}.rs` → `mirai/src/…`.
+- MODIFICADO `engine/src/server/mod.rs` — `create_router` partido en `core_router` + `apply_security` + helpers públicos (`core_app_state`, `bind_and_serve`, `warn_if_no_api_key`); `auth_middleware` toma `api_key`.
+- MODIFICADO `engine/src/server/state.rs` — `AppState` pierde los campos de AgentMirai.
+- MODIFICADO `engine/src/lib.rs`, `cli/{Cargo.toml,src/main.rs}` (serve → `mirai::serve`), `Cargo.toml` (member `mirai`), `.gitignore`.
+- CREADO `agents/reportar-estado.yaml`, `agents/leer-flota.yaml`.
+- MODIFICADO `mirai/src/fleet/types.rs` — variante `FleetStatus::Done`.
+
+**Decisiones tomadas**:
+- Dirección de dependencia estricta `mirai → openmirai-engine`. `AppState` (core) vs `MiraiState` (command-center), merge de routers bajo UN solo stack de seguridad (que sigue en el engine).
+- Tests de CORS/cross-origin se quedan en el engine (prueban middleware por-path, route-independiente). El E2E crear-agente migró a `mirai` (usa FakeBackend + router compuesto).
+- El binario stale `mirai` (gitignored) se renombró a `mirai.bin` para liberar el nombre del crate.
+
+**Resultado**: `cargo test --workspace` verde (mirai 114 · cli 13 · engine 768 · 0 fallos), 0 warnings, build ok. Sin push. Reporte en `workspace/mirai/output/2026-07-30-refactor-agentmirai-separacion.md`.
+
+---
+
 ### [2026-07-16] Sesion: security-gate-cors-auth-0.7.0
 **Estado**: COMPLETADO
 **Proyecto**: OpenMirai Engine (gate de seguridad 0.7.0 — área CORS + AUTH del server)

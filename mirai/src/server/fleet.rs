@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 
 use crate::fleet::{FleetError, FleetEventKind, FleetMember, FleetQuery, FleetStatus, StatusUpdate};
 
-use super::state::{AppState, ErrorResponse};
+use super::state::{MiraiState, ErrorResponse};
 
 fn fleet_error_response(err: FleetError) -> (StatusCode, Json<ErrorResponse>) {
     let status = match &err {
@@ -59,7 +59,7 @@ fn member_json(m: &FleetMember, stale_secs: Option<f64>, now: f64) -> Value {
 
 /// POST /api/v1/fleet/status
 pub(crate) async fn fleet_status(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Json(update): Json<StatusUpdate>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let (member, kind) = state
@@ -100,13 +100,13 @@ pub(crate) struct AgentsQuery {
 
 /// GET /api/v1/fleet/agents
 pub(crate) async fn fleet_list_agents(
-    State(state): State<AppState>,
+    State(state): State<MiraiState>,
     Query(query): Query<AgentsQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let status = match &query.status {
         Some(s) => Some(FleetStatus::parse(s).ok_or_else(|| {
             fleet_error_response(FleetError::Invalid(format!(
-                "invalid status '{s}' (want online|offline|working|waiting|idle|error|unknown)"
+                "invalid status '{s}' (want online|offline|working|waiting|idle|done|error|unknown)"
             )))
         })?),
         None => None,
@@ -117,7 +117,7 @@ pub(crate) async fn fleet_list_agents(
         limit: query.limit.map(|l| l.clamp(1, 5000)),
     };
     let members = state.fleet.list(&filter).map_err(fleet_error_response)?;
-    let now = crate::utils::now_epoch();
+    let now = openmirai_engine::utils::now_epoch();
     let agents: Vec<Value> = members
         .iter()
         .map(|m| member_json(m, query.stale_secs, now))
@@ -135,7 +135,7 @@ pub(crate) async fn fleet_list_agents(
 /// Emits `fleet_member_added`, `fleet_member_updated`, `fleet_member_removed`.
 /// The `data:` payload is the [`FleetMember`] record DIRECTLY (not an internal
 /// envelope), matching the fleet-view UI contract.
-pub(crate) async fn fleet_events(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn fleet_events(State(state): State<MiraiState>) -> impl IntoResponse {
     use axum::body::Body;
     use tokio_stream::wrappers::ReceiverStream;
 
@@ -192,17 +192,31 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::server::create_router;
-    use crate::server::state::{AppState, LLMFactory};
-    use crate::tools::registry::ToolRegistry;
+    use crate::server::state::MiraiState;
+    use openmirai_engine::server::{core_app_state, AppState, LLMFactory};
 
     fn test_llm_factory() -> LLMFactory {
-        use crate::adapters::MockLLMResource;
+        use openmirai_engine::MockLLMResource;
         Arc::new(|| Box::new(MockLLMResource::new()))
     }
 
+    /// A core engine [`AppState`] with builtin tools, no api key.
+    fn test_core() -> AppState {
+        core_app_state(test_llm_factory(), None, 0)
+    }
+
+    /// Compose the full command-center router around `state` (no api key).
+    fn router(state: MiraiState) -> Router {
+        create_router(test_core(), state)
+    }
+
+    /// Same, but with an api key gating the shared security middleware.
+    fn router_with_key(state: MiraiState, api_key: Option<String>) -> Router {
+        create_router(core_app_state(test_llm_factory(), api_key, 0), state)
+    }
+
     fn test_app() -> Router {
-        let state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
-        create_router(state)
+        router(MiraiState::new())
     }
 
     async fn body_json(body: Body) -> Value {
@@ -359,8 +373,8 @@ mod tests {
 
     #[tokio::test]
     async fn events_streams_status_reports() {
-        let state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
-        let app = create_router(state.clone());
+        let state = MiraiState::new();
+        let app = router(state.clone());
 
         let resp = app
             .clone()
@@ -421,8 +435,8 @@ mod tests {
 
     #[tokio::test]
     async fn fleet_routes_respect_api_key_and_sse_query_param() {
-        let state = AppState::new(ToolRegistry::new(), test_llm_factory(), Some("secret".into()));
-        let app = create_router(state);
+        let state = MiraiState::new();
+        let app = router_with_key(state, Some("secret".into()));
 
         // GET /agents without key → 401.
         let resp = app

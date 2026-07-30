@@ -1,0 +1,84 @@
+# reportar-estado — heartbeat de un miembro hacia el centro (workflow OpenMirai)
+#
+# El "back-way status" expresado como EJECUCIÓN DE WORKFLOW: un miembro de la
+# flota (esta Mac, la VPS, un subagente) reporta su estado de vida al centro
+# escribiendo la fila del SoT vía POST /api/v1/fleet/status.
+#
+# Es un único nodo `net/http_request`: el workflow es un SOP trazable que habla
+# con el motor por HTTP. `base_url` lo inyecta el endpoint de run
+# (/api/v1/workflows/reportar-estado/run) apuntando a ESTE mismo motor.
+#
+# Contrato del SoT: `id` + `status` son obligatorios; los campos omitidos
+# conservan lo que ya tenga la fila. Este workflow reporta el TRÍO DE CICLO DE
+# VIDA (status + activity) — la identidad y el objetivo se fijan al alta con
+# `crear-agente`. `status` ∈ online|offline|working|waiting|idle|done|error|unknown.
+#
+# Run:
+#   POST /api/v1/workflows/reportar-estado/run
+#   { "trigger_data": { "id": "mac-centro", "status": "working",
+#                       "activity": "compilando el refactor" } }
+
+name: reportar-estado
+version: v1
+description: "Heartbeat de un miembro: reporta status + activity al SoT de la flota vía POST /fleet/status. Un solo HTTP node contra la API del motor."
+
+inputs:
+  id:
+    type: text
+    required: true
+    description: "Id estable del miembro (clave idempotente de la fila en la flota)"
+  status:
+    type: text
+    required: true
+    description: "Estado de ciclo de vida: online|offline|working|waiting|idle|done|error|unknown"
+  activity:
+    type: text
+    required: false
+    description: "Etiqueta corta de la actividad actual"
+
+outputs:
+  event:
+    type: text
+    description: "added | updated | removed — qué le pasó a la fila en el SoT"
+  last_seen:
+    type: text
+    description: "Epoch del último reporte (heartbeat) registrado"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO ÚNICO — escribir el estado en el SoT (back-way status).
+    - id: report
+      tool_type: net/http_request
+      config:
+        method: POST
+        url: "${base_url}/api/v1/fleet/status"
+        body:
+          id: "${member_id}"
+          status: "${status}"
+          activity: "${activity}"
+
+    - id: respond
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: start
+      target: report
+      data_map:
+        base_url: "start.payload.base_url"
+        member_id: "start.payload.id"
+        status: "start.payload.status"
+        activity: "start.payload.activity"
+
+    # net/http_request aplana las claves top-level de la respuesta JSON
+    # ({id, status, last_seen, event}) en el output del nodo.
+    - source: report
+      target: respond
+      data_map:
+        event: "report.event"
+        status: "report.status"
+        last_seen: "report.last_seen"

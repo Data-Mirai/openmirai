@@ -6,7 +6,6 @@ pub mod core;
 pub mod db;
 pub mod energy;
 pub mod eval;
-pub mod fleet;
 pub mod intelligence;
 pub mod llm;
 pub mod mcp;
@@ -19,7 +18,6 @@ pub mod runtime;
 pub mod sandbox;
 pub mod search;
 pub mod security;
-pub mod sessions;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod soul;
@@ -72,12 +70,6 @@ pub use crate::triggers::{TriggerConfig, TriggerDef, TriggerEvent, TriggerType};
 pub use crate::db::{
     AgentRecord, DbError, InMemoryAgentRepo, InMemoryGraphRepo, InMemorySessionRepo, Repository,
     SessionRecord, SessionStatus,
-};
-
-// Re-export fleet SoT types.
-pub use crate::fleet::{
-    FleetError, FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, FleetStore,
-    StatusUpdate,
 };
 
 // Re-export runtime types.

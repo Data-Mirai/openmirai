@@ -558,7 +558,10 @@ async fn run_serve(args: &[String]) {
     let projects_dirs = parse_flag(args, "--projects-dirs")
         .or_else(|| std::env::var("MIRAI_PROJECTS_DIRS").ok());
 
-    if let Err(e) = openmirai_engine::server::serve(
+    // The full command-center server (core engine + orchestrator + fleet + UI)
+    // lives in the `mirai` crate. `openmirai_engine::server::serve` serves only
+    // the core engine.
+    if let Err(e) = mirai::serve(
         &host,
         port,
         llm_factory,

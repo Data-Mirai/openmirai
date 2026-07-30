@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod helpers;
 pub mod orchestrator;
 pub mod state;
+pub mod workflows;
 
 #[cfg(test)]
 mod tests;
@@ -32,6 +33,7 @@ use crate::tools::registry::ToolRegistry;
 use self::fleet::{fleet_events, fleet_list_agents, fleet_status};
 use self::handlers::*;
 use self::helpers::rag_search;
+use self::workflows::{get_run, workflow_run};
 use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
     orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
@@ -135,6 +137,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/fleet/status", post(fleet_status))
         .route("/api/v1/fleet/agents", get(fleet_list_agents))
         .route("/api/v1/fleet/events", get(fleet_events))
+        // Workflows: run a workflow by name (async → run_id) + poll the run.
+        .route("/api/v1/workflows/{name}/run", post(workflow_run))
+        .route("/api/v1/runs/{id}", get(get_run))
         // Known projects for the create-session picker (PRD-013 M7)
         .route(
             "/api/v1/orchestrator/projects",
@@ -450,6 +455,28 @@ pub async fn serve(
         }
         Err(e) => tracing::warn!("fleet: falling back to in-memory store: {e}"),
     }
+
+    // Workflows: the run endpoint resolves `{name}.yaml` here, and injects this
+    // port as base_url so net/http_request nodes call back into this engine.
+    state.server_port = port;
+    state.workflows_dirs = std::env::var("MIRAI_WORKFLOWS_DIR")
+        .ok()
+        .map(|s| {
+            s.split(':')
+                .filter(|p| !p.trim().is_empty())
+                .map(expand_home)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![std::path::PathBuf::from("agents")]);
+    tracing::info!(
+        "workflow run dirs: {}",
+        state
+            .workflows_dirs
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let app = create_router(state);
 

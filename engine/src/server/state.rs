@@ -73,6 +73,16 @@ pub struct AppState {
     /// file-backed one at `~/.openmirai/fleet.db` so the fleet survives
     /// restarts. Tests reach it directly for setup/asserts.
     pub fleet: Arc<FleetStore>,
+    /// Async workflow runs registry (run_id → record). Populated by
+    /// `POST /api/v1/workflows/{name}/run`, read by `GET /api/v1/runs/{id}`.
+    pub runs: Arc<RwLock<HashMap<String, crate::server::workflows::RunRecord>>>,
+    /// Directories scanned for `{name}.yaml` workflows by the run endpoint
+    /// (`--workflows-dir` / MIRAI_WORKFLOWS_DIR; defaults to `./agents`).
+    pub workflows_dirs: Vec<std::path::PathBuf>,
+    /// Port this server is bound to — injected as `base_url` into workflow
+    /// runs so `net/http_request` nodes can call this same engine. Set by
+    /// `serve()`; 0 in tests unless overridden.
+    pub server_port: u16,
 }
 
 impl AppState {
@@ -109,6 +119,9 @@ impl AppState {
             fleet: Arc::new(
                 FleetStore::in_memory().expect("in-memory fleet store must open"),
             ),
+            runs: Arc::new(RwLock::new(HashMap::new())),
+            workflows_dirs: Vec::new(),
+            server_port: 0,
         }
     }
 

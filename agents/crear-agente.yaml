@@ -1,0 +1,99 @@
+# crear-agente — SOP de alta de agente en la flota (workflow OpenMirai)
+#
+# El "crear agente" del centro expresado como EJECUCIÓN DE WORKFLOW (no glue code):
+#   1) spawnea una sesión Claude vía la propia API del motor
+#      (POST /api/v1/orchestrator/sessions) y obtiene su `id`.
+#   2) ESCRIBE la fila en la tabla `fleet` (SoT SQLite/WAL) vía
+#      POST /api/v1/fleet/status con {id, name, objective, status: working}.
+#
+# Ambos pasos son nodos `net/http_request`: el workflow es un SOP trazable que
+# habla con el motor por HTTP. `base_url` lo inyecta el endpoint de run
+# (/api/v1/workflows/crear-agente/run) apuntando a ESTE mismo motor.
+#
+# Run:
+#   POST /api/v1/workflows/crear-agente/run
+#   { "trigger_data": { "name": "worker", "project_dir": "/tmp",
+#                       "objective": "construir X" } }
+
+name: crear-agente
+version: v1
+description: "Alta de agente: spawnea la sesión y escribe su fila en la flota (SoT). Todo por HTTP nodes contra la API del motor."
+
+inputs:
+  name:
+    type: text
+    required: false
+    description: "Nombre visible del agente/sesión"
+  project_dir:
+    type: text
+    required: true
+    description: "Directorio de trabajo de la sesión (debe existir)"
+  objective:
+    type: text
+    required: true
+    description: "Objetivo del agente"
+
+outputs:
+  session_id:
+    type: text
+    description: "Id de la sesión creada (clave de la fila en la flota)"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO 1 — spawnear la sesión vía la API del orquestador.
+    - id: spawn
+      tool_type: net/http_request
+      config:
+        method: POST
+        url: "${base_url}/api/v1/orchestrator/sessions"
+        body:
+          name: "${agent_name}"
+          project_dir: "${project_dir}"
+          objective: "${objective}"
+          no_hooks: true
+
+    # PASO 2 — escribir la fila en la flota (SoT) con el id recién obtenido.
+    - id: write_fleet
+      tool_type: net/http_request
+      config:
+        method: POST
+        url: "${base_url}/api/v1/fleet/status"
+        body:
+          id: "${session_id}"
+          name: "${agent_name}"
+          kind: agent
+          host: mac
+          status: working
+          objective: "${objective}"
+
+    - id: respond
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: start
+      target: spawn
+      data_map:
+        base_url: "start.payload.base_url"
+        agent_name: "start.payload.name"
+        project_dir: "start.payload.project_dir"
+        objective: "start.payload.objective"
+
+    - source: spawn
+      target: write_fleet
+      data_map:
+        base_url: "start.payload.base_url"
+        session_id: "spawn.id"
+        agent_name: "start.payload.name"
+        objective: "start.payload.objective"
+
+    - source: write_fleet
+      target: respond
+      data_map:
+        session_id: "spawn.id"
+        fleet_status: "write_fleet.status"
+        fleet_event: "write_fleet.event"

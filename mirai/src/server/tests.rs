@@ -166,3 +166,112 @@ async fn crear_agente_workflow_spawns_session_and_writes_fleet() {
 
     let _ = std::fs::remove_file(reg_path);
 }
+
+/// THE pub-sub E2E: run the shipped `reportar-hijo` and `leer-objetivo`
+/// workflows through the run endpoint against a live in-process server, and
+/// assert the reactive `objective_complete` notification fires when the last
+/// child reports done — observed through a filtering [`FleetSubscriber`].
+#[tokio::test]
+async fn reportar_hijo_completes_objective_and_notifies_subscriber() {
+    use crate::fleet::{FleetStatus, FleetSubscriber, StatusUpdate};
+
+    let (mirai, _backend, reg_path) = e2e_mirai();
+    let fleet = mirai.fleet.clone();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{addr}");
+    let app = create_router(e2e_core(), mirai);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    // Run a workflow to completion and assert it finished cleanly.
+    let run = |wf: &'static str, data: Value| {
+        let client = client.clone();
+        let base_url = base_url.clone();
+        async move {
+            let resp = client
+                .post(format!("{base_url}/api/v1/workflows/{wf}/run"))
+                .json(&json!({ "base_url": base_url, "trigger_data": data }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 202, "{wf} run not accepted");
+            let run_id = resp.json::<Value>().await.unwrap()["run_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let mut final_run = Value::Null;
+            for _ in 0..50 {
+                let r: Value = client
+                    .get(format!("{base_url}/api/v1/runs/{run_id}"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                if r["status"] != "running" {
+                    final_run = r;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            assert_eq!(final_run["status"], "completed", "{wf}: {final_run}");
+            final_run
+        }
+    };
+
+    // Parent + two working children exist first.
+    fleet
+        .apply_status(StatusUpdate {
+            id: "boss".into(),
+            status: FleetStatus::Working,
+            name: None,
+            kind: None,
+            host: None,
+            activity: None,
+            objective: Some("ship the release".into()),
+            parent_id: None,
+            project_dir: None,
+            metadata: None,
+        })
+        .unwrap();
+    run("reportar-hijo", json!({"id":"h1","parent_id":"boss","status":"working"})).await;
+    run("reportar-hijo", json!({"id":"h2","parent_id":"boss","status":"working"})).await;
+
+    // Subscribe for boss's completion, THEN drive both children to done. The
+    // broadcast buffers the event, so no race with the async runs.
+    let mut sub = FleetSubscriber::objective_complete(fleet.clone(), Some("boss".into()));
+    run("reportar-hijo", json!({"id":"h1","parent_id":"boss","status":"done"})).await;
+    run("reportar-hijo", json!({"id":"h2","parent_id":"boss","status":"done"})).await;
+
+    let ev = tokio::time::timeout(std::time::Duration::from_secs(2), sub.recv())
+        .await
+        .expect("objective_complete not delivered")
+        .expect("stream closed");
+    assert_eq!(ev.member.id, "boss");
+    assert_eq!(ev.member.objective, "ship the release");
+    assert!(ev.progress.as_ref().unwrap().complete);
+
+    // The `leer-objetivo` workflow runs cleanly on the pull side (validates the
+    // shipped YAML end-to-end)...
+    run("leer-objetivo", json!({"parent_id":"boss"})).await;
+    // ...and the aggregation endpoint it wraps reports the completion over HTTP.
+    let obj: Value = client
+        .get(format!("{base_url}/api/v1/fleet/objective/boss"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(obj["total"], 2);
+    assert_eq!(obj["done"], 2);
+    assert_eq!(obj["complete"], true);
+    assert_eq!(obj["children"].as_array().unwrap().len(), 2);
+
+    let _ = std::fs::remove_file(reg_path);
+}

@@ -1,0 +1,85 @@
+# reportar-hijo — un hijo reporta estado hacia el objetivo de su padre (workflow OpenMirai)
+#
+# La cara pub del pub-sub reactivo expresada como EJECUCIÓN DE WORKFLOW: un
+# sub-agente (hijo) reporta su estado al SoT vía POST /api/v1/fleet/status
+# incluyendo `parent_id` — el id del miembro cuyo objetivo ayuda a cumplir.
+#
+# Cuando el ÚLTIMO hijo de un padre reporta `status: done`, el centro agrega los
+# hijos y, si todos están Done, EMITE el evento `objective_complete` por el SSE
+# de /api/v1/fleet/events (edge-triggered, una sola vez). Este workflow es el
+# disparador trazable de esa notificación reactiva.
+#
+# Un único nodo `net/http_request`. `base_url` lo inyecta el endpoint de run
+# (/api/v1/workflows/reportar-hijo/run) apuntando a ESTE mismo motor.
+#
+# Run:
+#   POST /api/v1/workflows/reportar-hijo/run
+#   { "trigger_data": { "id": "hijo-3", "parent_id": "orquestador",
+#                       "status": "done" } }
+
+name: reportar-hijo
+version: v1
+description: "Un hijo reporta su status al SoT con parent_id; completar todos los hijos dispara el evento objective_complete por SSE. Un solo HTTP node contra la API del motor."
+
+inputs:
+  id:
+    type: text
+    required: true
+    description: "Id estable del hijo (clave idempotente de su fila en la flota)"
+  parent_id:
+    type: text
+    required: true
+    description: "Id del padre cuyo objetivo ayuda a cumplir este hijo"
+  status:
+    type: text
+    required: true
+    description: "Estado de ciclo de vida: online|offline|working|waiting|idle|done|error|unknown"
+
+outputs:
+  event:
+    type: text
+    description: "added | updated — qué le pasó a la fila del hijo en el SoT"
+  last_seen:
+    type: text
+    description: "Epoch del último reporte (heartbeat) registrado"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO ÚNICO — escribir el estado del hijo (con su parent_id) en el SoT.
+    # Si con esto todos los hijos del padre quedan Done, el centro emite
+    # `objective_complete` por el SSE.
+    - id: report
+      tool_type: net/http_request
+      config:
+        method: POST
+        url: "${base_url}/api/v1/fleet/status"
+        body:
+          id: "${child_id}"
+          status: "${status}"
+          parent_id: "${parent_id}"
+
+    - id: respond
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: start
+      target: report
+      data_map:
+        base_url: "start.payload.base_url"
+        child_id: "start.payload.id"
+        status: "start.payload.status"
+        parent_id: "start.payload.parent_id"
+
+    # net/http_request aplana las claves top-level de la respuesta JSON
+    # ({id, status, last_seen, event}) en el output del nodo.
+    - source: report
+      target: respond
+      data_map:
+        event: "report.event"
+        status: "report.status"
+        last_seen: "report.last_seen"

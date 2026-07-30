@@ -25,7 +25,7 @@ use openmirai_engine::server::{
     AppState, LLMFactory,
 };
 
-use self::fleet::{fleet_events, fleet_list_agents, fleet_status};
+use self::fleet::{fleet_events, fleet_list_agents, fleet_objective, fleet_status};
 use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
     orchestrator_get_session, orchestrator_list_projects, orchestrator_list_sessions,
@@ -107,6 +107,7 @@ pub fn mirai_router(state: MiraiState) -> Router {
         // Fleet SoT (SQLite/WAL): back-way status ingress, list, live SSE.
         .route("/api/v1/fleet/status", post(fleet_status))
         .route("/api/v1/fleet/agents", get(fleet_list_agents))
+        .route("/api/v1/fleet/objective/{parent_id}", get(fleet_objective))
         .route("/api/v1/fleet/events", get(fleet_events))
         // Static web UI served by the engine (PRD-013 M6) — no auth (localhost)
         .route("/ui", get(serve_ui_index))

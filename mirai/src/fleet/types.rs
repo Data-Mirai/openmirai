@@ -88,6 +88,13 @@ pub struct FleetMember {
     pub activity: String,
     /// What the member is trying to accomplish. Empty when unspecified.
     pub objective: String,
+    /// Id of the member whose objective this one contributes to (its **parent**).
+    ///
+    /// Empty for a root member. Children with the same `parent_id` are the
+    /// sub-agents a parent's objective was decomposed into; the parent's
+    /// objective is complete once every child reaches [`FleetStatus::Done`]
+    /// (see [`super::FleetStore::objective_progress`]).
+    pub parent_id: String,
     /// Working directory / project the member is attached to. Empty otherwise.
     pub project_dir: String,
     /// Arbitrary JSON metadata blob (defaults to `{}`).
@@ -121,6 +128,10 @@ pub struct StatusUpdate {
     pub activity: Option<String>,
     #[serde(default)]
     pub objective: Option<String>,
+    /// Wire the member to a parent objective (its `parent_id`). Omitted keeps
+    /// whatever the SoT already has, so a bare heartbeat never orphans a child.
+    #[serde(default)]
+    pub parent_id: Option<String>,
     #[serde(default)]
     pub project_dir: Option<String>,
     #[serde(default)]
@@ -138,6 +149,8 @@ pub struct FleetQuery {
     pub status: Option<FleetStatus>,
     /// Only members on this host.
     pub host: Option<String>,
+    /// Only the children of this parent (members whose `parent_id` matches).
+    pub parent_id: Option<String>,
     /// Cap on the number of rows returned.
     pub limit: Option<usize>,
 }
@@ -155,6 +168,11 @@ pub enum FleetEventKind {
     Updated,
     /// A member was removed from the SoT.
     Removed,
+    /// A parent's objective just became complete — every child reached
+    /// [`FleetStatus::Done`]. The event's `member` is the **parent** and its
+    /// `progress` carries the aggregation. Edge-triggered: fired once, on the
+    /// transition into completeness, never repeated while it stays complete.
+    ObjectiveComplete,
 }
 
 impl FleetEventKind {
@@ -164,6 +182,35 @@ impl FleetEventKind {
             FleetEventKind::Added => "fleet_member_added",
             FleetEventKind::Updated => "fleet_member_updated",
             FleetEventKind::Removed => "fleet_member_removed",
+            FleetEventKind::ObjectiveComplete => "objective_complete",
+        }
+    }
+}
+
+/// Aggregation of a parent's children toward its objective.
+///
+/// `complete` is `total > 0 && done == total` — an objective with no children
+/// is never "complete" (there is nothing to finish).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectiveProgress {
+    /// Id of the parent member whose objective this describes.
+    pub parent_id: String,
+    /// Number of children wired to this parent.
+    pub total: usize,
+    /// How many of those children are [`FleetStatus::Done`].
+    pub done: usize,
+    /// `true` once every child is done (and there is at least one child).
+    pub complete: bool,
+}
+
+impl ObjectiveProgress {
+    /// Build a progress snapshot from raw counts, deriving `complete`.
+    pub fn new(parent_id: impl Into<String>, total: usize, done: usize) -> Self {
+        Self {
+            parent_id: parent_id.into(),
+            total,
+            done,
+            complete: total > 0 && done == total,
         }
     }
 }
@@ -173,6 +220,8 @@ impl FleetEventKind {
 pub struct FleetEvent {
     pub kind: FleetEventKind,
     pub member: FleetMember,
+    /// Present only for [`FleetEventKind::ObjectiveComplete`]; `None` otherwise.
+    pub progress: Option<ObjectiveProgress>,
 }
 
 #[cfg(test)]
@@ -209,5 +258,22 @@ mod tests {
         assert_eq!(FleetEventKind::Added.event_name(), "fleet_member_added");
         assert_eq!(FleetEventKind::Updated.event_name(), "fleet_member_updated");
         assert_eq!(FleetEventKind::Removed.event_name(), "fleet_member_removed");
+        assert_eq!(
+            FleetEventKind::ObjectiveComplete.event_name(),
+            "objective_complete"
+        );
+    }
+
+    #[test]
+    fn objective_progress_derives_complete() {
+        // No children → never complete.
+        assert!(!ObjectiveProgress::new("p", 0, 0).complete);
+        // Partial → not complete.
+        assert!(!ObjectiveProgress::new("p", 3, 2).complete);
+        // All done → complete.
+        let full = ObjectiveProgress::new("p", 3, 3);
+        assert!(full.complete);
+        assert_eq!(full.done, 3);
+        assert_eq!(full.total, 3);
     }
 }

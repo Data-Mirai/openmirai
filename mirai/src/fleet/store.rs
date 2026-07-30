@@ -18,7 +18,10 @@ use tokio::sync::broadcast;
 
 use openmirai_engine::utils::now_epoch;
 
-use super::types::{FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, StatusUpdate};
+use super::types::{
+    FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, ObjectiveProgress,
+    StatusUpdate,
+};
 
 /// Broadcast backlog kept for slow SSE subscribers before they start lagging.
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -33,6 +36,7 @@ CREATE TABLE IF NOT EXISTS fleet (
     status       TEXT NOT NULL DEFAULT 'unknown',
     activity     TEXT NOT NULL DEFAULT '',
     objective    TEXT NOT NULL DEFAULT '',
+    parent_id    TEXT NOT NULL DEFAULT '',
     project_dir  TEXT NOT NULL DEFAULT '',
     metadata     TEXT NOT NULL DEFAULT '{}',
     first_seen   REAL NOT NULL,
@@ -43,6 +47,21 @@ CREATE INDEX IF NOT EXISTS idx_fleet_status    ON fleet(status);
 CREATE INDEX IF NOT EXISTS idx_fleet_last_seen ON fleet(last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_fleet_host      ON fleet(host);
 "#;
+
+/// Columns added after the first shipped schema. A pre-existing DB (the live
+/// `~/.openmirai/fleet.db`) was created without them, and `CREATE TABLE IF NOT
+/// EXISTS` never adds columns to a table that already exists — so each is
+/// back-filled with an idempotent `ALTER TABLE ADD COLUMN`.
+const MIGRATIONS: &[(&str, &str)] = &[(
+    "parent_id",
+    "ALTER TABLE fleet ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''",
+)];
+
+/// Indexes that depend on migrated columns. Created AFTER [`migrate`] adds the
+/// columns, so they can't be part of `SCHEMA_SQL` (which runs first, before any
+/// legacy DB has been back-filled). `IF NOT EXISTS` keeps them idempotent.
+const POST_MIGRATION_INDEXES: &str =
+    "CREATE INDEX IF NOT EXISTS idx_fleet_parent ON fleet(parent_id);";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -97,12 +116,38 @@ impl FleetStore {
         .map_err(|e| FleetError::Db(format!("failed to set PRAGMAs: {e}")))?;
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| FleetError::Db(format!("failed to init fleet schema: {e}")))?;
+        Self::migrate(&conn)?;
 
         let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Ok(Self {
             conn: Mutex::new(conn),
             events,
         })
+    }
+
+    /// Back-fill columns added after the first shipped schema onto a
+    /// pre-existing DB. Idempotent: a column already present is skipped, so this
+    /// runs safely on every `open`.
+    fn migrate(conn: &Connection) -> Result<(), FleetError> {
+        let mut have: std::collections::HashSet<String> = std::collections::HashSet::new();
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(fleet)")?;
+            let cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            for c in cols {
+                have.insert(c?);
+            }
+        }
+        for (column, ddl) in MIGRATIONS {
+            if !have.contains(*column) {
+                conn.execute_batch(ddl).map_err(|e| {
+                    FleetError::Db(format!("failed to add column '{column}': {e}"))
+                })?;
+            }
+        }
+        // Indexes over migrated columns — safe now that the columns exist.
+        conn.execute_batch(POST_MIGRATION_INDEXES)
+            .map_err(|e| FleetError::Db(format!("failed to create migrated indexes: {e}")))?;
+        Ok(())
     }
 
     /// In-memory store — the default for tests and for `AppState::new` before
@@ -141,6 +186,10 @@ impl FleetStore {
         let now = now_epoch();
 
         let existing = self.get(id)?;
+        // Snapshot the pre-update state so objective aggregation can be
+        // edge-triggered (fire only on the transition into completeness).
+        let prev_parent = existing.as_ref().map(|p| p.parent_id.clone());
+        let prev_status = existing.as_ref().map(|p| p.status);
         let (member, kind) = match existing {
             Some(prev) => {
                 // Merge: only provided fields overwrite the stored ones.
@@ -152,6 +201,7 @@ impl FleetStore {
                     status: update.status,
                     activity: update.activity.unwrap_or(prev.activity),
                     objective: update.objective.unwrap_or(prev.objective),
+                    parent_id: update.parent_id.unwrap_or(prev.parent_id),
                     project_dir: update.project_dir.unwrap_or(prev.project_dir),
                     metadata: update.metadata.unwrap_or(prev.metadata),
                     first_seen: prev.first_seen,
@@ -168,6 +218,7 @@ impl FleetStore {
                     status: update.status,
                     activity: update.activity.unwrap_or_default(),
                     objective: update.objective.unwrap_or_default(),
+                    parent_id: update.parent_id.unwrap_or_default(),
                     project_dir: update.project_dir.unwrap_or_default(),
                     metadata: update.metadata.unwrap_or_else(|| Value::Object(Default::default())),
                     first_seen: now,
@@ -182,8 +233,96 @@ impl FleetStore {
         let _ = self.events.send(FleetEvent {
             kind,
             member: member.clone(),
+            progress: None,
         });
+
+        // Objective aggregation: this write may have completed a parent's
+        // objective (all children done). A member can affect its new parent and,
+        // on a reparent, the parent it just left — check both, once each.
+        let mut parents: Vec<String> = Vec::new();
+        if !member.parent_id.is_empty() {
+            parents.push(member.parent_id.clone());
+        }
+        if let Some(prev) = &prev_parent {
+            if !prev.is_empty() && prev != &member.parent_id {
+                parents.push(prev.clone());
+            }
+        }
+        for parent in parents {
+            self.emit_if_objective_completed(
+                &parent,
+                &member,
+                prev_parent.as_deref(),
+                prev_status,
+            )?;
+        }
+
         Ok((member, kind))
+    }
+
+    /// Emit an [`FleetEventKind::ObjectiveComplete`] for `parent` iff this write
+    /// flipped its objective from not-complete to complete (edge-triggered).
+    ///
+    /// `member` is the just-applied member; `prev_parent` / `prev_status` are its
+    /// `parent_id` and status BEFORE the write (`None` if it was newly added).
+    /// Completeness is compared before/after by isolating `member`'s own
+    /// contribution to `parent`, so the event fires exactly once — on the
+    /// completing transition — and correctly handles reparenting.
+    fn emit_if_objective_completed(
+        &self,
+        parent: &str,
+        member: &FleetMember,
+        prev_parent: Option<&str>,
+        prev_status: Option<FleetStatus>,
+    ) -> Result<(), FleetError> {
+        // Counts over every OTHER child of `parent` — the stable backdrop
+        // against which `member`'s before/after contribution is toggled.
+        let (others_total, others_done) = {
+            let conn = self.conn.lock().expect("fleet mutex poisoned");
+            conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(status = 'done'), 0) \
+                 FROM fleet WHERE parent_id = ?1 AND id != ?2",
+                params![parent, member.id],
+                |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize)),
+            )?
+        };
+
+        // After: does `member` point at `parent` now, and is it done?
+        let child_now = member.parent_id == parent;
+        let after_total = others_total + child_now as usize;
+        let after_done =
+            others_done + (child_now && member.status == FleetStatus::Done) as usize;
+        let complete_after = after_total > 0 && after_done == after_total;
+
+        // Before: was `member` a child of `parent` before the write, and done?
+        let child_before = prev_parent == Some(parent);
+        let before_total = others_total + child_before as usize;
+        let before_done =
+            others_done + (child_before && prev_status == Some(FleetStatus::Done)) as usize;
+        let complete_before = before_total > 0 && before_done == before_total;
+
+        if complete_after && !complete_before {
+            if let Some(parent_member) = self.get(parent)? {
+                let _ = self.events.send(FleetEvent {
+                    kind: FleetEventKind::ObjectiveComplete,
+                    member: parent_member,
+                    progress: Some(ObjectiveProgress::new(parent, after_total, after_done)),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Aggregate a parent's children toward its objective. `parent_id` with no
+    /// children yields `total = 0` (and `complete = false`).
+    pub fn objective_progress(&self, parent_id: &str) -> Result<ObjectiveProgress, FleetError> {
+        let conn = self.conn.lock().expect("fleet mutex poisoned");
+        let (total, done) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(status = 'done'), 0) FROM fleet WHERE parent_id = ?1",
+            params![parent_id],
+            |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize)),
+        )?;
+        Ok(ObjectiveProgress::new(parent_id, total, done))
     }
 
     /// Fetch a single member by id.
@@ -192,7 +331,7 @@ impl FleetStore {
         let member = conn
             .query_row(
                 "SELECT id, name, kind, host, status, activity, objective, \
-                 project_dir, metadata, first_seen, last_seen \
+                 project_dir, metadata, first_seen, last_seen, parent_id \
                  FROM fleet WHERE id = ?1",
                 params![id],
                 row_to_member,
@@ -208,7 +347,7 @@ impl FleetStore {
         // Build the WHERE clause dynamically but with bound params only.
         let mut sql = String::from(
             "SELECT id, name, kind, host, status, activity, objective, \
-             project_dir, metadata, first_seen, last_seen FROM fleet",
+             project_dir, metadata, first_seen, last_seen, parent_id FROM fleet",
         );
         let mut clauses: Vec<String> = Vec::new();
         let mut binds: Vec<String> = Vec::new();
@@ -219,6 +358,10 @@ impl FleetStore {
         if let Some(host) = &query.host {
             clauses.push(format!("host = ?{}", binds.len() + 1));
             binds.push(host.clone());
+        }
+        if let Some(parent_id) = &query.parent_id {
+            clauses.push(format!("parent_id = ?{}", binds.len() + 1));
+            binds.push(parent_id.clone());
         }
         if !clauses.is_empty() {
             sql.push_str(" WHERE ");
@@ -255,6 +398,7 @@ impl FleetStore {
         let _ = self.events.send(FleetEvent {
             kind: FleetEventKind::Removed,
             member,
+            progress: None,
         });
         Ok(true)
     }
@@ -282,13 +426,14 @@ impl FleetStore {
         conn.execute(
             "INSERT INTO fleet \
              (id, name, kind, host, status, activity, objective, project_dir, \
-              metadata, first_seen, last_seen) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+              metadata, first_seen, last_seen, parent_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
              ON CONFLICT(id) DO UPDATE SET \
               name=excluded.name, kind=excluded.kind, host=excluded.host, \
               status=excluded.status, activity=excluded.activity, \
               objective=excluded.objective, project_dir=excluded.project_dir, \
-              metadata=excluded.metadata, last_seen=excluded.last_seen",
+              metadata=excluded.metadata, last_seen=excluded.last_seen, \
+              parent_id=excluded.parent_id",
             params![
                 m.id,
                 m.name,
@@ -301,6 +446,7 @@ impl FleetStore {
                 metadata,
                 m.first_seen,
                 m.last_seen,
+                m.parent_id,
             ],
         )?;
         Ok(())
@@ -321,6 +467,7 @@ fn row_to_member(row: &Row<'_>) -> rusqlite::Result<Result<FleetMember, FleetErr
     let metadata_raw: String = row.get(8)?;
     let first_seen: f64 = row.get(9)?;
     let last_seen: f64 = row.get(10)?;
+    let parent_id: String = row.get(11)?;
 
     Ok((|| {
         let status = FleetStatus::parse(&status_raw)
@@ -335,6 +482,7 @@ fn row_to_member(row: &Row<'_>) -> rusqlite::Result<Result<FleetMember, FleetErr
             status,
             activity,
             objective,
+            parent_id,
             project_dir,
             metadata,
             first_seen,
@@ -361,6 +509,7 @@ mod tests {
             host: None,
             activity: None,
             objective: None,
+            parent_id: None,
             project_dir: None,
             metadata: None,
         }
@@ -460,6 +609,141 @@ mod tests {
         assert!(store.remove("gone").unwrap());
         assert!(store.get("gone").unwrap().is_none());
         assert!(!store.remove("gone").unwrap(), "second remove is a no-op");
+    }
+
+    fn child(id: &str, parent: &str, status: FleetStatus) -> StatusUpdate {
+        let mut u = update(id, status);
+        u.parent_id = Some(parent.to_string());
+        u
+    }
+
+    /// Drain every event currently queued on `rx`, returning them in order.
+    fn drain(rx: &mut broadcast::Receiver<FleetEvent>) -> Vec<FleetEvent> {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            out.push(ev);
+        }
+        out
+    }
+
+    #[test]
+    fn objective_progress_aggregates_children() {
+        let store = FleetStore::in_memory().unwrap();
+        store.apply_status(update("p", FleetStatus::Working)).unwrap();
+        store.apply_status(child("a", "p", FleetStatus::Working)).unwrap();
+        store.apply_status(child("b", "p", FleetStatus::Done)).unwrap();
+
+        let prog = store.objective_progress("p").unwrap();
+        assert_eq!(prog.total, 2);
+        assert_eq!(prog.done, 1);
+        assert!(!prog.complete);
+
+        // A parent with no children is never complete.
+        let empty = store.objective_progress("nobody").unwrap();
+        assert_eq!(empty.total, 0);
+        assert!(!empty.complete);
+    }
+
+    #[test]
+    fn objective_complete_is_edge_triggered_once() {
+        let store = FleetStore::in_memory().unwrap();
+        let mut rx = store.subscribe();
+        store.apply_status(update("p", FleetStatus::Working)).unwrap();
+        store.apply_status(child("a", "p", FleetStatus::Working)).unwrap();
+        store.apply_status(child("b", "p", FleetStatus::Working)).unwrap();
+        drain(&mut rx); // clear the added/updated noise
+
+        // First child done → still one to go, no completion.
+        store.apply_status(child("a", "p", FleetStatus::Done)).unwrap();
+        let evs = drain(&mut rx);
+        assert!(
+            !evs.iter().any(|e| e.kind == FleetEventKind::ObjectiveComplete),
+            "must not fire on partial progress"
+        );
+
+        // Last child done → exactly one objective_complete for the parent.
+        store.apply_status(child("b", "p", FleetStatus::Done)).unwrap();
+        let evs = drain(&mut rx);
+        let completes: Vec<_> = evs
+            .iter()
+            .filter(|e| e.kind == FleetEventKind::ObjectiveComplete)
+            .collect();
+        assert_eq!(completes.len(), 1, "fires exactly once");
+        assert_eq!(completes[0].member.id, "p", "member is the parent");
+        let prog = completes[0].progress.as_ref().unwrap();
+        assert!(prog.complete);
+        assert_eq!(prog.total, 2);
+        assert_eq!(prog.done, 2);
+
+        // Re-reporting the same done child must NOT re-fire (still complete).
+        store.apply_status(child("b", "p", FleetStatus::Done)).unwrap();
+        let evs = drain(&mut rx);
+        assert!(
+            !evs.iter().any(|e| e.kind == FleetEventKind::ObjectiveComplete),
+            "no re-fire while it stays complete"
+        );
+
+        // A child leaving done, then completing again, re-fires (real re-completion).
+        store.apply_status(child("b", "p", FleetStatus::Working)).unwrap();
+        drain(&mut rx);
+        store.apply_status(child("b", "p", FleetStatus::Done)).unwrap();
+        let evs = drain(&mut rx);
+        assert_eq!(
+            evs.iter().filter(|e| e.kind == FleetEventKind::ObjectiveComplete).count(),
+            1,
+            "re-completion fires again"
+        );
+    }
+
+    #[test]
+    fn childless_parent_status_never_completes() {
+        // A member that is itself Done but has no children is not an objective
+        // completion — completion is about aggregating children.
+        let store = FleetStore::in_memory().unwrap();
+        let mut rx = store.subscribe();
+        store.apply_status(update("solo", FleetStatus::Done)).unwrap();
+        let evs = drain(&mut rx);
+        assert!(!evs.iter().any(|e| e.kind == FleetEventKind::ObjectiveComplete));
+    }
+
+    #[test]
+    fn migrate_backfills_parent_id_on_legacy_db() {
+        let dir = std::env::temp_dir()
+            .join(format!("mirai-fleet-migrate-{}", openmirai_engine::utils::short_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fleet.db");
+        let p = path.to_str().unwrap();
+
+        // Hand-build the ORIGINAL schema (no parent_id column) and insert a row.
+        {
+            let conn = Connection::open(p).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE fleet (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL DEFAULT 'agent', host TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'unknown', activity TEXT NOT NULL DEFAULT '',
+                    objective TEXT NOT NULL DEFAULT '', project_dir TEXT NOT NULL DEFAULT '',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    first_seen REAL NOT NULL, last_seen REAL NOT NULL
+                );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO fleet (id, status, first_seen, last_seen) VALUES ('legacy','online',1.0,1.0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Opening runs the migration; the legacy row must survive and read back
+        // with an empty parent_id, and new parent-aware writes must work.
+        let store = FleetStore::open(p).unwrap();
+        let legacy = store.get("legacy").unwrap().unwrap();
+        assert_eq!(legacy.parent_id, "");
+        store.apply_status(child("kid", "legacy", FleetStatus::Done)).unwrap();
+        assert_eq!(store.objective_progress("legacy").unwrap().done, 1);
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

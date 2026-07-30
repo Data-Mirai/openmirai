@@ -19,8 +19,8 @@ pub mod sessions;
 
 // Re-export fleet SoT types.
 pub use fleet::{
-    FleetError, FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, FleetStore,
-    StatusUpdate,
+    EventFilter, FleetError, FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus,
+    FleetStore, FleetSubscriber, ObjectiveProgress, StatusUpdate,
 };
 
 // Re-export session orchestration types.

@@ -1,0 +1,74 @@
+# leer-objetivo — agregación del objetivo de un padre desde el centro (workflow OpenMirai)
+#
+# La cara pull de la notificación reactiva: leer cuántos hijos de un padre están
+# Done y si su objetivo ya está completo, expresado como EJECUCIÓN DE WORKFLOW.
+# Un único nodo `net/http_request` hace GET /api/v1/fleet/objective/{parent_id}
+# y devuelve {parent_id, total, done, complete, children}.
+#
+# Es el complemento de `reportar-hijo` (que empuja el evento `objective_complete`
+# por SSE): este workflow consulta el mismo estado agregado bajo demanda.
+#
+# `base_url` lo inyecta el endpoint de run
+# (/api/v1/workflows/leer-objetivo/run) apuntando a ESTE mismo motor.
+#
+# Run:
+#   POST /api/v1/workflows/leer-objetivo/run
+#   { "trigger_data": { "parent_id": "orquestador" } }
+
+name: leer-objetivo
+version: v1
+description: "Agregación del objetivo de un padre: GET /fleet/objective/{parent_id} → {total, done, complete, children}. Un solo HTTP node contra la API del motor."
+
+inputs:
+  parent_id:
+    type: text
+    required: true
+    description: "Id del padre cuyo objetivo se agrega (Done = todos los hijos Done)"
+
+outputs:
+  total:
+    type: text
+    description: "Número de hijos cableados a este padre"
+  done:
+    type: text
+    description: "Cuántos de esos hijos están Done"
+  complete:
+    type: text
+    description: "true si todos los hijos están Done (y hay al menos uno)"
+  children:
+    type: json
+    description: "Lista de los hijos con su último estado conocido"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # PASO ÚNICO — leer la agregación del objetivo del padre.
+    - id: read_objective
+      tool_type: net/http_request
+      config:
+        method: GET
+        url: "${base_url}/api/v1/fleet/objective/${parent_id}"
+
+    - id: respond
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: start
+      target: read_objective
+      data_map:
+        base_url: "start.payload.base_url"
+        parent_id: "start.payload.parent_id"
+
+    # net/http_request aplana las claves top-level de la respuesta JSON
+    # ({parent_id, total, done, complete, children}) en el output del nodo.
+    - source: read_objective
+      target: respond
+      data_map:
+        total: "read_objective.total"
+        done: "read_objective.done"
+        complete: "read_objective.complete"
+        children: "read_objective.children"

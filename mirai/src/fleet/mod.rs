@@ -7,11 +7,16 @@
 //!
 //! - [`store`] — [`FleetStore`], the SQLite-backed store + event broadcaster.
 //! - [`types`] — the SoT record ([`FleetMember`]) and request/event types.
+//! - [`subscriber`] — [`FleetSubscriber`], the filtering pub-sub consumer of the
+//!   event stream (the reactive `objective_complete` notification).
 
 pub mod store;
+pub mod subscriber;
 pub mod types;
 
 pub use store::{FleetError, FleetStore};
+pub use subscriber::{EventFilter, FleetSubscriber};
 pub use types::{
-    FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, StatusUpdate,
+    FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, ObjectiveProgress,
+    StatusUpdate,
 };

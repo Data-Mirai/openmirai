@@ -16,14 +16,16 @@
 //! SSE endpoint additionally accepts the key as `?api_key=` (EventSource cannot
 //! set headers — see the auth middleware).
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::fleet::{FleetError, FleetEventKind, FleetMember, FleetQuery, FleetStatus, StatusUpdate};
+use crate::fleet::{
+    FleetError, FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus, StatusUpdate,
+};
 
 use super::state::{MiraiState, ErrorResponse};
 
@@ -71,6 +73,9 @@ pub(crate) async fn fleet_status(
         FleetEventKind::Added => "added",
         FleetEventKind::Updated => "updated",
         FleetEventKind::Removed => "removed",
+        // apply_status only ever returns Added/Updated; objective_complete is a
+        // broadcast-only event, never the return kind of a status write.
+        FleetEventKind::ObjectiveComplete => "updated",
     };
     Ok(Json(json!({
         "id": member.id,
@@ -90,6 +95,9 @@ pub(crate) struct AgentsQuery {
     pub status: Option<String>,
     #[serde(default)]
     pub host: Option<String>,
+    /// Only the children of this parent.
+    #[serde(default)]
+    pub parent_id: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
     /// When set, each member gets a `stale` flag: `last_seen` older than this
@@ -114,6 +122,7 @@ pub(crate) async fn fleet_list_agents(
     let filter = FleetQuery {
         status,
         host: query.host.filter(|h| !h.is_empty()),
+        parent_id: query.parent_id.filter(|p| !p.is_empty()),
         limit: query.limit.map(|l| l.clamp(1, 5000)),
     };
     let members = state.fleet.list(&filter).map_err(fleet_error_response)?;
@@ -124,6 +133,51 @@ pub(crate) async fn fleet_list_agents(
         .collect();
 
     Ok(Json(json!({ "agents": agents, "count": agents.len() })))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/fleet/objective/{parent_id} — objective aggregation snapshot
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/fleet/objective/{parent_id}
+///
+/// Point-in-time aggregation of a parent's objective: `{parent_id, total, done,
+/// complete, children}`. The `objective_complete` SSE event is the push
+/// counterpart; this is the pull one.
+pub(crate) async fn fleet_objective(
+    State(state): State<MiraiState>,
+    Path(parent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    let progress = state
+        .fleet
+        .objective_progress(&parent_id)
+        .map_err(fleet_error_response)?;
+    let children = state
+        .fleet
+        .list(&FleetQuery {
+            parent_id: Some(parent_id.clone()),
+            ..Default::default()
+        })
+        .map_err(fleet_error_response)?;
+    let children_json: Vec<Value> = children.iter().map(|m| member_json(m, None, 0.0)).collect();
+    Ok(Json(json!({
+        "parent_id": progress.parent_id,
+        "total": progress.total,
+        "done": progress.done,
+        "complete": progress.complete,
+        "children": children_json,
+    })))
+}
+
+/// Build the SSE `data:` payload for an event. For every kind it is the member
+/// record; `objective_complete` additionally carries the `objective_progress`
+/// aggregation so subscribers get the completion counts without a second call.
+fn sse_payload(event: &FleetEvent) -> String {
+    let mut v = serde_json::to_value(&event.member).unwrap_or_else(|_| json!({}));
+    if let Some(progress) = &event.progress {
+        v["objective_progress"] = serde_json::to_value(progress).unwrap_or(Value::Null);
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| "{}".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +204,7 @@ pub(crate) async fn fleet_events(State(state): State<MiraiState>) -> impl IntoRe
         loop {
             match events.recv().await {
                 Ok(event) => {
-                    let payload =
-                        serde_json::to_string(&event.member).unwrap_or_else(|_| "{}".into());
+                    let payload = sse_payload(&event);
                     let frame =
                         format!("event: {}\ndata: {}\n\n", event.kind.event_name(), payload);
                     if tx.send(Ok(frame)).await.is_err() {
@@ -408,6 +461,7 @@ mod tests {
                 host: None,
                 activity: None,
                 objective: None,
+                parent_id: None,
                 project_dir: None,
                 metadata: None,
             })
@@ -431,6 +485,109 @@ mod tests {
         assert_eq!(payload["id"], "worker");
         assert_eq!(payload["status"], "working");
         assert_eq!(payload["name"], "Worker");
+    }
+
+    #[tokio::test]
+    async fn objective_endpoint_returns_progress_and_children() {
+        let app = test_app();
+        post_status(&app, json!({"id": "boss", "status": "working"})).await;
+        post_status(&app, json!({"id": "c1", "status": "done", "parent_id": "boss"})).await;
+        post_status(&app, json!({"id": "c2", "status": "working", "parent_id": "boss"})).await;
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/fleet/objective/boss")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["parent_id"], "boss");
+        assert_eq!(body["total"], 2);
+        assert_eq!(body["done"], 1);
+        assert_eq!(body["complete"], false);
+        assert_eq!(body["children"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn events_streams_objective_complete_with_progress() {
+        use crate::fleet::{FleetStatus, StatusUpdate};
+
+        let child = |id: &str, status: FleetStatus| StatusUpdate {
+            id: id.into(),
+            status,
+            name: None,
+            kind: None,
+            host: None,
+            activity: None,
+            objective: None,
+            parent_id: Some("parent".into()),
+            project_dir: None,
+            metadata: None,
+        };
+        let bare = |id: &str, status: FleetStatus| StatusUpdate {
+            id: id.into(),
+            status,
+            name: None,
+            kind: None,
+            host: None,
+            activity: None,
+            objective: None,
+            parent_id: None,
+            project_dir: None,
+            metadata: None,
+        };
+
+        let state = MiraiState::new();
+        // Parent + two working children exist before anyone subscribes.
+        state.fleet.apply_status(bare("parent", FleetStatus::Working)).unwrap();
+        state.fleet.apply_status(child("a", FleetStatus::Working)).unwrap();
+        state.fleet.apply_status(child("b", FleetStatus::Working)).unwrap();
+
+        let app = router(state.clone());
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/fleet/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let mut body = resp.into_body().into_data_stream();
+        use futures_util::StreamExt;
+        let _connected = body.next().await.unwrap().unwrap();
+
+        // Complete the objective: last child done → objective_complete frame.
+        state.fleet.apply_status(child("a", FleetStatus::Done)).unwrap();
+        state.fleet.apply_status(child("b", FleetStatus::Done)).unwrap();
+
+        // Scan frames until the objective_complete arrives (skipping the
+        // fleet_member_updated frames for the child writes).
+        let complete = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let frame = body.next().await.unwrap().unwrap();
+                let text = String::from_utf8_lossy(&frame).to_string();
+                if text.starts_with("event: objective_complete\n") {
+                    return text;
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for objective_complete");
+
+        let data_line = complete
+            .lines()
+            .find_map(|l| l.strip_prefix("data: "))
+            .expect("data line");
+        let payload: Value = serde_json::from_str(data_line).unwrap();
+        assert_eq!(payload["id"], "parent", "member is the parent");
+        assert_eq!(payload["objective_progress"]["complete"], true);
+        assert_eq!(payload["objective_progress"]["total"], 2);
+        assert_eq!(payload["objective_progress"]["done"], 2);
+        assert_eq!(payload["objective_progress"]["parent_id"], "parent");
     }
 
     #[tokio::test]

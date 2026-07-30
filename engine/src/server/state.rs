@@ -11,6 +11,7 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
+use crate::fleet::FleetStore;
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
 use crate::sessions::{SessionManager, TmuxBackend};
@@ -66,6 +67,12 @@ pub struct AppState {
     pub projects_dirs: Vec<std::path::PathBuf>,
     /// Native host folder picker (PRD-013 M9). One dialog at a time.
     pub folder_picker: Arc<crate::sessions::picker::FolderPicker>,
+    /// Fleet SoT — SQLite (WAL) source of truth for the agent fleet.
+    ///
+    /// `AppState::new` defaults to an in-memory store; `serve()` swaps in the
+    /// file-backed one at `~/.openmirai/fleet.db` so the fleet survives
+    /// restarts. Tests reach it directly for setup/asserts.
+    pub fleet: Arc<FleetStore>,
 }
 
 impl AppState {
@@ -99,6 +106,9 @@ impl AppState {
             ui_dir: None,
             projects_dirs: Vec::new(),
             folder_picker: Arc::new(crate::sessions::picker::FolderPicker::new()),
+            fleet: Arc::new(
+                FleetStore::in_memory().expect("in-memory fleet store must open"),
+            ),
         }
     }
 

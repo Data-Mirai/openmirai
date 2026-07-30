@@ -6,6 +6,7 @@
 //! - [`helpers`]: Agent execution helpers shared by handlers
 
 pub mod editor;
+pub mod fleet;
 pub mod handlers;
 pub mod helpers;
 pub mod orchestrator;
@@ -28,6 +29,7 @@ use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
 
+use self::fleet::{fleet_events, fleet_list_agents, fleet_status};
 use self::handlers::*;
 use self::helpers::rag_search;
 use self::orchestrator::{
@@ -129,6 +131,10 @@ pub fn create_router(state: AppState) -> Router {
             post(orchestrator_record_activity).get(orchestrator_get_activity),
         )
         .route("/api/v1/orchestrator/events", get(orchestrator_events))
+        // Fleet SoT (SQLite/WAL): back-way status ingress, list, live SSE.
+        .route("/api/v1/fleet/status", post(fleet_status))
+        .route("/api/v1/fleet/agents", get(fleet_list_agents))
+        .route("/api/v1/fleet/events", get(fleet_events))
         // Known projects for the create-session picker (PRD-013 M7)
         .route(
             "/api/v1/orchestrator/projects",
@@ -314,9 +320,11 @@ async fn auth_middleware(
 
     let provided = req.headers().get("X-API-Key").and_then(|v| v.to_str().ok());
 
-    // PRD-013: EventSource cannot set headers, so the orchestrator SSE
-    // endpoint also accepts the key as a `?api_key=` query param.
-    let query_key: Option<String> = if path == "/api/v1/orchestrator/events" {
+    // PRD-013: EventSource cannot set headers, so the SSE endpoints also
+    // accept the key as a `?api_key=` query param.
+    let query_key: Option<String> = if path == "/api/v1/orchestrator/events"
+        || path == "/api/v1/fleet/events"
+    {
         req.uri().query().and_then(|q| {
             url::form_urlencoded::parse(q.as_bytes())
                 .find(|(k, _)| k == "api_key")
@@ -428,6 +436,20 @@ pub async fn serve(
     // POST dies with a silent 401 at the auth middleware.
     state.orchestrator.set_api_key(state.api_key.clone());
     state.orchestrator.start_polling();
+
+    // Fleet SoT: swap the in-memory default for a WAL-mode file-backed store so
+    // the fleet survives restarts. Falls back to the in-memory store on error.
+    let fleet_path = crate::fleet::FleetStore::default_path();
+    if let Some(parent) = fleet_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match crate::fleet::FleetStore::open(&fleet_path.to_string_lossy()) {
+        Ok(store) => {
+            tracing::info!("fleet SoT at {}", fleet_path.display());
+            state.fleet = std::sync::Arc::new(store);
+        }
+        Err(e) => tracing::warn!("fleet: falling back to in-memory store: {e}"),
+    }
 
     let app = create_router(state);
 

@@ -38,7 +38,7 @@ use self::workflows::{get_run, workflow_run};
 
 /// Build the core engine router: routes only, state applied, NO middleware.
 ///
-/// The AgentMirai layer (the `mirai` crate) merges its own orchestrator /
+/// The AgentMirai layer (the `agentmirai` crate) merges its own orchestrator /
 /// fleet / UI routes onto this and then wraps the whole thing with
 /// [`apply_security`], so core and command-center endpoints share one policy.
 pub fn core_router(state: AppState) -> Router {
@@ -310,7 +310,7 @@ fn api_key_matches(provided: &str, expected: &str) -> bool {
 /// Emit the no-API-key security warning for a bind (`host:port`).
 ///
 /// Shared by the engine's core [`serve`] and the AgentMirai layer's
-/// `mirai::serve`, so both surface the same drive-by-RCE caveat.
+/// `agentmirai::serve`, so both surface the same drive-by-RCE caveat.
 pub fn warn_if_no_api_key(host: &str, port: u16, api_key: &Option<String>) {
     if api_key.is_some() {
         return;
@@ -371,7 +371,7 @@ pub fn core_app_state(
 
 /// Bind `host:port` and serve `app` with graceful shutdown on SIGTERM / SIGINT.
 ///
-/// Shared by the engine's core [`serve`] and by `mirai::serve`.
+/// Shared by the engine's core [`serve`] and by `agentmirai::serve`.
 pub async fn bind_and_serve(
     host: &str,
     port: u16,
@@ -390,7 +390,7 @@ pub async fn bind_and_serve(
 /// Start the core engine HTTP server (no AgentMirai layer).
 ///
 /// The full command-center server (orchestrator + fleet + UI) is
-/// `mirai::serve`, which the `mirai` binary uses. This core `serve` is for
+/// `agentmirai::serve`, which the `mirai` binary uses. This core `serve` is for
 /// library users embedding only the graph/agent engine.
 pub async fn serve(
     host: &str,

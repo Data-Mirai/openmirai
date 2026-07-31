@@ -559,9 +559,9 @@ async fn run_serve(args: &[String]) {
         .or_else(|| std::env::var("MIRAI_PROJECTS_DIRS").ok());
 
     // The full command-center server (core engine + orchestrator + fleet + UI)
-    // lives in the `mirai` crate. `openmirai_engine::server::serve` serves only
-    // the core engine.
-    if let Err(e) = mirai::serve(
+    // lives in the `agentmirai` crate. `openmirai_engine::server::serve` serves
+    // only the core engine.
+    if let Err(e) = agentmirai::serve(
         &host,
         port,
         llm_factory,

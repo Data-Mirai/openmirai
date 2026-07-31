@@ -1,5 +1,5 @@
 [package]
-name = "mirai"
+name = "agentmirai"
 version = "0.7.0"
 edition = "2021"
 rust-version = "1.80"
@@ -7,7 +7,7 @@ description = "AgentMirai — the command-center layer (sessions, fleet SoT, HTT
 license = "MIT"
 
 [lib]
-name = "mirai"
+name = "agentmirai"
 path = "src/lib.rs"
 
 [dependencies]

@@ -7,6 +7,7 @@
 //! router under a single auth / CORS / cross-site policy.
 
 pub mod fleet;
+pub mod objectives;
 pub mod orchestrator;
 pub mod state;
 
@@ -26,6 +27,9 @@ use openmirai_engine::server::{
 };
 
 use self::fleet::{fleet_events, fleet_list_agents, fleet_objective, fleet_status};
+use self::objectives::{
+    objectives_create, objectives_get, objectives_link_agents, objectives_list, objectives_patch,
+};
 use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
     orchestrator_get_session, orchestrator_list_projects, orchestrator_list_sessions,
@@ -109,6 +113,19 @@ pub fn mirai_router(state: MiraiState) -> Router {
         .route("/api/v1/fleet/agents", get(fleet_list_agents))
         .route("/api/v1/fleet/objective/{parent_id}", get(fleet_objective))
         .route("/api/v1/fleet/events", get(fleet_events))
+        // Objective SoT (SQLite/WAL): create/list/get/patch + agent linking.
+        .route(
+            "/api/v1/objectives",
+            post(objectives_create).get(objectives_list),
+        )
+        .route(
+            "/api/v1/objectives/{id}",
+            get(objectives_get).patch(objectives_patch),
+        )
+        .route(
+            "/api/v1/objectives/{id}/agents",
+            post(objectives_link_agents),
+        )
         // Static web UI served by the engine (PRD-013 M6) — no auth (localhost)
         .route("/ui", get(serve_ui_index))
         .route("/ui/{*path}", get(serve_ui))
@@ -201,6 +218,16 @@ pub async fn serve(
             mirai.fleet = Arc::new(store);
         }
         Err(e) => tracing::warn!("fleet: falling back to in-memory store: {e}"),
+    }
+
+    // Objective SoT: shares the same WAL file as the fleet (disjoint tables), so
+    // objectives + their agent links survive restarts next to the flota.
+    match crate::objectives::ObjectiveStore::open(&fleet_path.to_string_lossy()) {
+        Ok(store) => {
+            tracing::info!("objective SoT at {}", fleet_path.display());
+            mirai.objectives = Arc::new(store);
+        }
+        Err(e) => tracing::warn!("objectives: falling back to in-memory store: {e}"),
     }
 
     let app = create_router(core, mirai);

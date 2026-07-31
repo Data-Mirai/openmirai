@@ -6,6 +6,39 @@
 
 ---
 
+### [2026-07-31] Sesion: motor-tabla-objetivos (AGENTE 1 · fan-out MVP 10-ago)
+**Estado**: COMPLETADO
+**Proyecto**: OpenMirai Engine — SoT de Objetivos en SQLite/WAL + API HTTP
+**Objetivo**: Persistir objetivos del usuario y su puente objetivo↔agente en el crate `agentmirai`, exponiendo el CONTRATO API compartido con el AGENTE 2 (wizard). Fan-out en paralelo bajo contrato fijo.
+
+**Archivos tocados**:
+- CREADO `agentmirai/src/objectives/{mod,types,store}.rs` — `ObjectiveStore` (SQLite/WAL, calca estilo de `fleet/store.rs`): tabla `objectives` + tabla puente `objective_agents`. Convive en el MISMO `fleet.db` que la flota (tablas disjuntas). 12 unit tests del store.
+- CREADO `agentmirai/src/server/objectives.rs` — handlers HTTP del contrato + link de agentes. 11 tests de endpoints (router-level, tower oneshot).
+- MODIFICADO `agentmirai/src/server/state.rs` — `MiraiState` gana `objectives: Arc<ObjectiveStore>` (in-memory por defecto; `serve` inyecta el file-backed).
+- MODIFICADO `agentmirai/src/server/mod.rs` — rutas `/api/v1/objectives*` + apertura del store en `serve()` sobre `~/.openmirai/fleet.db`.
+- MODIFICADO `agentmirai/src/lib.rs` — módulo `objectives` + re-exports.
+
+**Contrato entregado (ENDPOINTS reales)**:
+- `POST /api/v1/objectives` `{text, project_dir?, status?, agents?}` → objetivo completo (incluye `id`).
+- `GET  /api/v1/objectives` → `{objectives:[…], count}`.
+- `GET  /api/v1/objectives/{id}` → `{id, text, status, project_dir, created, updated, agents:[member…]}` (agents resueltos vía puente contra la flota).
+- `PATCH /api/v1/objectives/{id}` `{status}` → objetivo actualizado (404 si no existe).
+- `POST /api/v1/objectives/{id}/agents` `{fleet_id}` | `{fleet_ids:[…]}` → puebla el puente (idempotente). **[superset del contrato, no rompe al AGENTE 2]**
+
+**ESQUEMA real** (en `fleet.db`, WAL):
+- `objectives(id TEXT PK, text TEXT, status TEXT[open|working|done], project_dir TEXT, created_at REAL, updated_at REAL)` + idx status, created_at.
+- `objective_agents(objective_id TEXT, fleet_id TEXT, linked_at REAL, PRIMARY KEY(objective_id, fleet_id))` + idx fleet_id.
+
+**Decisiones tomadas**:
+- Puente join a nivel de handler (`state.fleet.get()`) en vez de JOIN SQL → stores desacoplados y testeables in-memory por separado. Agente linkeado sin registro en flota → placeholder `{id}` (el link sigue visible).
+- Mismo archivo `fleet.db` para ambos stores (dos conexiones WAL, tablas disjuntas) → "junto a la flota" literal, sin segundo fichero.
+- `id` de objetivo generado en server (`short_id()`), no provisto por el cliente.
+- `POST /{id}/agents` añadido para poblar el puente (el contrato de 4 endpoints no dice cómo se llena) — endpoint ADICIONAL, contrato base intacto.
+
+**Resultado**: `cargo test --workspace` VERDE con `-D warnings` (agentmirai 148 · cli 13 · engine 768 · 0 fallos). Redeploy `:4321` OK (SIGTERM al PID viejo + `nohup mirai serve` con flags calcados). Verificado E2E contra el server vivo: fleet/agents sigue 200, POST→{id}, GET lo devuelve, link puente OK, PATCH OK. **Fan-in confirmado**: el orquestador/AGENTE 2 ya creó un objetivo real ("smoke test") contra el endpoint vivo. Commit local (Gabriel pushea).
+
+---
+
 ### [2026-07-30] Sesion: refactor-agentmirai-separacion
 **Estado**: COMPLETADO
 **Proyecto**: OpenMirai Engine — separar la capa AgentMirai del motor

@@ -14,6 +14,7 @@
 //! reverse. The engine knows nothing about sessions or the fleet.
 
 pub mod fleet;
+pub mod objectives;
 pub mod server;
 pub mod sessions;
 
@@ -22,6 +23,9 @@ pub use fleet::{
     EventFilter, FleetError, FleetEvent, FleetEventKind, FleetMember, FleetQuery, FleetStatus,
     FleetStore, FleetSubscriber, ObjectiveProgress, StatusUpdate,
 };
+
+// Re-export objective SoT types.
+pub use objectives::{NewObjective, Objective, ObjectiveError, ObjectiveStatus, ObjectiveStore};
 
 // Re-export session orchestration types.
 pub use sessions::{

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::fleet::FleetStore;
+use crate::objectives::ObjectiveStore;
 use crate::sessions::picker::FolderPicker;
 use crate::sessions::{SessionManager, TmuxBackend};
 
@@ -39,6 +40,14 @@ pub struct MiraiState {
     /// swaps in the file-backed one at `~/.openmirai/fleet.db` so the fleet
     /// survives restarts. Tests reach it directly for setup/asserts.
     pub fleet: Arc<FleetStore>,
+    /// Objective SoT — SQLite (WAL) source of truth for fleet objectives and
+    /// their agent links (the `objective_agents` bridge). Lives in the same
+    /// `fleet.db` as [`MiraiState::fleet`].
+    ///
+    /// [`MiraiState::new`] defaults to an in-memory store; [`super::serve`] swaps
+    /// in the file-backed one so objectives survive restarts. Tests reach it
+    /// directly for setup/asserts.
+    pub objectives: Arc<ObjectiveStore>,
 }
 
 impl MiraiState {
@@ -53,6 +62,9 @@ impl MiraiState {
             projects_dirs: Vec::new(),
             ui_dir: None,
             fleet: Arc::new(FleetStore::in_memory().expect("in-memory fleet store must open")),
+            objectives: Arc::new(
+                ObjectiveStore::in_memory().expect("in-memory objective store must open"),
+            ),
         }
     }
 }

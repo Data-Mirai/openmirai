@@ -4,7 +4,7 @@ version = "0.7.0"
 edition = "2021"
 rust-version = "1.80"
 description = "Interactive CLI for OpenMirai"
-license = "MIT"
+license = "Apache-2.0"
 
 [[bin]]
 name = "mirai"

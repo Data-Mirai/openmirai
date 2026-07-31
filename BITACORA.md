@@ -6,6 +6,21 @@
 
 ---
 
+### [2026-07-31] Sesion: relicense-apache (agente mecanico · fan-out)
+**Estado**: COMPLETADO
+**Proyecto**: OpenMirai Engine — relicenciar de MIT a Apache 2.0
+**Objetivo**: Al constituir Data Mirai Inc., el motor open source pasa a Apache 2.0 (patent grant + cláusula defensiva que MIT no da). Autoriza Gabriel (31-jul-2026). Engine v0.7.0.
+
+**Archivos tocados**:
+- MODIFICADO `LICENSE` — texto MIT reemplazado por Apache License 2.0 íntegro (copyright appendix: "Copyright 2026 Data Mirai Inc.").
+- CREADO `NOTICE` — "OpenMirai" / "Copyright 2026 Data Mirai Inc.".
+- MODIFICADO `engine/Cargo.toml`, `cli/Cargo.toml`, `agentmirai/Cargo.toml` — `license = "MIT"` → `"Apache-2.0"`.
+- MODIFICADO `README.md` — badge, línea de features, tabla comparativa y sección License → Apache-2.0.
+
+**Resultado**: OpenMirai relicenciado MIT→Apache-2.0. `cargo check --workspace` verde (metadata no rompe build). Commit local; Gabriel pushea (safety valve — nada público hasta push).
+
+---
+
 ### [2026-07-31] Sesion: motor-tabla-objetivos (AGENTE 1 · fan-out MVP 10-ago)
 **Estado**: COMPLETADO
 **Proyecto**: OpenMirai Engine — SoT de Objetivos en SQLite/WAL + API HTTP

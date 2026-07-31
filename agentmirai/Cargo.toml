@@ -4,7 +4,7 @@ version = "0.7.0"
 edition = "2021"
 rust-version = "1.80"
 description = "AgentMirai — the command-center layer (sessions, fleet SoT, HTTP orchestration) over the OpenMirai engine"
-license = "MIT"
+license = "Apache-2.0"
 
 [lib]
 name = "agentmirai"

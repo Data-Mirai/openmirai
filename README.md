@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml/badge.svg)](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Gabo-TheCreator/openmirai?include_prereleases&sort=semver)](https://github.com/Gabo-TheCreator/openmirai/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
 > **Decentralize your AI agents.** One binary. Any LLM. Your machine. Your rules.
@@ -11,7 +11,7 @@ OpenMirai is a Rust-native engine that runs agentic workflows defined as simple 
 
 A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
 
-**50 built-in tools** · **7 LLM providers** · **712 tests** · **MIT license**
+**50 built-in tools** · **7 LLM providers** · **712 tests** · **Apache-2.0 license**
 
 ## Why decentralized?
 
@@ -101,7 +101,7 @@ The agent defines **what** to do. The engine decides **how** to run it.
 | LLM choice | 7 providers, local-first | Provider-agnostic | Gemini-first |
 | Agent format | Portable YAML | Python code | Python code |
 | Embed in any app | CLI · HTTP · Rust crate | Python library | Python library |
-| License | MIT | MIT | Apache-2.0 |
+| License | Apache-2.0 | MIT | Apache-2.0 |
 
 The point isn't "more features" — it's **where and how it runs**: yours, portable, and not chained to a cloud.
 
@@ -196,4 +196,4 @@ OpenMirai is open source and built in the open. Contributions are welcome — ne
 
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

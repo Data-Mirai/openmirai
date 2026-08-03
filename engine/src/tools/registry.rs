@@ -144,7 +144,9 @@ impl ToolExecutor for RegistryExecutor {
         };
 
         // Validate configuration fields (Milestone 3)
-        if let Err(validation_errors) = crate::tools::base::validate_node_config(&node.config, tool_spec, &node.id) {
+        if let Err(validation_errors) =
+            crate::tools::base::validate_node_config(&node.config, tool_spec, &node.id)
+        {
             return Err(ToolError::ExecutionFailed {
                 tool_type: node.tool_type.clone(),
                 message: validation_errors.join("; "),

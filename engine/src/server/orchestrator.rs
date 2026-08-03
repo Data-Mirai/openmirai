@@ -126,7 +126,10 @@ pub(crate) async fn orchestrator_send(
         .await
         .map_err(session_error_response)?;
 
-    Ok((StatusCode::ACCEPTED, Json(json!({ "id": id, "sent": true }))))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({ "id": id, "sent": true })),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,12 +233,13 @@ pub(crate) struct RegisterExternalRequest {
 /// UI uses (working|waiting|permission|stopped|error|starting). Rejects unknown
 /// values with a clear 400.
 fn parse_status(raw: &str) -> Result<SessionStatus, SessionError> {
-    serde_json::from_value::<SessionStatus>(Value::String(raw.trim().to_lowercase()))
-        .map_err(|_| {
+    serde_json::from_value::<SessionStatus>(Value::String(raw.trim().to_lowercase())).map_err(
+        |_| {
             SessionError::Invalid(format!(
                 "invalid status '{raw}' (want working|waiting|permission|stopped|error|starting)"
             ))
-        })
+        },
+    )
 }
 
 /// POST /api/v1/orchestrator/sessions/register — register an external node.
@@ -454,7 +458,9 @@ pub(crate) async fn orchestrator_pick_folder(
         .await;
 
     match outcome {
-        PickOutcome::Picked(path) => (StatusCode::OK, Json(json!({ "path": path }))).into_response(),
+        PickOutcome::Picked(path) => {
+            (StatusCode::OK, Json(json!({ "path": path }))).into_response()
+        }
         PickOutcome::Cancelled => {
             (StatusCode::OK, Json(json!({ "cancelled": true }))).into_response()
         }
@@ -466,9 +472,11 @@ pub(crate) async fn orchestrator_pick_folder(
         PickOutcome::Unsupported(msg) => {
             (StatusCode::NOT_IMPLEMENTED, Json(json!({ "error": msg }))).into_response()
         }
-        PickOutcome::Failed(msg) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": msg }))).into_response()
-        }
+        PickOutcome::Failed(msg) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": msg })),
+        )
+            .into_response(),
     }
 }
 
@@ -583,10 +591,7 @@ mod tests {
         let registry_path =
             std::env::temp_dir().join(format!("mirai-orch-http-test-{}.json", short_id()));
         let mut state = AppState::new(ToolRegistry::new(), test_llm_factory(), None);
-        state.orchestrator = Arc::new(SessionManager::new(
-            backend.clone(),
-            registry_path.clone(),
-        ));
+        state.orchestrator = Arc::new(SessionManager::new(backend.clone(), registry_path.clone()));
         (state, backend, registry_path)
     }
 
@@ -813,7 +818,9 @@ mod tests {
             .oneshot(
                 Request::post("/api/v1/orchestrator/sessions/ghost/send")
                     .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&json!({"text": "x"})).unwrap()))
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({"text": "x"})).unwrap(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -868,7 +875,9 @@ mod tests {
             .oneshot(
                 Request::post(format!("/api/v1/orchestrator/sessions/{id}/send"))
                     .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&json!({"text": "x"})).unwrap()))
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({"text": "x"})).unwrap(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -1382,7 +1391,10 @@ mod tests {
         }
     }
 
-    fn app_with_picker(outcome: crate::sessions::picker::RunOutcome, hold_ms: u64) -> (Router, std::path::PathBuf) {
+    fn app_with_picker(
+        outcome: crate::sessions::picker::RunOutcome,
+        hold_ms: u64,
+    ) -> (Router, std::path::PathBuf) {
         let (mut state, _backend, path) = test_state();
         state.folder_picker = Arc::new(crate::sessions::picker::FolderPicker::with_runner(
             Box::new(HttpFakeRunner { outcome, hold_ms }),
@@ -1413,7 +1425,8 @@ mod tests {
             RunOutcome::Completed {
                 code: Some(0),
                 stdout: "/home/user/proyecto/
-".into(),
+"
+                .into(),
                 stderr: String::new(),
             },
             0,
@@ -1466,15 +1479,15 @@ mod tests {
             RunOutcome::Completed {
                 code: Some(0),
                 stdout: "/tmp/a
-".into(),
+"
+                .into(),
                 stderr: String::new(),
             },
             300,
         );
 
         let app1 = app.clone();
-        let first =
-            tokio::spawn(async move { post_pick(&app1, json!({})).await });
+        let first = tokio::spawn(async move { post_pick(&app1, json!({})).await });
         tokio::time::sleep(std::time::Duration::from_millis(60)).await;
 
         let (status, body) = post_pick(&app, json!({})).await;
@@ -1509,13 +1522,16 @@ mod tests {
         // UI dir with an index + an asset.
         let ui_dir = std::env::temp_dir().join(format!("mirai-ui-test-{}", short_id()));
         std::fs::create_dir_all(&ui_dir).unwrap();
-        std::fs::write(ui_dir.join("index.html"), "<!doctype html><title>UI</title>").unwrap();
+        std::fs::write(
+            ui_dir.join("index.html"),
+            "<!doctype html><title>UI</title>",
+        )
+        .unwrap();
         std::fs::write(ui_dir.join("app.js"), "console.log(1)").unwrap();
 
         // Server WITH api key: /ui must still be public.
         let backend = Arc::new(FakeBackend::new());
-        let registry_path =
-            std::env::temp_dir().join(format!("mirai-ui-reg-{}.json", short_id()));
+        let registry_path = std::env::temp_dir().join(format!("mirai-ui-reg-{}.json", short_id()));
         let mut state = AppState::new(
             ToolRegistry::new(),
             test_llm_factory(),

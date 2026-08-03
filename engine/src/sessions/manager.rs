@@ -68,6 +68,7 @@ pub struct SessionRecord {
     /// - `Some("bypass")` → the command carries `--dangerously-skip-permissions`
     ///   (auto-approve every tool; "bypass-all" in the visualizer);
     /// - `Some("default")` / `None` → no flag (the CLI's normal prompting).
+    ///
     /// Persisted so a restart / reload keeps the mode, and surfaced in
     /// `to_api_json` so the UI can badge which sessions run in bypass.
     #[serde(default)]
@@ -244,7 +245,9 @@ impl SessionManager {
 
     /// Subscribe to orchestrator events (session_created, session_status_changed,
     /// session_output, session_stopped).
-    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::core::events::ExecutionEvent> {
+    pub fn subscribe(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<crate::core::events::ExecutionEvent> {
         self.events.subscribe()
     }
 
@@ -917,7 +920,11 @@ impl SessionManager {
 
     /// Recent activity for a session: the last `limit` entries in
     /// CHRONOLOGICAL order (contract fixed by the M6 web UI).
-    pub async fn get_activity(&self, id: &str, limit: usize) -> Result<Vec<serde_json::Value>, SessionError> {
+    pub async fn get_activity(
+        &self,
+        id: &str,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, SessionError> {
         if self.get(id).await.is_none() {
             return Err(SessionError::NotFound(id.to_string()));
         }
@@ -974,7 +981,11 @@ impl SessionManager {
                 if !item.path().is_dir() {
                     continue;
                 }
-                let dir = item.path().to_string_lossy().trim_end_matches('/').to_string();
+                let dir = item
+                    .path()
+                    .to_string_lossy()
+                    .trim_end_matches('/')
+                    .to_string();
                 if seen.insert(dir.clone()) {
                     scan_entries.push((dir.clone(), entry(&dir, "scan")));
                 }
@@ -1051,7 +1062,10 @@ impl SessionManager {
                 continue;
             }
 
-            let Ok(pane) = self.backend.capture_output(&tmux_session, POLL_CAPTURE_LINES) else {
+            let Ok(pane) = self
+                .backend
+                .capture_output(&tmux_session, POLL_CAPTURE_LINES)
+            else {
                 continue;
             };
 
@@ -1165,7 +1179,6 @@ fn diff_new_lines(previous: &[String], current: &[String]) -> Vec<String> {
     current[overlap.max(common_prefix)..].to_vec()
 }
 
-
 // ---------------------------------------------------------------------------
 // Tests (fake backend — no tmux required)
 // ---------------------------------------------------------------------------
@@ -1233,15 +1246,24 @@ mod tests {
 
         let mut evil = spawn_params();
         evil.model = Some("opus; touch /tmp/pwned".into());
-        assert!(manager.spawn(evil).await.is_err(), "model con ';' debe rechazarse");
+        assert!(
+            manager.spawn(evil).await.is_err(),
+            "model con ';' debe rechazarse"
+        );
 
         let mut evil2 = spawn_params();
         evil2.effort = Some("high$(id)".into());
-        assert!(manager.spawn(evil2).await.is_err(), "effort con $(...) debe rechazarse");
+        assert!(
+            manager.spawn(evil2).await.is_err(),
+            "effort con $(...) debe rechazarse"
+        );
 
         let mut evil3 = spawn_params();
         evil3.model = Some("opus foo".into()); // espacio → arg extra al shell
-        assert!(manager.spawn(evil3).await.is_err(), "model con espacio debe rechazarse");
+        assert!(
+            manager.spawn(evil3).await.is_err(),
+            "model con espacio debe rechazarse"
+        );
 
         // Nada malicioso llegó al backend.
         assert!(
@@ -1351,7 +1373,10 @@ mod tests {
         let cfg: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
         let servers = cfg["mcpServers"].as_object().unwrap();
-        assert!(servers.contains_key("atlassian"), "atlassian server present");
+        assert!(
+            servers.contains_key("atlassian"),
+            "atlassian server present"
+        );
         assert_eq!(servers["atlassian"]["type"], "http");
         assert_eq!(
             servers["atlassian"]["url"],
@@ -1368,7 +1393,10 @@ mod tests {
         manager.spawn(spawn_params()).await.unwrap();
         let spawned = backend.spawned.lock().unwrap();
         let command = &spawned[0].2;
-        assert!(!command.contains("--mcp-config"), "no mcp flags by default: {command}");
+        assert!(
+            !command.contains("--mcp-config"),
+            "no mcp flags by default: {command}"
+        );
         assert!(!command.contains("--strict-mcp-config"));
         let _ = std::fs::remove_file(path);
     }
@@ -1440,7 +1468,10 @@ mod tests {
             );
         }
         assert_eq!(rec.permission_mode, None);
-        assert_eq!(rec.to_api_json()["permission_mode"], serde_json::Value::Null);
+        assert_eq!(
+            rec.to_api_json()["permission_mode"],
+            serde_json::Value::Null
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -1472,15 +1503,17 @@ mod tests {
         assert_eq!(updated.effort.as_deref(), Some("high"));
 
         // The re-spawn used the SAME tmux session name and now has the flag.
-        let spawned = backend.spawned.lock().unwrap();
-        assert_eq!(spawned.len(), 2, "restart re-spawned");
-        assert_eq!(spawned[1].0, rec.tmux_session, "same tmux name (re-attach)");
-        assert!(
-            spawned[1].2.contains("--dangerously-skip-permissions"),
-            "restart command carries bypass: {}",
-            spawned[1].2
-        );
-        drop(spawned);
+        // (Block scope: clippy::await_holding_lock no rastrea drop() manual.)
+        {
+            let spawned = backend.spawned.lock().unwrap();
+            assert_eq!(spawned.len(), 2, "restart re-spawned");
+            assert_eq!(spawned[1].0, rec.tmux_session, "same tmux name (re-attach)");
+            assert!(
+                spawned[1].2.contains("--dangerously-skip-permissions"),
+                "restart command carries bypass: {}",
+                spawned[1].2
+            );
+        }
 
         // SSE: stopped then starting (contract shape {id,status,last_activity}).
         let ev1 = rx.recv().await.unwrap();
@@ -1544,7 +1577,9 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            manager.restart(&ext.id, Some("bypass".into()), None, None).await,
+            manager
+                .restart(&ext.id, Some("bypass".into()), None, None)
+                .await,
             Err(SessionError::Invalid(_))
         ));
         let _ = std::fs::remove_file(path);
@@ -1987,7 +2022,7 @@ mod tests {
         manager.spawn(ghost).await.unwrap();
         std::fs::remove_dir_all(&ghost_dir).unwrap(); // dir vanished after spawn
 
-        let projects = manager.list_projects(&[root.clone()]).await;
+        let projects = manager.list_projects(std::slice::from_ref(&root)).await;
 
         // session entries first (alphabetical), then scan (alphabetical).
         let sources: Vec<&str> = projects
@@ -2119,7 +2154,9 @@ mod tests {
         let rec = manager.spawn(spawn_params()).await.unwrap();
 
         assert!(matches!(
-            manager.record_activity(&rec.id, "Write", "delete", None).await,
+            manager
+                .record_activity(&rec.id, "Write", "delete", None)
+                .await,
             Err(SessionError::Invalid(_))
         ));
         assert!(manager
@@ -2131,7 +2168,9 @@ mod tests {
             Err(SessionError::Invalid(_))
         ));
         assert!(matches!(
-            manager.record_activity("ghost", "Write", "write", None).await,
+            manager
+                .record_activity("ghost", "Write", "write", None)
+                .await,
             Err(SessionError::NotFound(_))
         ));
         assert!(matches!(

@@ -11,7 +11,6 @@ use crate::mcp::MCPManager;
 use crate::tools::base::{field, FieldType};
 use crate::tools::registry::{Tool, ToolRegistry};
 
-
 // ===========================================================================
 // McpCallTool
 // ===========================================================================

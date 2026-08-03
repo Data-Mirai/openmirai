@@ -3,6 +3,7 @@
 //!   Todo el runtime (`--version`, `/version`, `/health`) reporta `MIRAI_VERSION` = ese archivo.
 //! - **Build number**: `MIRAI_BUILD` = `MIRAI_BUILD_NUMBER` de CI (github.run_number); local = "dev".
 //! - **Commit**: `MIRAI_GIT_SHA`. **Timestamp**: `MIRAI_BUILD_TS`.
+//!
 //! Rust no tiene `CARGO_PKG_BUILD`, por eso se exponen por env de compilación aquí.
 use std::process::Command;
 

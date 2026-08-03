@@ -555,8 +555,8 @@ async fn run_serve(args: &[String]) {
     let ui_dir = parse_flag(args, "--ui-dir").or_else(|| std::env::var("MIRAI_UI_DIR").ok());
 
     // PRD-013 M7: colon-separated roots scanned for the /projects picker.
-    let projects_dirs = parse_flag(args, "--projects-dirs")
-        .or_else(|| std::env::var("MIRAI_PROJECTS_DIRS").ok());
+    let projects_dirs =
+        parse_flag(args, "--projects-dirs").or_else(|| std::env::var("MIRAI_PROJECTS_DIRS").ok());
 
     if let Err(e) = openmirai_engine::server::serve(
         &host,

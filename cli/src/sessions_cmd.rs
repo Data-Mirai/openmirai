@@ -69,7 +69,9 @@ impl Client {
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        let mut req = self.http.request(method, format!("{}{path}", self.base_url));
+        let mut req = self
+            .http
+            .request(method, format!("{}{path}", self.base_url));
         if let Some(key) = &self.api_key {
             req = req.header("X-API-Key", key);
         }
@@ -97,7 +99,11 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            eprintln!("{}Server error ({status}): {msg}{}", colors::RED, colors::RESET);
+            eprintln!(
+                "{}Server error ({status}): {msg}{}",
+                colors::RED,
+                colors::RESET
+            );
             process::exit(1);
         }
         body
@@ -110,7 +116,9 @@ impl Client {
 
 async fn list(args: &[String]) {
     let client = Client::from_args(args);
-    let body = client.run(client.request(reqwest::Method::GET, "/sessions")).await;
+    let body = client
+        .run(client.request(reqwest::Method::GET, "/sessions"))
+        .await;
     let sessions = body.as_array().cloned().unwrap_or_default();
 
     if sessions.is_empty() {
@@ -172,7 +180,11 @@ async fn spawn(args: &[String]) {
 
     let client = Client::from_args(args);
     let body = client
-        .run(client.request(reqwest::Method::POST, "/sessions").json(&payload))
+        .run(
+            client
+                .request(reqwest::Method::POST, "/sessions")
+                .json(&payload),
+        )
         .await;
 
     let id = body["id"].as_str().unwrap_or("?");
@@ -353,7 +365,10 @@ fn render_sessions_table(sessions: &[Value]) -> String {
 }
 
 fn cell(v: &Value, key: &str) -> String {
-    v.get(key).and_then(|x| x.as_str()).unwrap_or("-").to_string()
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("-")
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------

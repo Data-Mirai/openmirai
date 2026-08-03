@@ -129,7 +129,11 @@ fn apply_event(state: &mut WatchState, event: &str, data: &Value) {
 /// Abbreviate a filesystem path for the activity feed: keep the last two
 /// components ("…/src/main.rs").
 fn abbrev_path(path: &str) -> String {
-    let parts: Vec<&str> = path.trim_end_matches('/').split('/').filter(|p| !p.is_empty()).collect();
+    let parts: Vec<&str> = path
+        .trim_end_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
     match parts.len() {
         0 => path.to_string(),
         1 => parts[0].to_string(),
@@ -227,18 +231,13 @@ async fn data_loop(server: Arc<Server>, shared: Shared) {
                 let mut resp = resp;
                 let mut buffer = String::new();
                 // Read chunks until the stream drops.
-                loop {
-                    match resp.chunk().await {
-                        Ok(Some(bytes)) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
-                            for (event, data) in parse_sse_frames(&mut buffer) {
-                                if let Ok(json) = serde_json::from_str::<Value>(&data) {
-                                    let mut st = shared.lock().unwrap();
-                                    apply_event(&mut st, &event, &json);
-                                }
-                            }
+                while let Ok(Some(bytes)) = resp.chunk().await {
+                    buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    for (event, data) in parse_sse_frames(&mut buffer) {
+                        if let Ok(json) = serde_json::from_str::<Value>(&data) {
+                            let mut st = shared.lock().unwrap();
+                            apply_event(&mut st, &event, &json);
                         }
-                        Ok(None) | Err(_) => break,
                     }
                 }
                 shared.lock().unwrap().live = false;
@@ -519,11 +518,7 @@ fn build_frame(
         "─".repeat(width),
         colors::RESET
     ));
-    out.push_str(&format!(
-        "{}ACTIVITY{}{EOL}",
-        colors::BOLD,
-        colors::RESET
-    ));
+    out.push_str(&format!("{}ACTIVITY{}{EOL}", colors::BOLD, colors::RESET));
     if state.activity.is_empty() {
         out.push_str(&format!(
             "{}  (waiting for events…){}{EOL}",
@@ -740,7 +735,11 @@ mod tests {
         assert_eq!(st.sessions["abc"]["status"], "working");
         assert_eq!(st.sessions["abc"]["last_activity"], "2026-07-09T10:01:00Z");
 
-        apply_event(&mut st, "session_output", &json!({"id": "abc", "lines": ["x", "y"]}));
+        apply_event(
+            &mut st,
+            "session_output",
+            &json!({"id": "abc", "lines": ["x", "y"]}),
+        );
         assert!(st.activity[0].detail.contains("+2 lines"));
 
         apply_event(&mut st, "session_stopped", &json!({"id": "abc"}));
@@ -759,7 +758,10 @@ mod tests {
         );
         assert_eq!(st.activity.len(), 1);
         assert_eq!(st.activity[0].kind, "session_activity");
-        assert_eq!(st.activity[0].detail, "abc123 write\u{2192}\u{2026}/src/main.rs");
+        assert_eq!(
+            st.activity[0].detail,
+            "abc123 write\u{2192}\u{2026}/src/main.rs"
+        );
 
         // Bash without path falls back to the tool name.
         apply_event(
@@ -836,8 +838,10 @@ mod tests {
 
     #[test]
     fn build_frame_renders_header_rows_and_activity() {
-        let mut st = WatchState::default();
-        st.live = true;
+        let mut st = WatchState {
+            live: true,
+            ..Default::default()
+        };
         replace_sessions(
             &mut st,
             &[
@@ -869,9 +873,11 @@ mod tests {
 
     #[test]
     fn build_frame_offline_shows_polling_state() {
-        let mut st = WatchState::default();
-        st.live = false;
-        st.last_error = Some("unreachable: connection refused".into());
+        let st = WatchState {
+            live: false,
+            last_error: Some("unreachable: connection refused".into()),
+            ..Default::default()
+        };
         let frame = build_frame(&st, "127.0.0.1:3000", 80, 24, 3, 0);
         assert!(frame.contains("○ polling"));
         assert!(frame.contains("no sessions"));

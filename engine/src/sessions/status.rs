@@ -131,10 +131,7 @@ mod tests {
     #[test]
     fn permission_wins_over_working_text() {
         // A dialog on top of older "esc to interrupt" output still needs a human.
-        let pane = lines(&[
-            "esc to interrupt",
-            "Do you want to make this edit? (y/n)",
-        ]);
+        let pane = lines(&["esc to interrupt", "Do you want to make this edit? (y/n)"]);
         assert_eq!(detect_status(&pane), Some(SessionStatus::Permission));
     }
 

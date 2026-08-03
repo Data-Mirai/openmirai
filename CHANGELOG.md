@@ -4,7 +4,7 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
-## v0.7.0 (2026-07-15)
+## v0.7.0 (2026-08-03)
 
 Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. No breaking changes: the agent YAML spec, runtime, and API stay backward-compatible.
 
@@ -19,6 +19,7 @@ Session orchestration, voice, large media, a visual Studio, and community contri
 - **Binary version traceability.** Every binary reports name, version, and build from a single source of truth (the `VERSION` file): `mirai --version` → `mirai v0.7.0+build.<N> (<git-sha>, <ts>)`, and `/health` / `/version` expose the same — so you always know which build produced a run.
 
 ### Changed
+- **License: MIT → Apache-2.0.** OpenMirai is now licensed under the Apache License 2.0 (explicit patent grant + defensive-termination clause that MIT lacks), with a `NOTICE` file ("Copyright 2026 Data Mirai Inc."). First release published under the [Data-Mirai](https://github.com/Data-Mirai) organization.
 - **`max_tokens` is now optional across all LLM adapters.**
 - **Gemini client timeout: 60s → 600s.** A 2h transcription generates 25-40k output tokens (~2-4 min) — the old timeout killed any long generation mid-flight. Upload/poll calls share the same generous ceiling (ACTIVE poll capped at 5 min).
 - **Visual editor `mirai edit` restyle** — premium flat black-and-white canvas with OpenMirai branding.
@@ -77,7 +78,7 @@ Identifiers were renamed. The agent YAML format, the runtime, and the API are **
 | Rust lib import | `datamirai_engine` | `openmirai_engine` |
 | Python package | `datamirai` (`pip install datamirai`) | `openmirai` (`pip install openmirai`) |
 | TypeScript package | `datamirai` | `openmirai` |
-| Repository | `Gabo-TheCreator/data-mirai-engine` | `Gabo-TheCreator/openmirai` |
+| Repository | `Gabo-TheCreator/data-mirai-engine` | `Data-Mirai/openmirai` |
 
 ### Unchanged (no action needed)
 - CLI binary and command: still `mirai`.

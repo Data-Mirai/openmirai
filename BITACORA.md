@@ -6,6 +6,33 @@
 
 ---
 
+### [2026-08-03] Sesion: release-v0.7.0
+**Estado**: EN PROGRESO
+**Proyecto**: OpenMirai Engine — cierre y publicación del release v0.7.0
+**Objetivo**: Cortar el 0.7.0 en `5d54383` (fin del ciclo Session Orchestrator/Studio/voz/media, 27-jul). Los 6 commits del 30–31 jul (fleet SoT, crate `agentmirai`, objectives) quedan en `feat/sot-flota-sqlite` como base de 0.8.0. Decisión de Gabriel (03-ago): publicar SIN goals/agents, CON el relicense Apache-2.0.
+
+**Archivos tocados**:
+- `main` — fast-forward `e11459b` → `5d54383` (63 commits del ciclo 0.7.0).
+- Cherry-pick `67b7f7c` (relicense MIT→Apache-2.0) → `310aefe`. Conflictos resueltos: `agentmirai/Cargo.toml` eliminado (crate inexistente en 0.7.0), `BITACORA.md` combinada (entrada relicense adaptada, entradas 0.8.0 excluidas de main).
+- MODIFICADO `CHANGELOG.md` — fecha v0.7.0 → 2026-08-03 (fecha real de publicación) + entrada del relicense en Changed.
+- MODIFICADO 11 archivos (README, RELEASING, CONTRIBUTING, CHANGELOG, SDKs, docs/infra, workflows, issue template) — 23 URLs `Gabo-TheCreator/openmirai` → `Data-Mirai/openmirai` (repo transferido a la org el 03-ago).
+- CREADO `releases/v0.7.0/` LOCAL (gitignored, patrón v0.6.0) — `mirai-darwin-arm64`, `mirai-darwin-x86_64`, `SHA256SUMS` verificados. Los binarios OFICIALES (5 targets) los construye `.github/workflows/release.yml` al pushear el tag, con GitHub Release automático.
+
+**Decisiones tomadas**:
+- 0.7.0 sin goals/agents: el changelog ya redactado describe exactamente `5d54383`; el trabajo de SoT está a mitad (falta trazabilidad persistente de runs) y no se publica a medias en repo público.
+- Relicense entra en 0.7.0: primer release bajo la org Data-Mirai — no publicar tag nuevo en MIT para relicenciar al siguiente.
+- Tag `v0.7.0` en el tip de main con artefactos commiteados (patrón v0.6.0/f3dbfc1).
+
+**Extensión (mismo día)**: paridad CI antes del primer push bajo la org — la rama nunca corrió CI (sin push desde mayo):
+- `cargo fmt --all` aplicado (97 hunks de drift en ~26 archivos .rs del ciclo 0.7.0).
+- 5 fixes de clippy con `-D warnings` (gate real de CI): 2 doc-comments sin indentar (`cli/build.rs`, `manager.rs`), closure redundante (`ai.rs`), `cloned_ref_to_slice_refs` (test de `manager.rs`), y `await_holding_lock` (test `manager.rs:1506` — guard en block scope; clippy no rastrea `drop()` manual).
+- HALLAZGO de proceso: un `| tail` en el pipeline de validación enmascaró el exit code de clippy (falso "OK"); re-validado con `set -o pipefail`.
+- PRs #1–#6 (docs @lualducor, Rust install @lfarizav): sus head-SHAs ya son ancestros de main → GitHub los auto-cierra como merged al push. Nada que mergear.
+
+**Resultado**: main = corte 0.7.0 (`5d54383`) + relicense Apache (`310aefe`) + fmt/clippy + release prep. Suite completa verde (engine 854 · exit 0), fmt limpio, clippy limpio con `-D warnings`. Binarios locales arm64+x86_64 con SHA256SUMS en `releases/v0.7.0/` (gitignored). Tag `v0.7.0` anotado sobre el commit de release. Push de main + tag lo hace Gabriel; CI construye los 5 binarios oficiales y publica el GitHub Release automático al ver el tag.
+
+---
+
 ### [2026-07-31] Sesion: relicense-apache (agente mecanico · fan-out) — cherry-pick a main para release 0.7.0
 **Estado**: COMPLETADO
 **Proyecto**: OpenMirai Engine — relicenciar de MIT a Apache 2.0

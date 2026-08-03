@@ -7,7 +7,7 @@ Thanks for helping build OpenMirai — the open-source engine for **decentralize
 ```bash
 # Requires Rust 1.80+ via rustup (https://rustup.rs). Ubuntu's `apt install cargo`
 # is too old — `rustup update stable` then build (the repo pins its toolchain).
-git clone https://github.com/Gabo-TheCreator/openmirai
+git clone https://github.com/Data-Mirai/openmirai
 cd openmirai
 cargo build --release          # builds engine + cli (binary: ./target/release/mirai)
 cargo test --workspace         # run the full suite (712 tests)
@@ -43,7 +43,7 @@ docs/          Technical documentation
 - **Docs** — clarity fixes, missing explanations, typos.
 - **Bugs** — repro + fix + a regression test.
 
-Browse [`good first issue`](https://github.com/Gabo-TheCreator/openmirai/labels/good%20first%20issue) and [`help wanted`](https://github.com/Gabo-TheCreator/openmirai/labels/help%20wanted) to find scoped work.
+Browse [`good first issue`](https://github.com/Data-Mirai/openmirai/labels/good%20first%20issue) and [`help wanted`](https://github.com/Data-Mirai/openmirai/labels/help%20wanted) to find scoped work.
 
 ## Workflow
 

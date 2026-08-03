@@ -18,7 +18,7 @@ yaml = ["pyyaml>=6.0"]
 all = ["pyyaml>=6.0"]
 
 [project.urls]
-Homepage = "https://github.com/Gabo-TheCreator/openmirai"
-Repository = "https://github.com/Gabo-TheCreator/openmirai"
-Issues = "https://github.com/Gabo-TheCreator/openmirai/issues"
-Changelog = "https://github.com/Gabo-TheCreator/openmirai/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Data-Mirai/openmirai"
+Repository = "https://github.com/Data-Mirai/openmirai"
+Issues = "https://github.com/Data-Mirai/openmirai/issues"
+Changelog = "https://github.com/Data-Mirai/openmirai/blob/main/CHANGELOG.md"

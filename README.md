@@ -1,7 +1,7 @@
 # OpenMirai
 
-[![CI](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml/badge.svg)](https://github.com/Gabo-TheCreator/openmirai/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Gabo-TheCreator/openmirai?include_prereleases&sort=semver)](https://github.com/Gabo-TheCreator/openmirai/releases)
+[![CI](https://github.com/Data-Mirai/openmirai/actions/workflows/ci.yml/badge.svg)](https://github.com/Data-Mirai/openmirai/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Data-Mirai/openmirai?include_prereleases&sort=semver)](https://github.com/Data-Mirai/openmirai/releases)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
@@ -190,7 +190,7 @@ API endpoints: `/api/v1/agents`, `/api/v1/graphs`, `/api/v1/sessions`, `/api/v1/
 OpenMirai is open source and built in the open. Contributions are welcome — new tools, LLM providers, docs, examples, bug fixes.
 
 - Start with **[CONTRIBUTING.md](CONTRIBUTING.md)**
-- Pick up a [`good first issue`](https://github.com/Gabo-TheCreator/openmirai/labels/good%20first%20issue)
+- Pick up a [`good first issue`](https://github.com/Data-Mirai/openmirai/labels/good%20first%20issue)
 - Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system map
 - Be kind — see our [Code of Conduct](CODE_OF_CONDUCT.md)
 

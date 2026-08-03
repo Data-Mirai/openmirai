@@ -58,7 +58,7 @@ When a tag matching `v*` is pushed, `.github/workflows/release.yml` automaticall
 2. Computes `SHA256SUMS` for all artifacts.
 3. Creates a GitHub Release with auto-generated notes and uploads every artifact.
 
-End users download the binary for their platform from the [Releases page](https://github.com/Gabo-TheCreator/openmirai/releases).
+End users download the binary for their platform from the [Releases page](https://github.com/Data-Mirai/openmirai/releases).
 
 ## Publishing the SDKs
 

@@ -20,10 +20,15 @@ function collect(dir, source) {
     .map(f => {
       const p = path.join(dir, f);
       const st = fs.statSync(p);
+      // Archivos DENTRO del repo: solo relpath — mirai-app.html se commitea y es publico,
+      // nada de rutas absolutas de la maquina. Fuentes locales externas conservan su ruta
+      // absoluta: solo viven en el html regenerado localmente, no en el del repo.
+      const rel = path.relative(REPO, p);
+      const inside = rel.indexOf('..') !== 0;
       return {
         id: f.replace(/\.(ya?ml)$/i, ''),
-        path: p,
-        relpath: (function(){ var r = path.relative(REPO, p); return r.indexOf('..') === 0 ? p : r; })(),
+        path: inside ? null : p,
+        relpath: inside ? rel : p,
         source,
         mtimeMin: Math.round((Date.now() - st.mtimeMs) / 60000),
         yaml: fs.readFileSync(p, 'utf8')
@@ -36,11 +41,16 @@ const sources = [].concat(
   collect(path.join(REPO, 'examples'), 'examples')
 );
 
+// --with-local: embebe tambien sources/runs/agents locales (rutas y contenido de TU maquina).
+// SOLO para un build local del html — el mirai-app.html que se commitea debe generarse SIN el flag,
+// para que el repo publico no cargue rutas absolutas ni agentes privados.
+const WITH_LOCAL = process.argv.includes('--with-local');
+
 // Fuentes locales extra (agentes fuera del repo), git-ignoradas — NO se comparten en el repo.
 // visualizer/sources.local.json = [ { "dir": "/ruta/a/agents", "source": "etiqueta" }, { "file": "/ruta/agente.yaml", "source": "etiqueta" } ]
 try {
   const localCfg = path.join(VIS, 'sources.local.json');
-  if (fs.existsSync(localCfg)) {
+  if (WITH_LOCAL && fs.existsSync(localCfg)) {
     const extra = JSON.parse(fs.readFileSync(localCfg, 'utf8'));
     (Array.isArray(extra) ? extra : []).forEach(function (e) {
       if (e && e.dir) {
@@ -62,7 +72,7 @@ const jsyaml = fs.readFileSync(JSYAML, 'utf8');
 let runsByAgent = {};
 try {
   const runsCfg = path.join(VIS, 'runs.local.json');
-  if (fs.existsSync(runsCfg)) runsByAgent = JSON.parse(fs.readFileSync(runsCfg, 'utf8')) || {};
+  if (WITH_LOCAL && fs.existsSync(runsCfg)) runsByAgent = JSON.parse(fs.readFileSync(runsCfg, 'utf8')) || {};
 } catch (e) { console.error('AVISO: runs.local.json invalido, se ignora:', e.message); }
 
 // Identidades (AGENTES) = personas que COMBINAN workflows. El motor no las modela (1 .yaml = 1 workflow),
@@ -70,7 +80,7 @@ try {
 let identities = [];
 try {
   const idCfg = path.join(VIS, 'agents.local.json');
-  if (fs.existsSync(idCfg)) identities = JSON.parse(fs.readFileSync(idCfg, 'utf8')) || [];
+  if (WITH_LOCAL && fs.existsSync(idCfg)) identities = JSON.parse(fs.readFileSync(idCfg, 'utf8')) || [];
 } catch (e) { console.error('AVISO: agents.local.json invalido, se ignora:', e.message); }
 
 let html = fs.readFileSync(HTML, 'utf8');

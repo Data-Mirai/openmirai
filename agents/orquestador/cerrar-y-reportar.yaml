@@ -13,7 +13,7 @@
 #
 # Run:
 #   mirai run agents/orquestador/cerrar-y-reportar.yaml --provider gemini --api-key $KEY \
-#     --input '{"agente_id":"acme-plataforma","proyecto":"acme",
+#     --input '{"agente_id":"acme-web","proyecto":"acme",
 #               "reporte_path":"workspace/acme/output/2026-07-27-cierre-sesion.md"}'
 # Validar:
 #   mirai validate agents/orquestador/cerrar-y-reportar.yaml

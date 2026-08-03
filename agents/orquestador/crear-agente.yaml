@@ -8,14 +8,14 @@
 #
 # HONESTIDAD: el nodo `spawn` modela la llamada real como un mcp/call al servidor de
 # orquestacion. En vivo, ese POST HOY lo hace la sesion-centro a mano (curl/fetch), como
-# se probo creando la sesion `acme-plataforma`. Cablear que el MOTOR ejecute este nodo
+# se probo creando una sesion real. Cablear que el MOTOR ejecute este nodo
 # contra su propia API de orquestacion es la integracion profunda del flywheel (ver deck).
 # Payload real del endpoint: {name?, project_dir, objective, model?, effort?, ultracode?}.
 #
 # Run:
 #   mirai run agents/orquestador/crear-agente.yaml --provider gemini --api-key $KEY \
-#     --input '{"objetivo":"Arrancar la web de Acme en feature-x y validar en preview",
-#               "proyecto":"acme","project_dir":"/home/user/Documents/Projects/Acme-web"}'
+#     --input '{"objetivo":"Arrancar la landing del proyecto Acme y validar en preview",
+#               "proyecto":"acme","project_dir":"/ruta/a/tu/proyecto/acme-web"}'
 # Validar:
 #   mirai validate agents/orquestador/crear-agente.yaml
 
@@ -31,7 +31,7 @@ inputs:
   proyecto:
     type: text
     required: true
-    description: "El tag/proyecto del centro (acme, datamirai, centro, ...)"
+    description: "El tag/proyecto del centro (acme, datamirai, general, ...)"
   project_dir:
     type: text
     required: true

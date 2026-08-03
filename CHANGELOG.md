@@ -6,16 +6,20 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ## v0.7.0 (2026-08-03)
 
-Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. No breaking changes: the agent YAML spec, runtime, and API stay backward-compatible.
+Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. The agent YAML spec, runtime, and API stay backward-compatible; the one behavioral change to note is the CORS default, now loopback-only (see Security) — if you served a browser client from a non-loopback origin against the engine API, that request path is now intentionally blocked.
 
 ### Added
 - **Session Orchestrator (PRD-013).** Run and coordinate multiple live Claude Code sessions over `tmux` from one engine: HTTP API + SSE streaming, CLI subcommands `mirai sessions list|spawn|send|output|stop`, and a live terminal dashboard `mirai sessions watch` (terminal↔web-UI parity). Includes session hierarchy (`parent_id`), real resource-activity reported by session hooks, a static `/ui`, project listing/creation (`GET /orchestrator/projects`, native folder picker `POST /orchestrator/pick-folder`), and a "Network" service node on the canvas reflecting WebFetch/WebSearch.
 - **Media over 20MB now works (Gemini): Files API by-reference delivery (PRD-018).** `ai/transcribe` and `ai/llm_call` media above the 20MB inline limit is uploaded via resumable upload, referenced with `file_data{file_uri}`, polled until `ACTIVE`, and **deleted from the remote after the request** (best-effort; the API's 48h auto-expiry is the safety net). Hard cap is now the provider's real limit: **2GB per file** (~9.5h of audio). Providers without upload support keep the explicit 20MB error. Real-world driver: a 2-hour meeting recording (~100-200MB audio) from the Aftrmeet host.
 - **Truncation is now fail-loud (PRD-018).** `finishReason == MAX_TOKENS` returns a new explicit error (`LLMError::Truncated`, with emitted-token count) instead of silently surfacing partial text as success. A transcript that covers only the first 25 minutes of a 2h meeting must be an error, not an "answer".
-- **Voice — TTS and STT.** New `ai/tts` tool (ElevenLabs + Cartesia) with language selection for correct pronunciation and a `voice-synthesis` agent; ElevenLabs Scribe transcription route (`provider=elevenlabs`) with a `voice-transcription` agent. Transcriptions keep punctuation and drop the output-token cap.
-- **OpenMirai Studio.** Local agent visualizer shipping 5 default agents, with support for extra local sources (`sources.local.json`).
+- **Voice — TTS and STT.** New `ai/tts` tool (ElevenLabs + Cartesia) with language selection for correct pronunciation and a `voice-synthesis` agent; ElevenLabs Scribe transcription route (`provider=elevenlabs`) with a `voice-transcription` agent. Transcriptions keep punctuation and drop the output-token cap. Plus a `mirai-voice-note` agent: a voice note becomes a routed message for the orchestrator.
+- **Session permission mode + restart.** Spawn accepts `permission_mode: "bypass"` (runs the session with `--dangerously-skip-permissions`; surfaced in the UI as a badge) and `POST /api/v1/orchestrator/sessions/{id}/restart` restarts a session preserving its mode.
+- **External-node registration (bridge).** `POST /api/v1/orchestrator/sessions/register` and `POST /sessions/{id}/status` let external processes (e.g. a FleetView bridge) appear and report as nodes on the canvas alongside tmux sessions.
+- **MCP wiring for worker sessions.** Spawned sessions can carry `--mcp-config <file> --strict-mcp-config`, and the visualizer reflects MCP activity.
+- **OpenMirai Studio.** Local agent visualizer, consolidated as a local app with three views (Workflows · Agents · Observability): agent view shows its workflows and model config, workflow view shows step-by-step node configs, plus a model-source selector on `ai/llm_call` nodes and support for extra local sources (`sources.local.json`). Ships 5 default agents and 6 orchestration workflows with an orchestrator agent. Cloud Claude runs work through a Claude Code subscription proxy (OpenAI-compatible) — real runs from Studio without an API key.
+- **Real-world showcase examples.** `examples/showcase/` with donated agents: tunevision, voice-aftrmeet, langgraph-comparison.
 - **`ai/image_edit` tool — OpenAI GPT-Image-1 inpainting (PRD-017).**
-- **Centralized tool macros, execution-state fork/join, field validation, and OpenTelemetry tracing (community PR #7, @alinedmooner).** Reusable `define_tool!` macros collapse per-tool boilerplate across the 11 builtin tools; execution-state fork/merge on parallel fan-out; field-level input validation (min/max value, length, regex); and an end-to-end OTel trace endpoint with server E2E tests and CI.
+- **Centralized tool macros, execution-state fork/join, field validation, and OpenTelemetry tracing (community PR #7, @alinedmooner).** Reusable `define_tool!` macros collapse per-tool boilerplate across the 11 builtin tool modules; execution-state fork/merge on parallel fan-out; field-level input validation (min/max value, length, regex); and an end-to-end OTel trace endpoint with server E2E tests and CI.
 - **Binary version traceability.** Every binary reports name, version, and build from a single source of truth (the `VERSION` file): `mirai --version` → `mirai v0.7.0+build.<N> (<git-sha>, <ts>)`, and `/health` / `/version` expose the same — so you always know which build produced a run.
 
 ### Changed
@@ -29,6 +33,10 @@ Session orchestration, voice, large media, a visual Studio, and community contri
 
 ### Security
 - **Command injection (RCE) closed in session spawn.** `model` and `effort` from the spawn request were interpolated into the shell command tmux runs via `/bin/sh -c`; they are now strictly allowlisted (`[A-Za-z0-9._-]`) before the command is built, rejecting shell metacharacters. This was unauthenticated when the server runs open (`0.0.0.0` without `--api-key`) — upgrading is recommended, and running with `--api-key` is advised.
+- **Drive-by RCE closed: CORS is now loopback-only.** `CorsLayer::permissive()` allowed any website open in your browser to POST cross-origin to the local engine (e.g. agent execute or session spawn). Allowed origins are now restricted to loopback via predicate, with a cross-origin guard covering no-preflight "simple" requests too.
+- **Auth hardening.** API-key comparison is constant-time (SHA-256 digests on both sides), and binding a non-loopback host without `--api-key` is now a startup error instead of a silent foot-gun.
+- **Path traversal in `/ui` fixed for Windows** — `Component::Prefix`/`RootDir` are rejected when resolving static paths.
+- **AppleScript injection escaped in the native folder picker** (`POST /orchestrator/pick-folder`).
 
 ### Docs
 - New bilingual (EN + ES) references — CLI, builtin tools, memory subsystem, and RAG/search subsystem (community PRs by @lualducor) — plus Rust installation instructions (@lfarizav).

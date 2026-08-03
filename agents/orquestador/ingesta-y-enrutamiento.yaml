@@ -14,7 +14,7 @@
 #
 # Run:
 #   mirai run agents/orquestador/ingesta-y-enrutamiento.yaml --provider gemini --api-key $KEY \
-#     --input '{"pedido":"Necesito que alguien arranque la web de Acme en la rama feature-x"}'
+#     --input '{"pedido":"Necesito que alguien arranque la web del proyecto Acme en la rama feature-x"}'
 # Validar (sin key):
 #   mirai validate agents/orquestador/ingesta-y-enrutamiento.yaml
 
@@ -66,8 +66,8 @@ graph:
             - crear_nuevo -> requiere spawnear una sesion/agente net-new para un objetivo.
             - delegar     -> ya hay un agente/sesion vivo que puede atenderlo (mira `flota`).
             - responder   -> se resuelve con una respuesta directa, sin mover la flota.
-          `proyecto` = uno de: producto, clientes, infraestructura, contenido,
-            personal, legal (si nada encaja: general).
+          `proyecto` = una etiqueta de tu portafolio — adapta esta lista de ejemplo:
+            producto, clientes, infraestructura, contenido, personal, legal (si nada encaja: general).
           `objetivo` = el objetivo ejecutable en una frase (0->1).
           `agente_destino` = si accion=delegar, el id/nombre del agente vivo; si no, "".
           `razon` = por que tomaste esa ruta, en una frase.

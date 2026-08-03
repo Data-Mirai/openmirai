@@ -35,4 +35,4 @@ Then point the SDK at it (defaults to `http://localhost:3000`).
 
 ## License
 
-MIT
+Apache-2.0

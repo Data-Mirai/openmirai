@@ -52,7 +52,7 @@ inputs:
   speakers:
     type: text
     required: false
-    description: "Nombres conocidos para el post-proceso de diarizacion (ej 'Gabriel, Tatiana')"
+    description: "Nombres conocidos para el post-proceso de diarizacion (ej 'Ana, Luis')"
 
 graph:
   nodes:

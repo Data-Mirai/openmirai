@@ -12,7 +12,7 @@
 #
 # Run:
 #   mirai run agents/orquestador/delegar-tarea.yaml --provider gemini --api-key $KEY \
-#     --input '{"agente_id":"sapilabs-plataforma","tarea":"Corre los tests E2E de la vista Agentes y reporta verde/rojo"}'
+#     --input '{"agente_id":"acme-web","tarea":"Corre los tests E2E de la vista Agentes y reporta verde/rojo"}'
 # Validar:
 #   mirai validate agents/orquestador/delegar-tarea.yaml
 
@@ -24,7 +24,7 @@ inputs:
   agente_id:
     type: text
     required: true
-    description: "El id de la sesion/agente vivo al que se delega (ej sapilabs-plataforma)"
+    description: "El id de la sesion/agente vivo al que se delega (ej acme-web)"
   tarea:
     type: text
     required: true

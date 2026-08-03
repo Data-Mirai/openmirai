@@ -78,4 +78,4 @@ By participating you agree to our [Code of Conduct](CODE_OF_CONDUCT.md). Be resp
 
 ## License
 
-By contributing, you agree your contributions are licensed under the [MIT License](LICENSE).
+By contributing, you agree your contributions are licensed under the [Apache License 2.0](LICENSE).

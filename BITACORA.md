@@ -6,6 +6,21 @@
 
 ---
 
+### [2026-07-31] Sesion: relicense-apache (agente mecanico · fan-out) — cherry-pick a main para release 0.7.0
+**Estado**: COMPLETADO
+**Proyecto**: OpenMirai Engine — relicenciar de MIT a Apache 2.0
+**Objetivo**: Al constituir Data Mirai Inc., el motor open source pasa a Apache 2.0 (patent grant + cláusula defensiva que MIT no da). Autoriza Gabriel (31-jul-2026). Engine v0.7.0.
+
+**Archivos tocados**:
+- MODIFICADO `LICENSE` — texto MIT reemplazado por Apache License 2.0 íntegro (copyright appendix: "Copyright 2026 Data Mirai Inc.").
+- CREADO `NOTICE` — "OpenMirai" / "Copyright 2026 Data Mirai Inc.".
+- MODIFICADO `engine/Cargo.toml`, `cli/Cargo.toml` — `license = "MIT"` → `"Apache-2.0"`. (En main/0.7.0 no existe `agentmirai/Cargo.toml`; ese cambio queda en la branch 0.8.0.)
+- MODIFICADO `README.md` — badge, línea de features, tabla comparativa y sección License → Apache-2.0.
+
+**Resultado**: OpenMirai relicenciado MIT→Apache-2.0. `cargo check --workspace` verde (metadata no rompe build). Commit local; Gabriel pushea (safety valve — nada público hasta push).
+
+---
+
 ### [2026-07-16] Sesion: security-gate-cors-auth-0.7.0
 **Estado**: COMPLETADO
 **Proyecto**: OpenMirai Engine (gate de seguridad 0.7.0 — área CORS + AUTH del server)

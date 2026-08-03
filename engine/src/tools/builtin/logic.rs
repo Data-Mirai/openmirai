@@ -9,7 +9,6 @@ use crate::core::runner::ToolError;
 use crate::tools::base::{field, FieldType};
 use crate::tools::registry::{Tool, ToolRegistry};
 
-
 // ===========================================================================
 // ConditionTool
 // ===========================================================================
@@ -547,11 +546,13 @@ mod tests {
         inputs.insert("field".to_string(), json!("billing"));
         inputs.insert("operator".to_string(), json!("eq"));
         inputs.insert("value".to_string(), json!("billing"));
-        let validated =
-            crate::tools::base::validate_node_inputs(&inputs, spec, "check").unwrap();
+        let validated = crate::tools::base::validate_node_inputs(&inputs, spec, "check").unwrap();
 
         let tool = ConditionTool;
-        let result = tool.execute(validated, &HashMap::new(), &ctx()).await.unwrap();
+        let result = tool
+            .execute(validated, &HashMap::new(), &ctx())
+            .await
+            .unwrap();
         assert_eq!(result["result"], json!(true));
     }
 

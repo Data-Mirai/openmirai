@@ -32,8 +32,8 @@ use self::handlers::*;
 use self::helpers::rag_search;
 use self::orchestrator::{
     orchestrator_create_session, orchestrator_events, orchestrator_get_activity,
-    orchestrator_get_session, orchestrator_list_sessions, orchestrator_output,
-    orchestrator_list_projects, orchestrator_pick_folder, orchestrator_record_activity,
+    orchestrator_get_session, orchestrator_list_projects, orchestrator_list_sessions,
+    orchestrator_output, orchestrator_pick_folder, orchestrator_record_activity,
     orchestrator_register_external, orchestrator_restart, orchestrator_send,
     orchestrator_set_external_status, orchestrator_stop, orchestrator_unregister_external,
     serve_ui, serve_ui_index,
@@ -76,7 +76,10 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/v1/sessions", get(list_sessions))
         .route("/api/v1/sessions/{id}", get(get_session))
-        .route("/api/v1/sessions/{id}/otel-trace", get(get_session_otel_trace))
+        .route(
+            "/api/v1/sessions/{id}/otel-trace",
+            get(get_session_otel_trace),
+        )
         // Universe
         .route("/api/v1/universe/message", post(universe_message))
         .route("/api/v1/universe/groupchat", post(groupchat))
@@ -275,13 +278,12 @@ fn same_host_origin(origin: &str, host_header: &str) -> bool {
     };
     // Host header is `host` or `host:port` (IPv6 host in brackets).
     let (hhost, hport) = match host_header.rsplit_once(':') {
-        Some((h, p)) if !p.contains(']') && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+        Some((h, p))
+            if !p.contains(']') && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) =>
+        {
             (h, p.parse::<u16>().unwrap_or(0))
         }
-        _ => (
-            host_header,
-            if url.scheme() == "https" { 443 } else { 80 },
-        ),
+        _ => (host_header, if url.scheme() == "https" { 443 } else { 80 }),
     };
     let hhost = hhost.trim_start_matches('[').trim_end_matches(']');
     let ohost = ohost.trim_start_matches('[').trim_end_matches(']');
@@ -412,7 +414,10 @@ pub async fn serve(
         if dir.is_dir() {
             tracing::info!("serving web UI at /ui from {}", dir.display());
         } else {
-            tracing::warn!("--ui-dir {} is not a directory; /ui will 404", dir.display());
+            tracing::warn!(
+                "--ui-dir {} is not a directory; /ui will 404",
+                dir.display()
+            );
         }
     }
 
@@ -457,7 +462,8 @@ fn expand_home(path: &str) -> std::path::PathBuf {
     let path = path.trim();
     if path == "~" || path.starts_with("~/") {
         if let Ok(home) = std::env::var("HOME") {
-            return std::path::Path::new(&home).join(path.trim_start_matches("~/").trim_start_matches('~'));
+            return std::path::Path::new(&home)
+                .join(path.trim_start_matches("~/").trim_start_matches('~'));
         }
     }
     std::path::PathBuf::from(path)

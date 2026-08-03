@@ -215,7 +215,9 @@ fn compiled_regex(pattern: &str) -> Result<std::sync::Arc<regex::Regex>, String>
     static CACHE: OnceLock<Cache> = OnceLock::new();
 
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(cached) = guard.get(pattern) {
         return cached.clone();
     }
@@ -288,7 +290,9 @@ pub fn validate_node_inputs(
     for field in &tool_spec.inputs {
         match inputs.get(&field.name) {
             Some(value) => {
-                if let Err(err) = field.validate_value(value, &format!("Node '{}' input '{}'", node_id, field.name)) {
+                if let Err(err) = field
+                    .validate_value(value, &format!("Node '{}' input '{}'", node_id, field.name))
+                {
                     errors.push(err);
                 }
             }
@@ -323,7 +327,10 @@ pub fn validate_node_config(
     for field in &tool_spec.config_fields {
         match config.get(&field.name) {
             Some(value) => {
-                if let Err(err) = field.validate_value(value, &format!("Node '{}' config '{}'", node_id, field.name)) {
+                if let Err(err) = field.validate_value(
+                    value,
+                    &format!("Node '{}' config '{}'", node_id, field.name),
+                ) {
                     errors.push(err);
                 }
             }
@@ -417,10 +424,7 @@ mod tests {
             json!({"k": "v"}),
             json!(null),
         ] {
-            assert!(
-                FieldType::Any.matches(&value),
-                "Any should match {value:?}"
-            );
+            assert!(FieldType::Any.matches(&value), "Any should match {value:?}");
         }
     }
 
@@ -462,8 +466,7 @@ mod tests {
         assert!(str_field.validate_value(&json!("abcdef"), "test").is_err());
 
         // Test regex validation
-        let re_field = field("code", FieldType::String, true, "")
-            .regex_format(r"^[A-Z]{3}-\d{3}$");
+        let re_field = field("code", FieldType::String, true, "").regex_format(r"^[A-Z]{3}-\d{3}$");
         assert!(re_field.validate_value(&json!("ABC-123"), "test").is_ok());
         assert!(re_field.validate_value(&json!("abc-123"), "test").is_err());
         assert!(re_field.validate_value(&json!("ABCD-123"), "test").is_err());
@@ -494,8 +497,11 @@ mod tests {
             inputs: vec![],
             outputs: vec![],
             config_fields: vec![
-                field("port", FieldType::Integer, true, "").min_value(1024.0).max_value(65535.0),
-                field("host", FieldType::String, false, "").regex_format(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"),
+                field("port", FieldType::Integer, true, "")
+                    .min_value(1024.0)
+                    .max_value(65535.0),
+                field("host", FieldType::String, false, "")
+                    .regex_format(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"),
             ],
         };
 

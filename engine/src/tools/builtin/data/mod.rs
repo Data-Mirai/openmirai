@@ -12,7 +12,6 @@ use crate::core::runner::ToolError;
 use crate::tools::base::{field, FieldType};
 use crate::tools::registry::{Tool, ToolRegistry};
 
-
 pub mod db_read;
 pub mod db_write;
 pub mod entity_query;

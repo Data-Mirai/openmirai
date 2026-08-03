@@ -233,7 +233,11 @@ pub fn build_command(os: &str, start: Option<&str>) -> Option<(String, Vec<Strin
 /// - timeout (process killed): reported as cancelled (pinned contract).
 fn parse_outcome(os: &str, outcome: RunOutcome) -> PickOutcome {
     match outcome {
-        RunOutcome::Completed { code, stdout, stderr } => match code {
+        RunOutcome::Completed {
+            code,
+            stdout,
+            stderr,
+        } => match code {
             Some(0) => {
                 let path = stdout.trim();
                 // `POSIX path of` returns a trailing slash — normalize it off.
@@ -250,10 +254,9 @@ fn parse_outcome(os: &str, outcome: RunOutcome) -> PickOutcome {
             }
             Some(1) if os == "linux" => PickOutcome::Cancelled,
             _ if os == "macos" && stderr.contains(OSA_CANCEL_MARKER) => PickOutcome::Cancelled,
-            other => PickOutcome::Failed(format!(
-                "picker exited with {other:?}: {}",
-                stderr.trim()
-            )),
+            other => {
+                PickOutcome::Failed(format!("picker exited with {other:?}: {}", stderr.trim()))
+            }
         },
         RunOutcome::TimedOut => PickOutcome::Cancelled,
         RunOutcome::SpawnNotFound => PickOutcome::Unsupported(if os == "linux" {
@@ -447,10 +450,7 @@ mod tests {
         assert_eq!(p.pick("macos", None).await, PickOutcome::Busy);
 
         // The first finishes normally, and the flag is released.
-        assert_eq!(
-            first.await.unwrap(),
-            PickOutcome::Picked("/tmp/a".into())
-        );
+        assert_eq!(first.await.unwrap(), PickOutcome::Picked("/tmp/a".into()));
         assert_eq!(
             p.pick("macos", None).await,
             PickOutcome::Picked("/tmp/a".into())

@@ -369,7 +369,9 @@ mod tests {
     #[test]
     fn test_fork_isolated() {
         let parent = ExecutionState::new();
-        parent.set("n1", output(&[("v", json!(10))]), false).unwrap();
+        parent
+            .set("n1", output(&[("v", json!(10))]), false)
+            .unwrap();
 
         let child = parent.fork();
         // Child should have parent's values
@@ -389,12 +391,18 @@ mod tests {
     #[test]
     fn test_merge_states() {
         let state_a = ExecutionState::new();
-        state_a.set("n1", output(&[("x", json!(1))]), false).unwrap();
+        state_a
+            .set("n1", output(&[("x", json!(1))]), false)
+            .unwrap();
 
         let state_b = ExecutionState::new();
-        state_b.set("n2", output(&[("y", json!(2))]), false).unwrap();
+        state_b
+            .set("n2", output(&[("y", json!(2))]), false)
+            .unwrap();
         // Overlap on n1, different keys
-        state_b.set("n1", output(&[("z", json!(3))]), false).unwrap();
+        state_b
+            .set("n1", output(&[("z", json!(3))]), false)
+            .unwrap();
 
         state_a.merge(&state_b).unwrap();
 
@@ -404,4 +412,3 @@ mod tests {
         assert_eq!(state_a.get_field("n1", "z"), Some(json!(3)));
     }
 }
-

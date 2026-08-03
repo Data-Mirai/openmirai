@@ -215,7 +215,8 @@ mod tests {
     use super::*;
 
     fn temp_base() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mirai-hooks-test-{}", crate::utils::short_id()));
+        let dir =
+            std::env::temp_dir().join(format!("mirai-hooks-test-{}", crate::utils::short_id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -320,7 +321,8 @@ mod tests {
 
         for payload in [
             br#"{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{}}"#.as_slice(),
-            br#"{"tool_name":"mcp__atlassian__searchJiraIssuesUsingJql","tool_input":{}}"#.as_slice(),
+            br#"{"tool_name":"mcp__atlassian__searchJiraIssuesUsingJql","tool_input":{}}"#
+                .as_slice(),
             br#"{"tool_name":"mcp__github__atlassianUserInfo","tool_input":{}}"#.as_slice(),
         ] {
             let out = run_hook(&script, payload);
@@ -376,23 +378,22 @@ print("ok")
         let script = ensure_hook_script(&base).unwrap();
 
         // Valid payload but no MIRAI_SESSION_ID in env → silent exit 0.
-        let out = std::process::Command::new("python3")
-            .arg(&script)
-            .env_remove("MIRAI_SESSION_ID")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
-                use std::io::Write;
-                child
-                    .stdin
-                    .take()
-                    .unwrap()
-                    .write_all(br#"{"tool_name":"Write","tool_input":{"file_path":"/tmp/x"}}"#)?;
-                child.wait_with_output()
-            })
-            .expect("python3 available");
+        let out =
+            std::process::Command::new("python3")
+                .arg(&script)
+                .env_remove("MIRAI_SESSION_ID")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    child.stdin.take().unwrap().write_all(
+                        br#"{"tool_name":"Write","tool_input":{"file_path":"/tmp/x"}}"#,
+                    )?;
+                    child.wait_with_output()
+                })
+                .expect("python3 available");
         assert!(out.status.success(), "hook must exit 0: {out:?}");
         assert!(out.stderr.is_empty(), "hook must be silent: {out:?}");
 

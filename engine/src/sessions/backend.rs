@@ -27,7 +27,8 @@ pub trait SessionBackend: Send + Sync {
     fn send_text(&self, tmux_session: &str, text: &str) -> Result<(), SessionError>;
 
     /// Capture the last `lines` lines of the session's pane.
-    fn capture_output(&self, tmux_session: &str, lines: usize) -> Result<Vec<String>, SessionError>;
+    fn capture_output(&self, tmux_session: &str, lines: usize)
+        -> Result<Vec<String>, SessionError>;
 
     /// Whether the tmux session is still alive.
     fn session_exists(&self, tmux_session: &str) -> bool;
@@ -101,7 +102,8 @@ impl SessionBackend for TmuxBackend {
         // `-l` sends the text literally (no key-name interpretation).
         self.tmux(&["send-keys", "-t", &target, "-l", "--", text])?;
         // Enter goes as a key name in a second call.
-        self.tmux(&["send-keys", "-t", &target, "Enter"]).map(|_| ())
+        self.tmux(&["send-keys", "-t", &target, "Enter"])
+            .map(|_| ())
     }
 
     fn capture_output(
@@ -210,9 +212,7 @@ pub(crate) mod fake {
 
         fn send_text(&self, tmux_session: &str, text: &str) -> Result<(), SessionError> {
             if !self.session_exists(tmux_session) {
-                return Err(SessionError::Backend(format!(
-                    "no session {tmux_session}"
-                )));
+                return Err(SessionError::Backend(format!("no session {tmux_session}")));
             }
             self.sent
                 .lock()

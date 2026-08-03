@@ -11,7 +11,6 @@ use crate::core::runner::ToolError;
 use crate::tools::base::{field, FieldType};
 use crate::tools::registry::{Tool, ToolRegistry};
 
-
 // ===========================================================================
 // LlmCallTool
 // ===========================================================================
@@ -766,12 +765,13 @@ impl Tool for TranscribeTool {
                 .to_string();
             let language = get("language").and_then(|v| v.as_str()).map(String::from);
 
-            let bytes = tokio::fs::read(&file_path).await.map_err(|e| {
-                ToolError::ExecutionFailed {
-                    tool_type: "ai/transcribe".into(),
-                    message: format!("failed to read audio file '{file_path}': {e}"),
-                }
-            })?;
+            let bytes =
+                tokio::fs::read(&file_path)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "ai/transcribe".into(),
+                        message: format!("failed to read audio file '{file_path}': {e}"),
+                    })?;
             if bytes.is_empty() {
                 return Err(ToolError::ExecutionFailed {
                     tool_type: "ai/transcribe".into(),
@@ -836,14 +836,22 @@ impl Tool for TranscribeTool {
                 let status = resp.status().as_u16();
 
                 if (200..300).contains(&status) {
-                    let body: Value = resp.json().await.map_err(|e| ToolError::ExecutionFailed {
-                        tool_type: "ai/transcribe".into(),
-                        message: format!("failed to parse Scribe response JSON: {e}"),
-                    })?;
-                    let text = body.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                    let body: Value =
+                        resp.json().await.map_err(|e| ToolError::ExecutionFailed {
+                            tool_type: "ai/transcribe".into(),
+                            message: format!("failed to parse Scribe response JSON: {e}"),
+                        })?;
+                    let text = body
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let duration = scribe_duration_seconds(&body);
 
-                    info!(chars = text.chars().count(), duration, "ai/transcribe: Scribe transcription ok");
+                    info!(
+                        chars = text.chars().count(),
+                        duration, "ai/transcribe: Scribe transcription ok"
+                    );
 
                     let mut out = HashMap::new();
                     out.insert("text".to_string(), json!(text));
@@ -856,14 +864,21 @@ impl Tool for TranscribeTool {
                     let body_text = resp.text().await.unwrap_or_default();
                     last_error = format!("HTTP {status}: {body_text}");
                     let delay = 2u64.pow(attempt + 1);
-                    warn!(status, attempt = attempt + 1, delay_secs = delay, "ai/transcribe: retriable error, backing off");
+                    warn!(
+                        status,
+                        attempt = attempt + 1,
+                        delay_secs = delay,
+                        "ai/transcribe: retriable error, backing off"
+                    );
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                     continue;
                 }
 
                 let body_text = resp.text().await.unwrap_or_default();
                 let msg = match status {
-                    401 | 403 => format!("elevenlabs API key is invalid or unauthorized (HTTP {status})"),
+                    401 | 403 => {
+                        format!("elevenlabs API key is invalid or unauthorized (HTTP {status})")
+                    }
                     _ => format!("elevenlabs STT error (HTTP {status}): {body_text}"),
                 };
                 return Err(ToolError::ExecutionFailed {
@@ -878,9 +893,7 @@ impl Tool for TranscribeTool {
             });
         }
 
-        let model = get("model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("default");
+        let model = get("model").and_then(|v| v.as_str()).unwrap_or("default");
 
         // PRD-009: Read the audio file and send as multimodal content.
         let provider_name = context.llm().provider_name();
@@ -1201,10 +1214,8 @@ impl Tool for ImageEditTool {
             });
         }
 
-        let mask_raw = inputs
-            .get("mask_path")
-            .or_else(|| config.get("mask_path"));
-        let mask_path = mask_raw.map(|v| crate::llm::media::resolve_file_input(v));
+        let mask_raw = inputs.get("mask_path").or_else(|| config.get("mask_path"));
+        let mask_path = mask_raw.map(crate::llm::media::resolve_file_input);
 
         let prompt = inputs
             .get("prompt")
@@ -1243,31 +1254,31 @@ impl Tool for ImageEditTool {
             .get("quality")
             .and_then(|v| v.as_str())
             .unwrap_or("high");
-        let n = config
-            .get("n")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
+        let n = config.get("n").and_then(|v| v.as_u64()).unwrap_or(1);
         let base_url = config
             .get("base_url")
             .and_then(|v| v.as_str())
             .unwrap_or("https://api.openai.com");
 
         // --- 3. Read files ---
-        let image_bytes = tokio::fs::read(&image_path).await.map_err(|e| {
-            ToolError::ExecutionFailed {
-                tool_type: "ai/image_edit".into(),
-                message: format!("failed to read image file: {image_path}: {e}"),
-            }
-        })?;
+        let image_bytes =
+            tokio::fs::read(&image_path)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/image_edit".into(),
+                    message: format!("failed to read image file: {image_path}: {e}"),
+                })?;
 
         let mask_bytes = match &mask_path {
             Some(p) if !p.is_empty() => {
-                Some(tokio::fs::read(p).await.map_err(|e| {
-                    ToolError::ExecutionFailed {
-                        tool_type: "ai/image_edit".into(),
-                        message: format!("failed to read mask file: {p}: {e}"),
-                    }
-                })?)
+                Some(
+                    tokio::fs::read(p)
+                        .await
+                        .map_err(|e| ToolError::ExecutionFailed {
+                            tool_type: "ai/image_edit".into(),
+                            message: format!("failed to read mask file: {p}: {e}"),
+                        })?,
+                )
             }
             _ => None,
         };
@@ -1349,22 +1360,17 @@ impl Tool for ImageEditTool {
                     .unwrap_or("")
                     .to_string();
 
-                let created_ts = body
-                    .get("created")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let created_ts = body.get("created").and_then(|v| v.as_u64()).unwrap_or(0);
 
-                let decoded = STANDARD.decode(b64).map_err(|e| {
-                    ToolError::ExecutionFailed {
+                let decoded = STANDARD
+                    .decode(b64)
+                    .map_err(|e| ToolError::ExecutionFailed {
                         tool_type: "ai/image_edit".into(),
                         message: format!("failed to decode base64 image: {e}"),
-                    }
-                })?;
+                    })?;
 
                 // --- 7. Save to scratch dir (fallback to /tmp) ---
-                let scratch = context
-                    .scratch_dir()
-                    .unwrap_or("/tmp");
+                let scratch = context.scratch_dir().unwrap_or("/tmp");
 
                 let file_id = uuid::Uuid::new_v4();
                 let out_path = format!("{scratch}/image_edit_{file_id}.png");
@@ -1439,9 +1445,7 @@ impl Tool for ImageEditTool {
         // All retries exhausted
         Err(ToolError::ExecutionFailed {
             tool_type: "ai/image_edit".into(),
-            message: format!(
-                "OpenAI error after {max_retries} retries: {last_error}"
-            ),
+            message: format!("OpenAI error after {max_retries} retries: {last_error}"),
         })
     }
 }
@@ -1486,7 +1490,14 @@ const CARTESIA_VERSION: &str = "2026-03-01";
 fn eleven_tts_url(base_url: &str, voice_id: &str) -> String {
     format!("{base_url}/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128")
 }
-fn eleven_tts_body(text: &str, model: &str, stability: f64, similarity: f64, style: f64, language: Option<&str>) -> Value {
+fn eleven_tts_body(
+    text: &str,
+    model: &str,
+    stability: f64,
+    similarity: f64,
+    style: f64,
+    language: Option<&str>,
+) -> Value {
     let mut body = json!({
         "text": text,
         "model_id": model,
@@ -1499,7 +1510,9 @@ fn eleven_tts_body(text: &str, model: &str, stability: f64, similarity: f64, sty
     });
     // language_code fuerza el idioma para pronunciacion correcta (soportado en flash/turbo v2.5).
     if let Some(lang) = language {
-        if !lang.is_empty() { body["language_code"] = json!(lang); }
+        if !lang.is_empty() {
+            body["language_code"] = json!(lang);
+        }
     }
     body
 }
@@ -1569,8 +1582,12 @@ impl Tool for TtsTool {
                         tool_type: "ai/tts".into(),
                         message: "Cartesia API key not found. Set config.api_key or CARTESIA_API_KEY env var".into(),
                     })?;
-                let base = get("base_url").and_then(|v| v.as_str()).unwrap_or("https://api.cartesia.ai");
-                let voice = get("voice_id").and_then(|v| v.as_str()).unwrap_or(CARTESIA_DEFAULT_VOICE);
+                let base = get("base_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("https://api.cartesia.ai");
+                let voice = get("voice_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(CARTESIA_DEFAULT_VOICE);
                 let model = get("model").and_then(|v| v.as_str()).unwrap_or("sonic-3.5");
                 let language = get("language").and_then(|v| v.as_str());
                 let speed = get("speed").and_then(|v| v.as_f64());
@@ -1591,11 +1608,19 @@ impl Tool for TtsTool {
                         tool_type: "ai/tts".into(),
                         message: "ElevenLabs API key not found. Set config.api_key or ELEVENLABS_API_KEY env var".into(),
                     })?;
-                let base = get("base_url").and_then(|v| v.as_str()).unwrap_or("https://api.elevenlabs.io");
-                let voice = get("voice_id").and_then(|v| v.as_str()).unwrap_or(ELEVEN_DEFAULT_VOICE);
-                let model = get("model").and_then(|v| v.as_str()).unwrap_or("eleven_flash_v2_5");
+                let base = get("base_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("https://api.elevenlabs.io");
+                let voice = get("voice_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(ELEVEN_DEFAULT_VOICE);
+                let model = get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("eleven_flash_v2_5");
                 let stability = get("stability").and_then(|v| v.as_f64()).unwrap_or(0.5);
-                let similarity = get("similarity_boost").and_then(|v| v.as_f64()).unwrap_or(0.75);
+                let similarity = get("similarity_boost")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.75);
                 let style = get("style").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let language = get("language").and_then(|v| v.as_str());
                 let body = eleven_tts_body(&text, model, stability, similarity, style, language);
@@ -1650,9 +1675,11 @@ impl Tool for TtsTool {
                         message: format!("{provider} returned empty audio"),
                     });
                 }
-                tokio::fs::write(&out_path, &bytes).await.map_err(|e| ToolError::ExecutionFailed {
-                    tool_type: "ai/tts".into(),
-                    message: format!("failed to save audio: {e}"),
+                tokio::fs::write(&out_path, &bytes).await.map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("failed to save audio: {e}"),
+                    }
                 })?;
 
                 info!(path = %out_path, provider = %provider, bytes = bytes.len(), "ai/tts: saved audio");
@@ -1673,7 +1700,12 @@ impl Tool for TtsTool {
                 let body_text = resp.text().await.unwrap_or_default();
                 last_error = format!("HTTP {status}: {body_text}");
                 let delay = 2u64.pow(attempt + 1);
-                warn!(status, attempt = attempt + 1, delay_secs = delay, "ai/tts: retriable error, backing off");
+                warn!(
+                    status,
+                    attempt = attempt + 1,
+                    delay_secs = delay,
+                    "ai/tts: retriable error, backing off"
+                );
                 tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                 continue;
             }
@@ -1681,7 +1713,9 @@ impl Tool for TtsTool {
             // Non-retriable
             let body_text = resp.text().await.unwrap_or_default();
             let msg = match status {
-                401 | 403 => format!("{provider} API key is invalid or unauthorized (HTTP {status})"),
+                401 | 403 => {
+                    format!("{provider} API key is invalid or unauthorized (HTTP {status})")
+                }
                 _ => format!("{provider} TTS error (HTTP {status}): {body_text}"),
             };
             return Err(ToolError::ExecutionFailed {
@@ -2031,7 +2065,10 @@ mod tests {
         assert_eq!(audio_mime_for_path("/tmp/a.WAV"), "audio/wav");
         assert_eq!(audio_mime_for_path("/tmp/a.mp3"), "audio/mpeg");
         assert_eq!(audio_mime_for_path("/tmp/a.webm"), "audio/webm");
-        assert_eq!(audio_mime_for_path("/tmp/noext"), "application/octet-stream");
+        assert_eq!(
+            audio_mime_for_path("/tmp/noext"),
+            "application/octet-stream"
+        );
     }
 
     #[test]
@@ -2046,6 +2083,9 @@ mod tests {
         });
         assert!((scribe_duration_seconds(&body) - 1.2).abs() < 1e-9);
         assert_eq!(scribe_duration_seconds(&json!({ "text": "x" })), 0.0);
-        assert_eq!(scribe_duration_seconds(&json!({ "text": "x", "words": [] })), 0.0);
+        assert_eq!(
+            scribe_duration_seconds(&json!({ "text": "x", "words": [] })),
+            0.0
+        );
     }
 }

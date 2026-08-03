@@ -323,7 +323,11 @@ async fn get_session_otel_trace_returns_otel_format() {
         interrupt_info: None,
     };
 
-    state.sessions.write().await.insert("test-session-123".to_string(), exec_result);
+    state
+        .sessions
+        .write()
+        .await
+        .insert("test-session-123".to_string(), exec_result);
 
     let resp = app
         .oneshot(

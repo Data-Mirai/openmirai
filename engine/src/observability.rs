@@ -211,6 +211,8 @@ mod tests {
             status,
             duration_ms: ms,
             retries: 0,
+            started_at: 0.0,
+            finished_at: 0.0,
             error: None,
         }
     }

@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use crate::core::agent_spec::AgentSpec;
 use crate::core::graph::{EdgeDef, GraphDef, NodeDef};
 use crate::core::runner::{ExecutionStatus, TraceEntry};
+use crate::db::Repository;
 use crate::utils::short_id;
 
 use super::helpers::{persist_memory_after_execution, run_agent_spec, run_agent_spec_streaming};
@@ -310,6 +311,7 @@ pub(crate) async fn execute_agent(
     }
 
     // Run the agent graph with timeout protection.
+    let started_at = crate::utils::now_epoch();
     let timeout = std::time::Duration::from_secs(state.timeout_secs);
     let result =
         match tokio::time::timeout(timeout, run_agent_spec(&spec, &trigger_data, &state)).await {
@@ -339,7 +341,10 @@ pub(crate) async fn execute_agent(
         "error": result.error,
     });
 
-    state.insert_session(session_id, result).await;
+    // Memoria (cache caliente) + SQLite (el run sobrevive reinicios).
+    state
+        .record_session(session_id, &id, &spec.name, started_at, result)
+        .await;
 
     Ok(Json(body))
 }
@@ -392,8 +397,17 @@ pub(crate) async fn stream_agent(
     let state_clone = state.clone();
     let spec_clone = spec.clone();
     let trigger_data = req.trigger_data.clone();
+    let agent_id = id.clone();
     tokio::spawn(async move {
-        run_agent_spec_streaming(&spec_clone, &trigger_data, &state_clone, event_tx).await;
+        let started_at = crate::utils::now_epoch();
+        if let Some(result) =
+            run_agent_spec_streaming(&spec_clone, &trigger_data, &state_clone, event_tx).await
+        {
+            // Los streams también son runs: registrar + persistir.
+            state_clone
+                .record_session(short_id(), &agent_id, &spec_clone.name, started_at, result)
+                .await;
+        }
     });
 
     // Stream the byte channel as the HTTP response body.
@@ -849,9 +863,39 @@ pub(crate) async fn list_sessions(
     State(state): State<AppState>,
     Query(params): Query<SessionListQuery>,
 ) -> Json<Value> {
-    let sessions = state.sessions.read().await;
     let limit = params.limit.unwrap_or(50);
 
+    // DB-first (0.7.0): los runs persistidos incluyen también los que ya no
+    // están en la cache de memoria (reinicios, eviction FIFO) y soportan el
+    // filtro ?agent_id=. Fallback a memoria si no hay repo cableado.
+    if let Some(repo) = &state.session_repo {
+        match repo.list_by_agent(params.agent_id.as_deref(), limit).await {
+            Ok(records) => {
+                let list: Vec<Value> = records
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "id": r.id,
+                            "agent_id": r.agent_id,
+                            "agent_name": r.agent_name,
+                            "status": r.result.status,
+                            "trace_len": r.result.trace.len(),
+                            "error": r.result.error,
+                            "started_at": r.created_at,
+                            "finished_at": r.finished_at,
+                            "duration_ms": r.duration_ms,
+                        })
+                    })
+                    .collect();
+                return Json(json!(list));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "list_sessions: fallo leyendo la DB, fallback a memoria");
+            }
+        }
+    }
+
+    let sessions = state.sessions.read().await;
     let list: Vec<Value> = sessions
         .iter()
         .take(limit)
@@ -872,21 +916,51 @@ pub(crate) async fn get_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
-    let sessions = state.sessions.read().await;
-    match sessions.get(&id) {
-        Some(result) => Ok(Json(json!({
-            "id": id,
-            "status": result.status,
-            "trace": result.trace,
-            "error": result.error,
-        }))),
-        None => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "Session not found".to_string(),
-            }),
-        )),
+    // Cache caliente primero.
+    {
+        let sessions = state.sessions.read().await;
+        if let Some(result) = sessions.get(&id) {
+            return Ok(Json(json!({
+                "id": id,
+                "status": result.status,
+                "trace": result.trace,
+                "error": result.error,
+            })));
+        }
     }
+
+    // Fallback a SQLite (0.7.0): el run sobrevive reinicios y eviction.
+    // Mismo contrato base + campos adicionales del registro persistido.
+    if let Some(repo) = &state.session_repo {
+        match repo.get(&id).await {
+            Ok(Some(rec)) => {
+                return Ok(Json(json!({
+                    "id": rec.id,
+                    "status": rec.result.status,
+                    "trace": rec.result.trace,
+                    "error": rec.result.error,
+                    "agent_id": rec.agent_id,
+                    "agent_name": rec.agent_name,
+                    "transcript": rec.result.transcript,
+                    "state": rec.result.state.snapshot(),
+                    "started_at": rec.created_at,
+                    "finished_at": rec.finished_at,
+                    "duration_ms": rec.duration_ms,
+                })));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(session_id = %id, error = %e, "get_session: fallo leyendo la DB");
+            }
+        }
+    }
+
+    Err((
+        StatusCode::NOT_FOUND,
+        Json(ErrorResponse {
+            error: "Session not found".to_string(),
+        }),
+    ))
 }
 
 /// Hash determinista de 64 bits, nunca cero.
@@ -922,8 +996,17 @@ pub(crate) async fn get_session_otel_trace(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
-    let sessions = state.sessions.read().await;
-    match sessions.get(&id) {
+    // Memoria primero; fallback a SQLite (0.7.0) — la traza OTel de un run
+    // persiste tras reinicios igual que el run mismo.
+    let from_memory = { state.sessions.read().await.get(&id).cloned() };
+    let fetched = match from_memory {
+        Some(r) => Some(r),
+        None => match &state.session_repo {
+            Some(repo) => repo.get(&id).await.ok().flatten().map(|rec| rec.result),
+            None => None,
+        },
+    };
+    match fetched.as_ref() {
         Some(result) => {
             let trace_id = get_trace_id(&id);
             // usize::MAX como índice reservado para el root: nunca colisiona
@@ -932,20 +1015,36 @@ pub(crate) async fn get_session_otel_trace(
 
             let mut total_duration_ms = 0;
             let mut spans = Vec::new();
+            // Ventana real del root: min(started)..max(finished) de los nodos
+            // con timestamps (0.7.0). Sin timestamps → fallback serializado.
+            let mut root_start = f64::INFINITY;
+            let mut root_end: f64 = 0.0;
 
             for (index, entry) in result.trace.iter().enumerate() {
+                if entry.started_at > 0.0 {
+                    root_start = root_start.min(entry.started_at);
+                    root_end = root_end.max(entry.finished_at);
+                }
                 total_duration_ms += entry.duration_ms;
 
                 let span_id = get_span_id(&entry.node_id, index);
 
-                // Limitación conocida: TraceEntry solo guarda duration_ms (no
-                // hay timestamps reales de inicio/fin), así que los spans se
-                // fabrican en serie desde t=0. En grafos con nodos paralelos
-                // esto infla el wall-time aparente y aplana el DAG a una
-                // secuencia. Para timings fieles habría que capturar
-                // start/end reales en el runner y usarlos aquí.
-                let start_time_nano = (total_duration_ms - entry.duration_ms) * 1_000_000;
-                let end_time_nano = total_duration_ms * 1_000_000;
+                // 0.7.0: TraceEntry captura started_at/finished_at reales
+                // (unix epoch) — los spans reflejan el timing fiel, incluidos
+                // nodos paralelos con tiempos solapados. Fallback al modelo
+                // serializado desde t=0 SOLO para traces viejos sin timestamps
+                // (started_at == 0.0).
+                let (start_time_nano, end_time_nano) = if entry.started_at > 0.0 {
+                    (
+                        (entry.started_at * 1_000_000_000.0) as u64,
+                        (entry.finished_at * 1_000_000_000.0) as u64,
+                    )
+                } else {
+                    (
+                        (total_duration_ms - entry.duration_ms) * 1_000_000,
+                        total_duration_ms * 1_000_000,
+                    )
+                };
 
                 let status_code = match entry.status {
                     crate::core::runner::TraceStatus::Ok => "STATUS_CODE_OK",
@@ -978,14 +1077,22 @@ pub(crate) async fn get_session_otel_trace(
                 }));
             }
 
-            // Add the graph root span
+            // Add the graph root span — con ventana real si hay timestamps.
+            let (root_start_nano, root_end_nano) = if root_end > 0.0 {
+                (
+                    (root_start * 1_000_000_000.0) as u64,
+                    (root_end * 1_000_000_000.0) as u64,
+                )
+            } else {
+                (0, total_duration_ms * 1_000_000)
+            };
             let root_span = json!({
                 "traceId": trace_id,
                 "spanId": root_span_id,
                 "name": format!("graph:{}", id),
                 "kind": "SPAN_KIND_SERVER",
-                "startTimeUnixNano": "0",
-                "endTimeUnixNano": (total_duration_ms * 1_000_000).to_string(),
+                "startTimeUnixNano": root_start_nano.to_string(),
+                "endTimeUnixNano": root_end_nano.to_string(),
                 "attributes": [
                     { "key": "openmirai.session.id", "value": { "stringValue": id.clone() } },
                     { "key": "openmirai.status", "value": { "stringValue": format!("{:?}", result.status) } }

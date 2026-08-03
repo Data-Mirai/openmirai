@@ -11,6 +11,7 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
+use crate::db::{Repository, SessionRecord, SessionStatus, SqliteSessionRepo};
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
 use crate::sessions::{SessionManager, TmuxBackend};
@@ -66,6 +67,9 @@ pub struct AppState {
     pub projects_dirs: Vec<std::path::PathBuf>,
     /// Native host folder picker (PRD-013 M9). One dialog at a time.
     pub folder_picker: Arc<crate::sessions::picker::FolderPicker>,
+    /// Persistencia de runs en SQLite (0.7.0). `None` → solo memoria
+    /// (tests / factories sin `serve()`); `serve()` la cablea siempre.
+    pub session_repo: Option<Arc<SqliteSessionRepo>>,
 }
 
 impl AppState {
@@ -99,7 +103,39 @@ impl AppState {
             ui_dir: None,
             projects_dirs: Vec::new(),
             folder_picker: Arc::new(crate::sessions::picker::FolderPicker::new()),
+            session_repo: None,
         }
+    }
+
+    /// Registra una ejecución terminada: cache en memoria (para lecturas
+    /// calientes) + persistencia en SQLite si está cableada. Un fallo de
+    /// persistencia NO tumba el request — se loguea y la respuesta sigue.
+    pub async fn record_session(
+        &self,
+        id: String,
+        agent_id: &str,
+        agent_name: &str,
+        started_at: f64,
+        result: ExecutionResult,
+    ) {
+        if let Some(repo) = &self.session_repo {
+            let finished_at = crate::utils::now_epoch();
+            let rec = SessionRecord {
+                id: id.clone(),
+                agent_id: agent_id.to_string(),
+                agent_name: agent_name.to_string(),
+                graph_id: String::new(),
+                result: result.clone(),
+                created_at: started_at,
+                finished_at: Some(finished_at),
+                duration_ms: Some((finished_at - started_at) * 1000.0),
+                status: SessionStatus::from_execution(&result.status),
+            };
+            if let Err(e) = repo.save(&rec).await {
+                tracing::warn!(session_id = %id, error = %e, "no se pudo persistir el run");
+            }
+        }
+        self.insert_session(id, result).await;
     }
 
     /// Insert a session with FIFO eviction when max_sessions is exceeded.

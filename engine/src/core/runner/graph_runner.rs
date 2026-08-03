@@ -590,12 +590,15 @@ impl GraphRunner {
                 message: e.to_string(),
             });
         }
+        let finished_at = now_ts();
         trace.push(TraceEntry {
             node_id: node_id.to_string(),
             tool_type: node.tool_type.clone(),
             status: TraceStatus::Ok,
             duration_ms: elapsed_ms,
             retries,
+            started_at: finished_at - (elapsed_ms as f64 / 1000.0),
+            finished_at,
             error: None,
         });
 
@@ -746,12 +749,15 @@ impl GraphRunner {
 
         match retry_policy.on_failure {
             FailureMode::Stop => {
+                let finished_at = now_ts();
                 trace.push(TraceEntry {
                     node_id: node_id.to_string(),
                     tool_type: node.tool_type.clone(),
                     status: TraceStatus::Error,
                     duration_ms: elapsed_ms,
                     retries,
+                    started_at: finished_at - (elapsed_ms as f64 / 1000.0),
+                    finished_at,
                     error: Some(err_msg.clone()),
                 });
                 self.emit_event(
@@ -787,12 +793,15 @@ impl GraphRunner {
                         interrupt_info: None,
                     });
                 }
+                let finished_at = now_ts();
                 trace.push(TraceEntry {
                     node_id: node_id.to_string(),
                     tool_type: node.tool_type.clone(),
                     status: TraceStatus::Skipped,
                     duration_ms: elapsed_ms,
                     retries,
+                    started_at: finished_at - (elapsed_ms as f64 / 1000.0),
+                    finished_at,
                     error: Some(err_msg),
                 });
                 self.emit_event(
@@ -823,12 +832,15 @@ impl GraphRunner {
                         interrupt_info: None,
                     });
                 }
+                let finished_at = now_ts();
                 trace.push(TraceEntry {
                     node_id: node_id.to_string(),
                     tool_type: node.tool_type.clone(),
                     status: TraceStatus::Error,
                     duration_ms: elapsed_ms,
                     retries,
+                    started_at: finished_at - (elapsed_ms as f64 / 1000.0),
+                    finished_at,
                     error: Some(err_msg),
                 });
                 self.emit_event(
@@ -1123,7 +1135,16 @@ impl GraphRunner {
                     let start = Instant::now();
                     let result = executor.execute(node, inputs, context).await;
                     let elapsed_ms = start.elapsed().as_millis() as u64;
-                    (node.id.clone(), node.tool_type.clone(), result, elapsed_ms)
+                    // Fin real capturado DENTRO del branch concurrente: los spans
+                    // paralelos quedan con tiempos solapados fieles (no en serie).
+                    let finished_at = now_ts();
+                    (
+                        node.id.clone(),
+                        node.tool_type.clone(),
+                        result,
+                        elapsed_ms,
+                        finished_at,
+                    )
                 })
             })
             .collect();
@@ -1133,7 +1154,8 @@ impl GraphRunner {
 
         // Collect results.
         let mut failed_count = 0usize;
-        for (node_id, tool_type, exec_result, elapsed_ms) in results {
+        for (node_id, tool_type, exec_result, elapsed_ms, finished_at) in results {
+            let started_at = finished_at - (elapsed_ms as f64 / 1000.0);
             match exec_result {
                 Ok(output) => {
                     if let Err(e) = state.set(&node_id, output, true) {
@@ -1145,6 +1167,8 @@ impl GraphRunner {
                             status: TraceStatus::Error,
                             duration_ms: elapsed_ms,
                             retries: 0,
+                            started_at,
+                            finished_at,
                             error: Some(format!("state.set failed: {}", e)),
                         });
                         continue;
@@ -1156,6 +1180,8 @@ impl GraphRunner {
                         status: TraceStatus::Ok,
                         duration_ms: elapsed_ms,
                         retries: 0,
+                        started_at,
+                        finished_at,
                         error: None,
                     });
 
@@ -1178,6 +1204,8 @@ impl GraphRunner {
                         status: TraceStatus::Error,
                         duration_ms: elapsed_ms,
                         retries: 0,
+                        started_at,
+                        finished_at,
                         error: Some(tool_err.to_string()),
                     });
 

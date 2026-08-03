@@ -367,6 +367,7 @@ pub async fn serve(
     api_key: Option<String>,
     ui_dir: Option<String>,
     projects_dirs: Option<String>,
+    db_path: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if api_key.is_none() {
         if host_is_loopback(host) {
@@ -417,6 +418,27 @@ pub async fn serve(
             tracing::warn!(
                 "--ui-dir {} is not a directory; /ui will 404",
                 dir.display()
+            );
+        }
+    }
+
+    // 0.7.0: persistencia de runs en SQLite. Precedencia: --db-path >
+    // MIRAI_DB_PATH > ~/.openmirai/engine.db. Si la DB no abre, el server
+    // arranca igual (solo memoria) con warning — persistir no puede ser
+    // motivo de no bootear.
+    let resolved_db = db_path
+        .or_else(|| std::env::var("MIRAI_DB_PATH").ok())
+        .map(|p| expand_home(&p))
+        .unwrap_or_else(|| expand_home("~/.openmirai/engine.db"));
+    match crate::db::SqliteSessionRepo::open(&resolved_db) {
+        Ok(repo) => {
+            tracing::info!("runs persistence: {}", resolved_db.display());
+            state.session_repo = Some(std::sync::Arc::new(repo));
+        }
+        Err(e) => {
+            tracing::warn!(
+                "runs persistence DISABLED — no se pudo abrir {}: {e}",
+                resolved_db.display()
             );
         }
     }

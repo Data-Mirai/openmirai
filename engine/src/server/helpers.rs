@@ -199,12 +199,15 @@ pub(crate) async fn run_agent_spec_with_memory(
 }
 
 /// Internal: run an AgentSpec with real-time streaming via mpsc channel.
+///
+/// Devuelve el `ExecutionResult` final (si el grafo llegó a correr) para que
+/// el caller pueda registrar/persistir el run — los streams también son runs.
 pub(crate) async fn run_agent_spec_streaming(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
     event_tx: tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>,
-) {
+) -> Option<ExecutionResult> {
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
 
@@ -214,7 +217,7 @@ pub(crate) async fn run_agent_spec_streaming(
                 error: format!("Graph validation failed: {e}"),
             })
             .await;
-        return;
+        return None;
     }
 
     // Same injections as run_agent_spec.
@@ -264,13 +267,14 @@ pub(crate) async fn run_agent_spec_streaming(
     let streaming_runner = state.runner.clone().with_stream_tx(event_tx.clone());
 
     match streaming_runner.run(&graph, &context).await {
-        Ok(_) => {} // GraphCompleted already sent by runner
+        Ok(result) => Some(result), // GraphCompleted already sent by runner
         Err(e) => {
             let _ = event_tx
                 .send(crate::streaming::StreamEvent::GraphError {
                     error: e.to_string(),
                 })
                 .await;
+            None
         }
     }
     // Channel drops when event_tx is dropped → receiver gets None → stream ends

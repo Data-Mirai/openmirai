@@ -558,6 +558,9 @@ async fn run_serve(args: &[String]) {
     let projects_dirs =
         parse_flag(args, "--projects-dirs").or_else(|| std::env::var("MIRAI_PROJECTS_DIRS").ok());
 
+    // 0.7.0: ruta de la DB de runs (default ~/.openmirai/engine.db).
+    let db_path = parse_flag(args, "--db-path");
+
     if let Err(e) = openmirai_engine::server::serve(
         &host,
         port,
@@ -565,6 +568,7 @@ async fn run_serve(args: &[String]) {
         server_api_key,
         ui_dir,
         projects_dirs,
+        db_path,
     )
     .await
     {
@@ -1477,7 +1481,7 @@ fn print_help() {
     mirai                                    Interactive setup wizard + terminal
     mirai run <file> [options]               Execute agent from JSON/YAML file
     mirai validate <file>                    Validate agent spec
-    mirai serve [--port N] [--ui-dir <dir>]  Start HTTP server (+ web UI at /ui)
+    mirai serve [--port N] [--ui-dir <dir>] [--db-path <file>]  Start HTTP server (+ web UI at /ui; runs persisted to SQLite, default ~/.openmirai/engine.db)
     mirai version                            Show version
     mirai agent load <file>                  Import agent from YAML
     mirai agent list                         List agents

@@ -249,6 +249,175 @@ async fn execute_agent_from_spec() {
     assert_eq!(result["agent_id"], agent_id);
 }
 
+/// Helper 0.7.0: crea un agente trigger→out por from-spec y lo ejecuta.
+/// Devuelve (agent_id, session_id).
+async fn create_and_execute(app: &Router, name: &str) -> (String, String) {
+    let spec = json!({
+        "name": name,
+        "description": "test runs persistence",
+        "version": "v1",
+        "graph": {
+            "nodes": [
+                {"id": "trigger", "tool_type": "trigger/manual", "config": {"payload": {"msg": "hola"}}},
+                {"id": "out", "tool_type": "output/response", "config": {"message": "done"}}
+            ],
+            "edges": [
+                {"source": "trigger", "target": "out"}
+            ]
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/agents/from-spec")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&spec).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let agent_id = body_json(resp.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/agents/{agent_id}/execute"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "trigger_data": {} })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let session_id = body_json(resp.into_body()).await["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (agent_id, session_id)
+}
+
+#[tokio::test]
+async fn executed_run_persists_and_survives_memory_wipe() {
+    // 0.7.0: los runs sobreviven reinicios — ejecutar, vaciar la cache de
+    // memoria (símil de reinicio) y leerlo TODO desde SQLite.
+    let mut registry = ToolRegistry::new();
+    register_all_builtin_tools(&mut registry);
+    let mut state = AppState::new(registry, test_llm_factory(), None);
+    state.session_repo = Some(std::sync::Arc::new(
+        crate::db::SqliteSessionRepo::open_in_memory().unwrap(),
+    ));
+    let app = create_router(state.clone());
+
+    let (agent_id, session_id) = create_and_execute(&app, "test-exec-persist").await;
+
+    // Símil de reinicio: la memoria se pierde, la DB no.
+    state.sessions.write().await.clear();
+
+    // GET /sessions/{id} responde desde SQLite con el run completo.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/sessions/{session_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "el run debe sobrevivir el wipe"
+    );
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["status"], "Completed");
+    assert_eq!(json["agent_id"], agent_id);
+    assert_eq!(json["agent_name"], "test-exec-persist");
+    assert!(json["started_at"].as_f64().unwrap() > 0.0);
+    assert!(json["duration_ms"].as_f64().is_some());
+    // Timeline por nodo con timestamps reales (base de la trazabilidad).
+    let trace = json["trace"].as_array().unwrap();
+    assert!(!trace.is_empty());
+    assert!(trace[0]["started_at"].as_f64().unwrap() > 0.0);
+    assert!(trace[0]["finished_at"].as_f64().unwrap() >= trace[0]["started_at"].as_f64().unwrap());
+
+    // La traza OTel también sobrevive el reinicio.
+    let resp = app
+        .oneshot(
+            Request::get(format!("/api/v1/sessions/{session_id}/otel-trace"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let otel = body_json(resp.into_body()).await;
+    let spans = otel["resourceSpans"][0]["scopeSpans"][0]["spans"]
+        .as_array()
+        .unwrap();
+    assert!(spans.len() >= 2, "root + nodos");
+    // Los spans llevan tiempos epoch reales (no fabricados desde t=0).
+    let node_span = &spans[1];
+    assert!(
+        node_span["startTimeUnixNano"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > 1_000_000_000_000_000_000, // > ~2001 en nanos: es epoch real
+        "span debe usar timestamps reales"
+    );
+}
+
+#[tokio::test]
+async fn list_sessions_reads_from_db_with_agent_filter() {
+    let mut registry = ToolRegistry::new();
+    register_all_builtin_tools(&mut registry);
+    let mut state = AppState::new(registry, test_llm_factory(), None);
+    state.session_repo = Some(std::sync::Arc::new(
+        crate::db::SqliteSessionRepo::open_in_memory().unwrap(),
+    ));
+    let app = create_router(state.clone());
+
+    let (agent_a, _) = create_and_execute(&app, "agente-a").await;
+    let (_, _) = create_and_execute(&app, "agente-b").await;
+
+    // Sin filtro: los 2 runs, con metadata del registro persistido.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/sessions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let all = body_json(resp.into_body()).await;
+    assert_eq!(all.as_array().unwrap().len(), 2);
+    assert!(all[0]["agent_name"].is_string());
+    assert!(all[0]["started_at"].as_f64().unwrap() > 0.0);
+
+    // Filtro ?agent_id= (antes se ignoraba; ahora es real vía SQL).
+    let resp = app
+        .oneshot(
+            Request::get(format!("/api/v1/sessions?agent_id={agent_a}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let filtered = body_json(resp.into_body()).await;
+    let arr = filtered.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["agent_id"], agent_a);
+    assert_eq!(arr[0]["agent_name"], "agente-a");
+}
+
 #[tokio::test]
 async fn list_tools_returns_all_builtins() {
     let mut registry = ToolRegistry::new();
@@ -310,6 +479,8 @@ async fn get_session_otel_trace_returns_otel_format() {
         status: TraceStatus::Ok,
         duration_ms: 150,
         retries: 0,
+        started_at: 0.0,
+        finished_at: 0.0,
         error: None,
     };
 

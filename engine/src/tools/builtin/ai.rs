@@ -670,10 +670,27 @@ ai_tool! {
         field("api_key", FieldType::String, false, "ElevenLabs API key (falls back to ELEVENLABS_API_KEY env var)"),
         field("language", FieldType::String, false, "ISO language code hint, e.g. es (elevenlabs language_code; omit for auto-detect)"),
         field("base_url", FieldType::String, false, "Override API base URL (elevenlabs route)"),
+        field("timeout", FieldType::Number, false, "Request timeout in seconds for the elevenlabs route (default: 120, max: 3600). Long audio against a local STT server needs more than the default."),
     ]
 }
 
 const SCRIBE_DEFAULT_MODEL: &str = "scribe_v1";
+const SCRIBE_DEFAULT_TIMEOUT_SECS: u64 = 120;
+const SCRIBE_MAX_TIMEOUT_SECS: u64 = 3600;
+
+/// Timeout for the Scribe/HTTP STT route: config/input `timeout` in seconds,
+/// accepting numbers or numeric strings; 0/negative/garbage fall back to the default.
+fn scribe_timeout_secs(value: Option<&Value>) -> u64 {
+    value
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_f64().map(|f| f.max(0.0) as u64))
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+        .filter(|&t| t > 0)
+        .map(|t| t.min(SCRIBE_MAX_TIMEOUT_SECS))
+        .unwrap_or(SCRIBE_DEFAULT_TIMEOUT_SECS)
+}
 
 // --- Pure request builders for the ElevenLabs Scribe route (unit-tested without network) ---
 fn eleven_stt_url(base_url: &str) -> String {
@@ -764,6 +781,7 @@ impl Tool for TranscribeTool {
                 .unwrap_or(SCRIBE_DEFAULT_MODEL)
                 .to_string();
             let language = get("language").and_then(|v| v.as_str()).map(String::from);
+            let timeout_secs = scribe_timeout_secs(get("timeout"));
 
             let bytes =
                 tokio::fs::read(&file_path)
@@ -815,7 +833,7 @@ impl Tool for TranscribeTool {
                 let resp = client
                     .post(&url)
                     .header("xi-api-key", &api_key)
-                    .timeout(std::time::Duration::from_secs(120))
+                    .timeout(std::time::Duration::from_secs(timeout_secs))
                     .multipart(form)
                     .send()
                     .await
@@ -823,7 +841,9 @@ impl Tool for TranscribeTool {
                         if e.is_timeout() {
                             ToolError::ExecutionFailed {
                                 tool_type: "ai/transcribe".into(),
-                                message: "elevenlabs STT request timed out after 120s".into(),
+                                message: format!(
+                                    "elevenlabs STT request timed out after {timeout_secs}s"
+                                ),
                             }
                         } else {
                             ToolError::ExecutionFailed {
@@ -2086,6 +2106,38 @@ mod tests {
         assert_eq!(
             scribe_duration_seconds(&json!({ "text": "x", "words": [] })),
             0.0
+        );
+    }
+
+    #[test]
+    fn scribe_timeout_default_and_overrides() {
+        // Sin valor -> default 120s (comportamiento previo intacto).
+        assert_eq!(scribe_timeout_secs(None), SCRIBE_DEFAULT_TIMEOUT_SECS);
+        // Numero y string numerico (YAML puede traer ambos).
+        assert_eq!(scribe_timeout_secs(Some(&json!(900))), 900);
+        assert_eq!(scribe_timeout_secs(Some(&json!(900.0))), 900);
+        assert_eq!(scribe_timeout_secs(Some(&json!("900"))), 900);
+        // Cap superior.
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(999_999))),
+            SCRIBE_MAX_TIMEOUT_SECS
+        );
+        // Basura / cero / negativo -> default, nunca panic.
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(0))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
+        );
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(-5))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
+        );
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!("abc"))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
+        );
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(null))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
         );
     }
 }

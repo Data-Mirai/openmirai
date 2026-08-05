@@ -374,17 +374,20 @@ pub async fn serve(
             tracing::warn!("No API key configured. Server is running without authentication.");
             tracing::warn!("Set MIRAI_API_KEY or use --api-key to enable authentication.");
         } else {
-            // Non-loopback bind (e.g. the default 0.0.0.0) without auth: the
-            // agent-execute and orchestrator endpoints amount to remote
-            // command execution for ANYONE who can reach this port.
+            // Non-loopback bind without auth: the agent-execute and orchestrator
+            // endpoints amount to remote command execution for ANYONE who can
+            // reach this port. Refuse to start — logging and continuing left the
+            // door open while the CHANGELOG claimed this was a startup error.
             tracing::error!(
-                "SECURITY: binding {host}:{port} WITHOUT an API key — \
+                "SECURITY: refusing to bind {host}:{port} WITHOUT an API key — \
                  /api/v1/agents/*/execute and /api/v1/orchestrator/* allow \
-                 command execution and are reachable by anyone on the network."
+                 command execution and would be reachable by anyone on the network."
             );
-            tracing::error!(
-                "Set MIRAI_API_KEY / --api-key, or bind locally with --host 127.0.0.1."
-            );
+            return Err(format!(
+                "refusing to bind {host}:{port} without an API key: \
+                 set MIRAI_API_KEY / --api-key, or bind locally with --host 127.0.0.1"
+            )
+            .into());
         }
     }
 

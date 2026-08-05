@@ -521,7 +521,9 @@ async fn run_serve(args: &[String]) {
     let port: u16 = parse_flag(args, "--port")
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
-    let host = parse_flag(args, "--host").unwrap_or_else(|| "0.0.0.0".to_string());
+    // Seguro por defecto: local. Exponer a la red es una decisión explícita
+    // (`--host 0.0.0.0`) y exige `--api-key` — el server lo rechaza si falta.
+    let host = parse_flag(args, "--host").unwrap_or_else(|| "127.0.0.1".to_string());
 
     // Resolve provider using the same chain as `mirai run`.
     let (provider, model, api_key, base_url) = resolve_provider(args);

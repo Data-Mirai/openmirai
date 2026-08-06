@@ -5,12 +5,27 @@ una suite e2e que ejercita capacidades distintas del runtime. El objetivo no es
 un despliegue productivo: es **medir qué tan lista está la v0.6.0 para correr en
 la nube** y dejar el diagnóstico por escrito.
 
-Resultado de la corrida de referencia: **22 verificaciones en verde, 1 brecha
-del motor** (ver [Brechas para producción](#brechas-para-producción)).
+Resultado de la corrida de referencia **contra el contenedor** —imagen
+`openmirai/engine:0.6.0-proto`, no un `mirai serve` nativo—: **22
+verificaciones en verde, 1 brecha del motor** (ver
+[Brechas para producción](#brechas-para-producción)).
+
+Esa distinción no es cosmética: hay dos verificaciones que solo significan algo
+cuando la suite corre contra la imagen. El flujo 07 reporta `usuario: mirai`
+—el usuario sin privilegios que crea el Dockerfile, no el de la máquina— y el
+06 escribe en `/data/smoke/06-persistencia.txt`, o sea el volumen, no el
+directorio desde donde alguien lanzó el motor. Corriendo contra un binario
+local ambas pasan sin probar nada.
 
 Del diagnóstico salió además un arreglo al motor: los agentes live no
 ejecutaban un solo ciclo. Está corregido en `engine/src/runtime/scheduler.rs`
-—ver el CHANGELOG— y el flujo 08 lo verifica de punta a punta.
+—ver el CHANGELOG— y el flujo 08 lo verifica de punta a punta: dentro del
+contenedor el agente cicla solo, conserva memoria entre ciclos y vuelve a
+aceptar `play` al terminar.
+
+Queda sin probar el apagado limpio (`docker stop`: que el SIGTERM llegue al
+PID 1 sin cortar ejecuciones en vuelo) y que el volumen sobreviva un
+`docker compose down && up`.
 
 ---
 

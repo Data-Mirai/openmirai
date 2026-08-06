@@ -4,9 +4,19 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.7.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+env:
+  # Tag being released: the pushed tag, or the one given to the manual run.
+  TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -33,6 +43,8 @@ jobs:
             platform: windows-x86_64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG_NAME }}
 
       # Guard temprano: el nombre del asset sale de VERSION, no del tag.
       # Si difieren publicaríamos un binario con versión distinta al tag → fallar aquí.
@@ -40,8 +52,8 @@ jobs:
         shell: bash
         run: |
           VER="v$(tr -d '[:space:]' < VERSION)"
-          if [[ "$VER" != "$GITHUB_REF_NAME" ]]; then
-            echo "::error::VERSION file says '$VER' but the pushed tag is '$GITHUB_REF_NAME'. Update VERSION (or re-tag) so they match before releasing."
+          if [[ "$VER" != "$TAG_NAME" ]]; then
+            echo "::error::VERSION file says '$VER' but the tag being released is '$TAG_NAME'. Update VERSION (or re-tag) so they match before releasing."
             exit 1
           fi
 
@@ -95,6 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG_NAME }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -109,6 +123,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG_NAME }}
           files: artifacts/*
           generate_release_notes: true
           body: |

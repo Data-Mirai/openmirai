@@ -196,7 +196,12 @@ pub(crate) async fn create_agent(
         "status": "created",
     });
 
-    state.agents.write().await.insert(agent_id, spec);
+    state
+        .agents
+        .write()
+        .await
+        .insert(agent_id.clone(), spec.clone());
+    state.persist_agent(&agent_id, &spec).await;
 
     Ok((StatusCode::CREATED, Json(body)))
 }
@@ -414,7 +419,12 @@ pub(crate) async fn create_agent_from_spec(
     let agent_id = short_id();
     let name = spec.name.clone();
 
-    state.agents.write().await.insert(agent_id.clone(), spec);
+    state
+        .agents
+        .write()
+        .await
+        .insert(agent_id.clone(), spec.clone());
+    state.persist_agent(&agent_id, &spec).await;
 
     Ok((
         StatusCode::CREATED,
@@ -969,44 +979,15 @@ pub(crate) async fn play_agent(
     // Clear cycle memory on new play session (persist: cycle resets)
     state.memory_store.clear_cycle_memory(&id).await;
 
-    // Build the cycle callback that executes the agent's graph
-    let agent_id = id.clone();
-    let app_state = state.clone();
-    let agent_spec = spec.clone();
-    let callback: crate::runtime::scheduler::CycleCallback =
-        std::sync::Arc::new(move |aid, cycle_num, is_first| {
-            let s = app_state.clone();
-            let sp = agent_spec.clone();
-            Box::pin(async move {
-                let trigger_data = {
-                    let mut td = HashMap::new();
-                    td.insert("cycle_number".to_string(), serde_json::json!(cycle_num));
-                    td.insert("triggered_by".to_string(), serde_json::json!("scheduler"));
-                    td
-                };
-                let result = super::helpers::run_agent_spec_with_memory(
-                    &sp,
-                    &trigger_data,
-                    &s,
-                    &aid,
-                    is_first,
-                )
-                .await;
-
-                // Persist memory after execution
-                super::helpers::persist_memory_after_execution(&sp, &aid, &result, &s).await;
-
-                match result.status {
-                    ExecutionStatus::Completed => Ok(()),
-                    _ => Err(result.error.unwrap_or_else(|| "cycle failed".into())),
-                }
-            })
-        });
+    let callback = super::helpers::build_cycle_callback(&state, &spec);
 
     state
         .scheduler
-        .schedule_agent(&agent_id, interval, max_cycles, on_error, callback)
+        .schedule_agent(&id, interval, max_cycles, on_error, callback)
         .await;
+
+    // Recordar que quedó ciclando, para volver a agendarlo si el proceso cae.
+    state.persist_playing(&id, true).await;
 
     let memory_keys: Vec<String> = spec
         .graph
@@ -1039,6 +1020,7 @@ pub(crate) async fn stop_agent(
 
     let cycles_completed = state.scheduler.get_cycle_count(&id).await;
     state.scheduler.unschedule_agent(&id).await;
+    state.persist_playing(&id, false).await;
 
     Ok(Json(json!({
         "agent_id": id,

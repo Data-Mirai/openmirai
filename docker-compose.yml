@@ -30,6 +30,10 @@ services:
       - MIRAI_LLM_PROVIDER=${MIRAI_LLM_PROVIDER:-mock}
       - MIRAI_PORT=3000
       - MIRAI_HOST=0.0.0.0
+      # Registro de agentes en el volumen: sin esto, todo lo registrado por
+      # HTTP se pierde al reiniciar el contenedor y los agentes live dejan de
+      # ciclar sin que nadie los relance.
+      - MIRAI_DB_PATH=${MIRAI_DB_PATH:-/data/openmirai.db}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - MIRAI_LLM_MODEL
       - ANTHROPIC_API_KEY
@@ -88,9 +92,13 @@ services:
     environment:
       - OPENMIRAI_URL=http://engine:3000
       - MIRAI_API_KEY=${MIRAI_API_KEY:-openmirai-dev}
+      # persistencia.sh guarda los ids acá para poder retomarlos después del
+      # reinicio: /tmp no sirve porque el contenedor se destruye con --rm.
+      - ESTADO_FILE=/data/.persistencia.json
     volumes:
       # Montado para poder editar los flujos sin reconstruir la imagen.
       - ./docker/flows:/opt/openmirai/flows:ro
+      - mirai-datos:/data
 
   # -------------------------------------------------------------------------
   # ollama — LLM local opcional, para probar con un modelo real sin API key

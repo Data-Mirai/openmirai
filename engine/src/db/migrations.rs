@@ -31,7 +31,7 @@ pub struct Migration {
 // ---------------------------------------------------------------------------
 
 /// Current schema version shipped with this build.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Complete DDL for schema v1.  Using `IF NOT EXISTS` makes it idempotent.
 pub const SCHEMA_SQL: &str = r#"
@@ -94,15 +94,56 @@ VALUES (1, 0.0);
 "#;
 
 // ---------------------------------------------------------------------------
+// Schema v2 — agent specs
+// ---------------------------------------------------------------------------
+
+/// DDL for schema v2.
+///
+/// The `agents` table from v1 models an agent as a *reference* to a row in
+/// `graphs`. The HTTP server does not work that way: `POST /agents/from-spec`
+/// registers a whole [`crate::core::agent_spec::AgentSpec`], which carries its
+/// own graph plus inputs, outputs, schedule, memory declaration and config.
+/// Splitting that across `agents` + `graphs` would drop every field that has no
+/// column, so specs get their own table and travel as JSON.
+///
+/// `playing` records whether the agent was cycling when the process went down,
+/// so live agents can be rescheduled on startup.
+pub const SCHEMA_SQL_V2: &str = r#"
+-- OpenMirai — Standalone Schema v2
+
+CREATE TABLE IF NOT EXISTS agent_specs (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    spec        TEXT NOT NULL,
+    playing     INTEGER NOT NULL DEFAULT 0,
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_specs_playing ON agent_specs(playing);
+
+INSERT OR IGNORE INTO _schema_version (version, applied_at)
+VALUES (2, 0.0);
+"#;
+
+// ---------------------------------------------------------------------------
 // Migration registry
 // ---------------------------------------------------------------------------
 
-/// Ordered list of all migrations.  For now there is only the initial schema.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    description: "Initial standalone engine schema (graphs, agents, sessions)",
-    up_sql: SCHEMA_SQL,
-}];
+/// Ordered list of all migrations. Every `up_sql` is idempotent (`IF NOT
+/// EXISTS`), so applying the whole list on an existing database is a no-op.
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "Initial standalone engine schema (graphs, agents, sessions)",
+        up_sql: SCHEMA_SQL,
+    },
+    Migration {
+        version: 2,
+        description: "Agent specs table for the HTTP server registry",
+        up_sql: SCHEMA_SQL_V2,
+    },
+];
 
 // ---------------------------------------------------------------------------
 // Tests

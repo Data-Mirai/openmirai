@@ -162,7 +162,7 @@ ExecutionContext provides abstract access to resources:
 
 | Type | Tool | Count |
 |---|---|---|
-| Unit + Integration | `cargo test` | 717 tests |
+| Unit + Integration | `cargo test` | 727 tests |
 
 All tests run with `cargo test`. No external services required (SQLite bundled, mocks for LLM in test-only code).
 

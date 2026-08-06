@@ -16,6 +16,115 @@ use crate::search::cosine_similarity;
 
 use super::state::{AppState, ErrorResponse};
 
+/// Build the callback the scheduler invokes on every cycle of a live agent.
+///
+/// Lives here rather than inside the `play` handler because startup needs the
+/// exact same callback: agents that were cycling when the process went down are
+/// rescheduled without going through an HTTP request.
+pub(crate) fn build_cycle_callback(
+    state: &AppState,
+    spec: &AgentSpec,
+) -> crate::runtime::scheduler::CycleCallback {
+    let app_state = state.clone();
+    let agent_spec = spec.clone();
+
+    std::sync::Arc::new(move |aid, cycle_num, is_first| {
+        let s = app_state.clone();
+        let sp = agent_spec.clone();
+        Box::pin(async move {
+            let trigger_data = {
+                let mut td = HashMap::new();
+                td.insert("cycle_number".to_string(), json!(cycle_num));
+                td.insert("triggered_by".to_string(), json!("scheduler"));
+                td
+            };
+            let result = run_agent_spec_with_memory(&sp, &trigger_data, &s, &aid, is_first).await;
+
+            persist_memory_after_execution(&sp, &aid, &result, &s).await;
+
+            match result.status {
+                ExecutionStatus::Completed => Ok(()),
+                _ => Err(result.error.unwrap_or_else(|| "cycle failed".into())),
+            }
+        })
+    })
+}
+
+/// Restore the agent registry from the durable store and reschedule the agents
+/// that were cycling.
+///
+/// Without this, persistence would only get you half the way: the agents come
+/// back but sit idle, and continuous execution stays broken across restarts.
+/// Returns `(agentes_cargados, agentes_relanzados)`.
+pub async fn restore_from_store(state: &AppState) -> (usize, usize) {
+    let store = match &state.store {
+        Some(s) => s,
+        None => return (0, 0),
+    };
+
+    let guardados = match store.load_all().await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "cannot read the agent registry — starting empty");
+            return (0, 0);
+        }
+    };
+
+    let cargados = guardados.len();
+    {
+        let mut agents = state.agents.write().await;
+        for (id, spec) in guardados {
+            agents.insert(id, spec);
+        }
+    }
+
+    let ciclando = match store.playing_ids().await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "cannot read which agents were cycling");
+            return (cargados, 0);
+        }
+    };
+
+    let mut relanzados = 0;
+    for id in ciclando {
+        let spec = match state.agents.read().await.get(&id).cloned() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        // Un agente marcado como ciclando que ya no es live: el spec cambió
+        // entre reinicios. Se limpia la marca en vez de arrastrarla.
+        let schedule = match (&spec.agent_type, &spec.schedule) {
+            (crate::core::agent_spec::AgentType::Live, Some(sch)) => sch.clone(),
+            _ => {
+                state.persist_playing(&id, false).await;
+                continue;
+            }
+        };
+
+        let callback = build_cycle_callback(state, &spec);
+        let on_error = match schedule.on_cycle_error {
+            crate::core::agent_spec::CycleErrorMode::Continue => "continue",
+            crate::core::agent_spec::CycleErrorMode::Stop => "stop",
+        };
+        state
+            .scheduler
+            .schedule_agent(
+                &id,
+                schedule.interval_seconds.unwrap_or(60),
+                schedule.max_cycles,
+                on_error,
+                callback,
+            )
+            .await;
+        relanzados += 1;
+        tracing::info!(agent_id = %id, "live agent rescheduled after restart");
+    }
+
+    (cargados, relanzados)
+}
+
 /// Build a SharedState pre-populated with agent memory (PRD-008).
 ///
 /// Reads from the appropriate store based on persist mode and injects

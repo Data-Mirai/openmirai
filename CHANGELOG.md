@@ -6,6 +6,13 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ## Unreleased
 
+### Added
+- **Durable agent registry (`--db-path` / `MIRAI_DB_PATH`).** The HTTP server kept agents in a `HashMap` that died with the process: everything registered through `POST /agents/from-spec` was lost on restart, and live agents stopped cycling with nobody to relaunch them — which also made running more than one replica impossible. Point the server at a SQLite file and the registry is mirrored to disk on every write, restored on startup, and **agents that were cycling are rescheduled automatically**, so continuous execution survives a restart. Agent ids are stable across restarts, so clients holding an id keep working.
+
+  Without the flag nothing changes: the registry stays in memory, as before.
+
+  Notes: specs are stored whole, as JSON, in a new `agent_specs` table (schema v2) — the v1 `agents` table models an agent as a reference to a row in `graphs`, which would drop inputs, outputs, schedule and memory declarations. Writes are mirrored on the blocking pool, since `rusqlite` is a blocking API. A storage failure is logged but never fails the request. A live agent with `max_cycles` that already exhausted them is still rescheduled after a restart, starting a fresh cycle count.
+
 ### Fixed
 - **Live agents never ran a single cycle.** `Scheduler` started with its `running` flag set to `false` and only turned it on via `start()`, which nothing outside the module's own unit tests ever called — the HTTP server included. `POST /api/v1/agents/{id}/play` returned `{"status":"playing"}` while the background task exited immediately, leaving `total_cycles` at `0` forever. Scheduling an agent now activates the scheduler itself, so the invariant lives in `Scheduler` instead of being spread across its callers. `start()` stays available to resume after an explicit `stop()`.
 - **Agents that finished their cycles stayed registered.** After exhausting `max_cycles` (or stopping on `on_cycle_error: stop`), the entry remained in the scheduler: `is_scheduled` kept reporting the agent as active and a second `play` was rejected with `409 Conflict`. The background task now removes its own entry when its loop ends, guarded by a per-session id so a finishing task can never evict the entry of a newer `play` on the same agent.

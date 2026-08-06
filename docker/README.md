@@ -17,11 +17,15 @@ cuando la suite corre contra la imagen. El flujo 07 reporta `usuario: mirai`
 directorio desde donde alguien lanzó el motor. Corriendo contra un binario
 local ambas pasan sin probar nada.
 
-Del diagnóstico salió además un arreglo al motor: los agentes live no
-ejecutaban un solo ciclo. Está corregido en `engine/src/runtime/scheduler.rs`
-—ver el CHANGELOG— y el flujo 08 lo verifica de punta a punta: dentro del
-contenedor el agente cicla solo, conserva memoria entre ciclos y vuelve a
-aceptar `play` al terminar.
+Del diagnóstico salieron además dos cambios en el motor, ambos en el CHANGELOG:
+
+- **Los agentes live no ejecutaban un solo ciclo** (`scheduler.rs`). El flujo 08
+  lo verifica de punta a punta: dentro del contenedor el agente cicla solo,
+  conserva memoria entre ciclos y vuelve a aceptar `play` al terminar.
+- **El registro de agentes ahora se persiste** (`db/agent_store.rs`). Con
+  `MIRAI_DB_PATH` apuntando al volumen, los agentes sobreviven al reinicio del
+  contenedor con el mismo id, y los que estaban ciclando se relanzan solos.
+  Se verifica con [`docker/persistencia.sh`](#persistencia-del-registro).
 
 Queda sin probar el apagado limpio (`docker stop`: que el SIGTERM llegue al
 PID 1 sin cortar ejecuciones en vuelo) y que el volumen sobreviva un
@@ -75,6 +79,7 @@ docker compose up -d engine
 | `docker/Dockerfile` | Tres etapas: `builder` (compila), `runtime` (lo que se despliega), `tester` (la suite e2e). |
 | `docker/entrypoint.sh` | Traduce `MIRAI_HOST`/`MIRAI_PORT` a flags: `mirai serve` los lee solo por línea de comandos. |
 | `docker/smoke.sh` | Suite e2e contra la API HTTP. |
+| `docker/persistencia.sh` | Verifica que los agentes sobrevivan al reinicio (dos fases, con el reinicio en el medio). |
 | `docker/flows/` | Los nueve flujos de prueba. |
 | `docker-compose.yml` | Servicios `engine`, `smoke` (perfil `test`) y `ollama` (perfil `llm-local`). |
 | `.dockerignore` | Contexto mínimo de build. |
@@ -124,6 +129,30 @@ cliente de la nube.
 Más SSE (`/stream` emite el ciclo completo de eventos), autenticación
 (401 sin clave, `/health` público) y los endpoints `/sessions` y `/metrics`.
 
+### Persistencia del registro
+
+El smoke corre contra un motor ya levantado, así que no puede probar lo único
+que importa del registro persistente: que los agentes sobrevivan a que el
+proceso muera. Esa prueba va aparte, con el reinicio en el medio:
+
+```bash
+docker compose run --rm --entrypoint /usr/local/bin/persistencia.sh smoke preparar
+docker compose restart engine
+docker compose run --rm --entrypoint /usr/local/bin/persistencia.sh smoke verificar
+```
+
+Registra un agente normal y uno live, lo pone a ciclar, y después del reinicio
+comprueba cuatro cosas: que los dos agentes sigan ahí **con el mismo id**, que
+el restaurado siga siendo ejecutable (no solo consultable) y que el live haya
+vuelto a ciclar sin que nadie llamara a `/play`.
+
+Fuera de Docker, pasándole cómo reiniciar el motor:
+
+```bash
+REINICIO_CMD="tu-comando-de-reinicio" OPENMIRAI_URL=http://127.0.0.1:4321 \
+  MIRAI_API_KEY=... MIRAI_FLOWS_DIR=./docker/flows ./docker/persistencia.sh auto
+```
+
 ### Correr la suite fuera de Docker
 
 ```bash
@@ -151,25 +180,25 @@ CLI implementan esa capa.
 El grafo completa con `status: Completed` y el nodo devuelve
 `status: "placeholder"`, `result: {}`. Verde falso si nadie mira el nodo.
 
-### 2. Todo el estado vive en memoria del proceso
+### 2. Las sesiones y los datos de ejecución siguen en memoria
 
-`AppState` guarda agentes, grafos y sesiones en `HashMap`
-(`engine/src/server/state.rs`), y cada ejecución arma su contexto con
-`InMemoryDBResource` e `InMemoryStorageResource`
-(`engine/src/server/helpers.rs:172`).
+El registro de agentes ya se persiste (ver arriba), pero el resto del estado no:
 
-Consecuencias directas:
+- Las **sesiones** viven en un `HashMap` de `AppState`
+  (`engine/src/server/state.rs`) y se desalojan por FIFO a las 10.000. Un
+  reinicio borra el historial de ejecuciones.
+- `data/db_read`, `data/db_write` y `data/storage_*` corren contra
+  `InMemoryDBResource` e `InMemoryStorageResource`
+  (`engine/src/server/helpers.rs`), así que no persisten entre ejecuciones
+  aunque el motor traiga un `SqliteDBResource` en `adapters/`.
+- La **memoria de agentes** (`AgentMemoryStore`) también es en memoria: un
+  agente live retoma su ciclado tras un reinicio, pero arranca sin recuerdos.
+- **Escalar horizontalmente sigue sin funcionar**: dos réplicas comparten el
+  archivo de agentes solo si comparten el volumen, y nada más. Las sesiones y
+  la memoria quedan partidas por réplica.
 
-- Reiniciar el contenedor **borra todos los agentes registrados**. Hay que
-  volver a hacer `from-spec` de cada uno.
-- `data/db_read`, `data/db_write`, `data/storage_*` no persisten entre
-  ejecuciones, aunque el motor traiga un `SqliteDBResource` en `adapters/`.
-- Las sesiones se desalojan por FIFO a las 10.000.
-- **No se puede escalar horizontalmente**: dos réplicas no comparten agentes ni
-  sesiones. Hoy es una sola instancia, o sesiones pegajosas y un registro de
-  agentes replicado por fuera.
-
-El volumen `/data` cubre solo lo que escriban las herramientas `filesystem/*`.
+El volumen `/data` cubre el registro de agentes y lo que escriban las
+herramientas `filesystem/*`.
 
 ### 3. El motor no emite un solo log
 
@@ -237,14 +266,13 @@ Por eso `docker/smoke.sh` afirma sobre el campo `status` del JSON y sobre
 
 En orden de impacto:
 
-1. **Persistir el registro de agentes** (brecha 2): sin esto, cada reinicio es
-   una pérdida de estado y no hay más de una réplica posible. Es lo que más
-   pesa ahora que los agentes live sí ciclan: un reinicio los apaga a todos y
-   nadie los vuelve a lanzar.
-2. **Un subscriber de tracing** (brecha 3): sin logs no hay operación posible.
+1. **Un subscriber de tracing** (brecha 3): sin logs no hay operación posible.
    El scheduler ya emite `Cycle started` / `Cycle completed` por `tracing`, así
    que basta con conectar un subscriber para tener visibilidad de los agentes
    live.
+2. **Persistir sesiones y memoria de agentes** (brecha 2): el registro de
+   agentes ya sobrevive, pero el historial de ejecuciones y los recuerdos de un
+   live no. Es lo que falta para poder correr más de una réplica.
 3. **Arreglar `logic/condition`** (brecha 4) y la suite que lo tapa (brecha 5).
 4. Imagen `-musl` estática para bajar de ~180 MB a decenas, una vez que el
    catálogo de herramientas que dependen del shell esté acotado.

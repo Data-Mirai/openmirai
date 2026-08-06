@@ -123,11 +123,33 @@ async fn auth_middleware(
 // ---------------------------------------------------------------------------
 
 /// Start the HTTP server. Supports graceful shutdown on SIGTERM / SIGINT.
+///
+/// The agent registry lives only in memory: agents are lost on restart. Use
+/// [`serve_with_db`] to keep them, or set `MIRAI_DB_PATH` — this function reads
+/// it as a fallback.
 pub async fn serve(
     host: &str,
     port: u16,
     llm_factory: state::LLMFactory,
     api_key: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db_path = std::env::var("MIRAI_DB_PATH")
+        .ok()
+        .filter(|p| !p.is_empty());
+    serve_with_db(host, port, llm_factory, api_key, db_path.as_deref()).await
+}
+
+/// Start the HTTP server with a durable agent registry at `db_path`.
+///
+/// On startup the registry is restored from disk and every agent that was
+/// cycling when the process stopped is rescheduled, so continuous execution
+/// survives a restart. `None` keeps everything in memory.
+pub async fn serve_with_db(
+    host: &str,
+    port: u16,
+    llm_factory: state::LLMFactory,
+    api_key: Option<String>,
+    db_path: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if api_key.is_none() {
         tracing::warn!("No API key configured. Server is running without authentication.");
@@ -136,7 +158,28 @@ pub async fn serve(
 
     let mut registry = ToolRegistry::new();
     register_all_builtin_tools(&mut registry);
-    let state = AppState::new(registry, llm_factory, api_key);
+
+    let state = match db_path {
+        Some(path) => {
+            let store = crate::db::AgentStore::open(path)?;
+            tracing::info!(db_path = %path, "agent registry persisted to disk");
+            let state = AppState::with_store(registry, llm_factory, api_key, store);
+            let (cargados, relanzados) = helpers::restore_from_store(&state).await;
+            if cargados > 0 || relanzados > 0 {
+                eprintln!(
+                    "Registro restaurado: {cargados} agentes, {relanzados} relanzados en ciclado"
+                );
+            }
+            state
+        }
+        None => {
+            tracing::warn!(
+                "No database configured: agents live in memory and are lost on restart."
+            );
+            AppState::new(registry, llm_factory, api_key)
+        }
+    };
+
     let app = create_router(state);
 
     let addr = format!("{host}:{port}");

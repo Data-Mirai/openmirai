@@ -58,6 +58,11 @@ if [ "$1" = "serve" ]; then
     else
         echo " auth      : SIN AUTENTICACIÓN — no exponer fuera de la red local"
     fi
+    if [ -n "${MIRAI_DB_PATH:-}" ]; then
+        echo " registro  : ${MIRAI_DB_PATH}"
+    else
+        echo " registro  : en memoria — los agentes se pierden al reiniciar"
+    fi
     echo " flows     : ${MIRAI_FLOWS_DIR:-/opt/openmirai/flows}"
     echo "───────────────────────────────────────────────"
 

@@ -11,7 +11,7 @@ OpenMirai is a Rust-native engine that runs agentic workflows defined as simple 
 
 A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
 
-**50 built-in tools** · **7 LLM providers** · **717 tests** · **MIT license**
+**50 built-in tools** · **7 LLM providers** · **727 tests** · **MIT license**
 
 ## Why decentralized?
 
@@ -72,7 +72,7 @@ mirai run hello.yaml --input '{"query": "What is Rust?"}'
 
 ```
 Agent  = YAML config  (portable, versionable, language-agnostic)
-Engine = Rust binary   (FFI, WASM, CLI — 717 tests)
+Engine = Rust binary   (FFI, WASM, CLI — 727 tests)
 Host   = Your app      (Python, Swift, Go, JavaScript — anything)
 ```
 

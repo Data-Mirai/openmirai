@@ -11,6 +11,7 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
+use crate::db::AgentStore;
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
 use crate::tools::registry::{RegistryExecutor, ToolRegistry};
@@ -49,14 +50,39 @@ pub struct AppState {
     pub memory_store: AgentMemoryStore,
     /// Background scheduler for live agent cycles (PRD-008).
     pub scheduler: Arc<Scheduler>,
+    /// Durable mirror of the agent registry. `None` keeps the server fully
+    /// in-memory, which is the historical behaviour: agents are lost on restart.
+    pub store: Option<AgentStore>,
 }
 
 impl AppState {
     /// Create app state with a real LLM factory. NO MOCKS.
+    ///
+    /// The agent registry lives only in memory. Use [`AppState::with_store`] to
+    /// mirror it to disk so agents survive a restart.
     pub fn new(
         tool_registry: ToolRegistry,
         llm_factory: LLMFactory,
         api_key: Option<String>,
+    ) -> Self {
+        Self::build(tool_registry, llm_factory, api_key, None)
+    }
+
+    /// Create app state backed by a durable agent registry.
+    pub fn with_store(
+        tool_registry: ToolRegistry,
+        llm_factory: LLMFactory,
+        api_key: Option<String>,
+        store: AgentStore,
+    ) -> Self {
+        Self::build(tool_registry, llm_factory, api_key, Some(store))
+    }
+
+    fn build(
+        tool_registry: ToolRegistry,
+        llm_factory: LLMFactory,
+        api_key: Option<String>,
+        store: Option<AgentStore>,
     ) -> Self {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
@@ -75,6 +101,29 @@ impl AppState {
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             memory_store: AgentMemoryStore::new(),
             scheduler: Arc::new(Scheduler::new()),
+            store,
+        }
+    }
+
+    /// Mirror an agent into the durable registry, if there is one.
+    ///
+    /// A storage failure is logged and swallowed on purpose: losing durability
+    /// must not turn a working request into a 500. The agent still lives in the
+    /// in-memory map and the request succeeds.
+    pub async fn persist_agent(&self, id: &str, spec: &AgentSpec) {
+        if let Some(store) = &self.store {
+            if let Err(e) = store.upsert(id, spec).await {
+                tracing::error!(agent_id = %id, error = %e, "cannot persist agent — it will be lost on restart");
+            }
+        }
+    }
+
+    /// Record whether an agent is cycling, so it can be rescheduled on startup.
+    pub async fn persist_playing(&self, id: &str, playing: bool) {
+        if let Some(store) = &self.store {
+            if let Err(e) = store.set_playing(id, playing).await {
+                tracing::error!(agent_id = %id, error = %e, "cannot persist playing state");
+            }
         }
     }
 

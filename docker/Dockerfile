@@ -91,8 +91,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/smoke.sh /usr/local/bin/smoke.sh
+COPY docker/persistencia.sh /usr/local/bin/persistencia.sh
 COPY docker/flows /opt/openmirai/flows
-RUN chmod +x /usr/local/bin/smoke.sh
+RUN chmod +x /usr/local/bin/smoke.sh /usr/local/bin/persistencia.sh
 
 ENV OPENMIRAI_URL=http://engine:3000 \
     MIRAI_FLOWS_DIR=/opt/openmirai/flows

@@ -534,7 +534,30 @@ async fn run_serve(args: &[String]) {
     let server_api_key =
         parse_flag(args, "--api-key").or_else(|| std::env::var("MIRAI_API_KEY").ok());
 
-    if let Err(e) = openmirai_engine::server::serve(&host, port, llm_factory, server_api_key).await
+    // Registro de agentes persistente. Sin esto, todo lo registrado por HTTP se
+    // pierde al reiniciar y los agentes live dejan de ciclar sin que nadie los
+    // vuelva a lanzar.
+    let db_path = parse_flag(args, "--db-path")
+        .or_else(|| std::env::var("MIRAI_DB_PATH").ok())
+        .filter(|p| !p.is_empty());
+
+    match &db_path {
+        Some(p) => eprintln!("{}Registro: {p}{}", colors::DIM, colors::RESET),
+        None => eprintln!(
+            "{}Registro: en memoria — los agentes se pierden al reiniciar{}",
+            colors::DIM,
+            colors::RESET
+        ),
+    }
+
+    if let Err(e) = openmirai_engine::server::serve_with_db(
+        &host,
+        port,
+        llm_factory,
+        server_api_key,
+        db_path.as_deref(),
+    )
+    .await
     {
         eprintln!("{}Server error: {e}{}", colors::RED, colors::RESET);
         process::exit(1);
@@ -1057,7 +1080,7 @@ fn print_help() {
     mirai                                    Interactive setup wizard + terminal
     mirai run <file> [options]               Execute agent from JSON/YAML file
     mirai validate <file>                    Validate agent spec
-    mirai serve [--port N]                   Start HTTP server
+    mirai serve [--port N] [--db-path F]     Start HTTP server
     mirai version                            Show version
     mirai agent load <file>                  Import agent from YAML
     mirai agent list                         List agents
@@ -1070,9 +1093,19 @@ fn print_help() {
     --api-key <key>          API key (or use env: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     --base-url <url>         Custom API base URL
 
+{bold}SERVE OPTIONS:{reset}
+    --port <N>               Port to listen on (default: 3000)
+    --host <addr>            Address to bind (default: 0.0.0.0)
+    --api-key <key>          Require this key in the X-API-Key header
+    --db-path <file>         Persist the agent registry to this SQLite file.
+                             Without it, agents are lost on restart and live
+                             agents stop cycling.
+
 {bold}ENVIRONMENT VARIABLES:{reset}
     MIRAI_LLM_PROVIDER       Default LLM provider
     MIRAI_LLM_MODEL          Default model
+    MIRAI_API_KEY            API key required by the HTTP server
+    MIRAI_DB_PATH            SQLite file for the agent registry
     OPENAI_API_KEY            OpenAI API key
     ANTHROPIC_API_KEY         Anthropic (Claude) API key
     GROQ_API_KEY              Groq API key

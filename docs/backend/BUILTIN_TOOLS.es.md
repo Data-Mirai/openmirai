@@ -6,7 +6,7 @@ Este documento describe los **contratos de implementación, límites y expectati
 
 > **División de audiencia.** [`USAGE.md`](../../USAGE.md) es el catálogo de herramientas orientado al usuario: qué hace cada herramienta y cómo llamarla desde un YAML de agente. Este documento es la vista del implementador: los traits que una herramienta debe satisfacer, los recursos que puede tocar, los modos de fallo que debe producir y los límites que no debe cruzar. Para las definiciones subyacentes de traits/patrones, consulte [`PRIMITIVES.md`](./PRIMITIVES.md).
 
-Versión del motor al momento de escribir este documento: **0.6.0**.
+Versión del motor al momento de escribir este documento: **0.7.0**.
 
 ---
 
@@ -30,12 +30,12 @@ pub fn register_all_builtin_tools(registry: &mut ToolRegistry) {
 }
 ```
 
-Cada familia expone una función `register_*_tools()`. Hay **50 herramientas registradas** a través de 11 familias (el conteo se afirma en `builtin::tests::register_all_builtin_tools_adds_all`):
+Cada familia expone una función `register_*_tools()`. Hay **52 herramientas registradas** a través de 11 familias (el conteo se afirma en `builtin::tests::register_all_builtin_tools_adds_all`):
 
 | Familia | Módulo | Conteo | Prefijo `tool_type` |
 |---------|--------|-------:|---------------------|
 | Logic | `logic.rs` | 7 | `logic/` |
-| AI | `ai.rs` | 4 | `ai/` |
+| AI | `ai.rs` | 6 | `ai/` |
 | Data | `data/` | 11 | `data/` |
 | Filesystem | `filesystem/` | 12 | `filesystem/` |
 | System | `system.rs` | 3 | `system/` |
@@ -368,7 +368,7 @@ MCP es el límite de extensión sancionado: permite a los agentes llamar a servi
 2. **Declare la herramienta** con la macro de la familia: proporcione `tool_type`, `name`, `description` e `inputs`/`outputs`/`config_fields` construidos con `field()`. Mantenga `tool_type` como `"<category>/<name>"` coincidiendo con la categoría de la familia.
 3. **Implemente `#[async_trait] impl Tool`.** Valide las entradas obligatorias/no declaradas por adelantado, acceda a los recursos solo a través de `context`, mapee `ResourceError` → `ToolError::ExecutionFailed { tool_type: "<su tipo>", … }` y devuelva un `HashMap` cuyas claves coincidan con sus `outputs` declarados.
 4. **Regístrela** en el `register_*_tools()` de la familia y aumente la prueba de afirmación de conteo de esa familia. Si renombra una herramienta existente, añada un `register_alias(old, new)` por una versión.
-5. **Para una nueva familia**, añada `pub mod <family>;` y una llamada a `register_*_tools()` en `builtin/mod.rs`, luego actualice el total en `register_all_builtin_tools_adds_all` (actualmente 50).
+5. **Para una nueva familia**, añada `pub mod <family>;` y una llamada a `register_*_tools()` en `builtin/mod.rs`, luego actualice el total en `register_all_builtin_tools_adds_all` (actualmente 52).
 6. **Respete los límites.** Si la herramienta toca el sistema de archivos, el shell o la red, vuelva a leer el §13 primero y prefiera el enrutamiento a través de un recurso de `ExecutionContext` (`db`/`storage`/`vector`) o `system/sandbox_exec` en lugar del acceso directo al host.
 7. **Actualice `USAGE.md`** (el catálogo orientado al usuario) y, si añade un patrón reutilizable, `PRIMITIVES.md`.
 
@@ -403,7 +403,7 @@ Estas reglas se aplican específicamente a las familias **filesystem, system y g
   - cada fallo por falta de entrada obligatoria / recurso faltante (`*_no_db_fails`, `*_no_storage_fails`, `*_missing_*_fails`);
   - cada protección de seguridad que añada (el conjunto `bash_blocks_*` es el modelo);
   - cualquier ayudante puro directamente (por ejemplo, `evaluate_condition`, `validate_response`, `normalize_url`, `convert_html_to_md`): estos son testeables unitariamente sin un contexto.
-- **Prueba de registro por familia.** Cada `register_*_tools()` tiene una prueba que afirma que las herramientas registradas se resuelven y el conteo de `list_tools()` es exacto (`register_*_tools_adds_*`). Actualícela cuando añada o elimine una herramienta, y mantenga sincronizado el agregado `register_all_builtin_tools_adds_all` (50).
+- **Prueba de registro por familia.** Cada `register_*_tools()` tiene una prueba que afirma que las herramientas registradas se resuelven y el conteo de `list_tools()` es exacto (`register_*_tools_adds_*`). Actualícela cuando añada o elimine una herramienta, y mantenga sincronizado el agregado `register_all_builtin_tools_adds_all` (52).
 - **Los aliases** obtienen su propia prueba de resolución (`legacy_fs_aliases_resolve`, `legacy_mcp_alias_resolves`).
 
 Ejecute la suite desde `engine/`:

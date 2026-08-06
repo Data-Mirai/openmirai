@@ -63,7 +63,7 @@ pub trait ToolFactory: Send + Sync {
 - `ToolError` (runner/types.rs) — error reporting
 
 **Usos:**
-- All 50+ builtin tools (logic, ai, filesystem, git, system, state, output, data, etc.)
+- All 52 builtin tools (logic, ai, filesystem, git, system, state, output, data, etc.)
 - Custom tools in user YAML graphs (via registry lookup)
 - RegistryExecutor bridges registry to GraphRunner
 

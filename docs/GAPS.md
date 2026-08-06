@@ -1,6 +1,6 @@
 # Gaps — Feature tracking
 
-Estado al v0.4.3 — documento histórico. Versión actual: v0.6.0; ver [ROADMAP-PARITY.md](ROADMAP-PARITY.md) para el estado más reciente.
+Estado al v0.4.3 — documento histórico. Versión actual: v0.7.0; ver [ROADMAP-PARITY.md](ROADMAP-PARITY.md) para el estado más reciente.
 
 ## Completados
 

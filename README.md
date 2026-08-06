@@ -83,7 +83,7 @@ mirai run hello.yaml --input '{"query": "What is Rust?"}'
 
 ```
 Agent  = YAML config  (portable, versionable, language-agnostic)
-Engine = Rust binary   (FFI, WASM, CLI — 865 tests)
+Engine = Rust binary   (FFI, WASM, CLI — comprehensive test suite)
 Host   = Your app      (Python, Swift, Go, JavaScript — anything)
 ```
 
@@ -222,6 +222,14 @@ OpenMirai is open source and built in the open. Contributions are welcome — ne
 - Pick up a [`good first issue`](https://github.com/Data-Mirai/openmirai/labels/good%20first%20issue)
 - Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system map
 - Be kind — see our [Code of Conduct](CODE_OF_CONDUCT.md)
+
+## Understanding and deploying the engine
+
+- [Documentation index](docs/INDEX.md)
+- [Complete system and execution lifecycle](docs/SYSTEM_LIFECYCLE.md)
+- [Architecture map](docs/ARCHITECTURE.md)
+- [Cloud and Docker deployment readiness](docs/infra/CLOUD-DEPLOYMENT.md)
+- [Infrastructure, CI, and release guide](docs/infra/INFRA.md)
 
 ## License
 

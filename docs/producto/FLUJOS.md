@@ -14,11 +14,17 @@
 5. Engine ejecuta el grafo (→ #flujo-graph-execution)
 6. Retorna ExecutionResult (status, state, trace, transcript)
 
-**Resultado esperado:** ExecutionResult con status=Completed y outputs del ultimo nodo.
+**Resultado esperado:** `ExecutionResult` con `status=Completed`, el estado de
+todos los nodos ejecutados, trace y transcript. No existe un campo especial de
+"output del último nodo"; el consumidor obtiene el resultado desde el snapshot
+por `node_id` o desde un nodo terminal `output/response`.
 **Errores posibles:**
 - Archivo YAML invalido → error de parsing
 - Input validation failed → lista de campos faltantes/invalidos
-- Grafo invalido → error de validacion (nodos huerfanos, ciclos)
+- Grafo invalido → error estructural (vacío, IDs duplicados, referencias
+  inexistentes o self-loop incondicional). El validador actual no rechaza todo
+  ciclo ni todo componente desconectado; el límite de visitas protege el
+  runtime.
 
 ---
 
@@ -29,7 +35,8 @@
 **Pasos:**
 1. PE ejecuta `mirai serve --port 3000`
 2. Server bind al puerto
-3. Registra middleware de auth (si MIRAI_API_KEY definido)
+3. Registra middleware de auth (si `MIRAI_API_KEY` está definido). Un bind no
+   loopback sin key es rechazado durante startup.
 4. Registra rutas /api/v1/*
 5. Acepta requests hasta SIGTERM/Ctrl+C
 6. Graceful shutdown: espera requests en vuelo, cierra
@@ -37,7 +44,7 @@
 **Resultado esperado:** Servidor escuchando en el puerto configurado.
 **Errores posibles:**
 - Puerto ocupado → error de bind
-- Timeout de request (300s) → 408
+- Timeout de ejecución síncrona (300s) → 504 Gateway Timeout
 
 ---
 
@@ -64,7 +71,7 @@
 |---|---|---|---|
 | Running | Completed | Ultimo nodo ejecutado sin error | Engine |
 | Running | Failed | Nodo fallo + on_failure=stop + retries agotados | Engine |
-| Running | Timeout | Tiempo total excede timeout_ms | Engine |
+| Running | Timeout | Un host convierte un timeout en este estado | Host/Engine embebido |
 | Running | Interrupted | human_input requiere decision o pause_interrupt activo | Engine / PE (resume) |
 
 **Side-effects:**
@@ -123,8 +130,10 @@
 3. Si hay condicionales: evaluar cada uno en orden
    - Primer match → seguir ese edge (exclusivo)
    - Si ninguno matchea → usar edges incondicionales como fallback
-4. Si solo hay incondicionales: seguir TODOS (fan-out)
-5. Si multiples edges van a un mismo nodo destino y ese nodo tiene multiples inputs → fan-in (espera todos)
+4. Si solo hay incondicionales: seleccionar TODOS para fan-out
+5. El runner ejecuta en paralelo únicamente esos hijos inmediatos y busca un
+   sucesor incondicional directo común como join. No es un scheduler general de
+   subgrafos paralelos.
 
 | Operador | Evaluacion |
 |---|---|
@@ -179,7 +188,9 @@
 ### REGLA-08 {#regla-08}
 **Descripcion:** Provider resolution order.
 **Condicion:** Se necesita un LLM provider.
-**Efecto:** Orden: `--provider` flag → env var → auto-detect Ollama → default Ollama. Primer match gana.
+**Efecto:** Provider: `--provider` → `MIRAI_LLM_PROVIDER` → inferencia desde
+`--model`/`MIRAI_LLM_MODEL` → configuración persistida. Modelo: flag → env →
+configuración/fallback del provider.
 
 ### REGLA-09 {#regla-09}
 **Descripcion:** Conditional edge exclusivity.
@@ -188,5 +199,16 @@
 
 ### REGLA-10 {#regla-10}
 **Descripcion:** Max iterations per node.
-**Condicion:** Un nodo se visita mas de `max_iterations` veces (config del agent).
+**Condicion:** Un nodo se visita más veces que el límite configurado en la
+instancia de `GraphRunner`.
 **Efecto:** Ejecucion se aborta con error de ciclo infinito detectado.
+
+**Nota de wiring:** `AgentConfig.max_iterations` existe en el spec, pero el
+CLI/server actual no lo aplica al construir el runner; usan el default del
+runner. Lo mismo ocurre con el retry, timeout y hooks de nivel AgentConfig.
+
+---
+
+Para el lifecycle técnico completo y las diferencias entre CLI, `/execute`,
+`/stream`, live agents, persistencia y shutdown, ver
+[SYSTEM_LIFECYCLE.md](../SYSTEM_LIFECYCLE.md).

@@ -27,7 +27,7 @@ OpenMirai is a **headless agentic engine** — there is no UI component library,
 
 The closest analogs to reusable "components" in the OpenMirai ecosystem are:
 
-1. **Built-in Tools** — the 50 composable graph nodes that form the core execution primitives
+1. **Built-in Tools** — the 52 composable graph nodes that form the core execution primitives
 2. **SDK Clients** — thin language bindings (Python, TypeScript) that expose the engine API
 3. **Agent YAML Patterns** — reusable workflow templates and graph compositions
 
@@ -39,7 +39,7 @@ This document points to each.
 
 Every agent is a directed graph of nodes. Each node executes a **tool**. Tools are the true reusable components — composable, modular, with clear inputs/outputs.
 
-**All 50 built-in tools are documented in [README.md § Built-in Tools](../../README.md#built-in-tools) and [USAGE.md § Tool Catalog](../../USAGE.md#4-tool-catalog-what-nodes-can-do).**
+**All 52 built-in tools are documented in [README.md § Built-in Tools](../../README.md#built-in-tools) and [USAGE.md § Tool Catalog](../../USAGE.md#4-tool-catalog-what-nodes-can-do).**
 
 ### Tool Categories
 

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 50 built-in tools, 7 LLM providers, 712 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.6.0.
+Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 52 built-in tools, and 7 LLM providers. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.7.0.
 
 ## 2. Stack
 
@@ -12,6 +12,7 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 
 | Document | Description | Path |
 |---|---|---|
+| SYSTEM_LIFECYCLE.md | Canonical end-to-end build, startup, execution, data-flow, persistence, streaming, and shutdown lifecycle | [SYSTEM_LIFECYCLE.md](SYSTEM_LIFECYCLE.md) |
 | ARCHITECTURE.md | Stack, modules, conventions | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | CLI.md | `mirai` command reference, interactive mode, sessions | [CLI.md](CLI.md) |
 | CLI.es.md | Spanish translation of CLI.md | [CLI.es.md](CLI.es.md) |
@@ -26,6 +27,7 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | SCHEMA.md | SQLite schema (tables, stores) | [database/SCHEMA.md](database/SCHEMA.md) |
 | STORAGE.md | Storage backends, vault, FileRef | [database/STORAGE.md](database/STORAGE.md) |
 | INFRA.md | Build, CI/CD, release, deploy, env vars | [infra/INFRA.md](infra/INFRA.md) |
+| CLOUD-DEPLOYMENT.md | Current Docker/cloud readiness, state boundaries, hardening, scaling blockers, and deployment roadmap | [infra/CLOUD-DEPLOYMENT.md](infra/CLOUD-DEPLOYMENT.md) |
 | PANTALLAS.md | Interfaces (headless: CLI + HTTP API) | [frontend/PANTALLAS.md](frontend/PANTALLAS.md) |
 | COMPONENTS.md | Reusable units (built-in tools, SDKs) | [frontend/COMPONENTS.md](frontend/COMPONENTS.md) |
 | DESIGN-GUIDE.md | CLI terminal UX conventions | [frontend/DESIGN-GUIDE.md](frontend/DESIGN-GUIDE.md) |

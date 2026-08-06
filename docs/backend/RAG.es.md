@@ -464,7 +464,7 @@ Esta es la ruta HTTP de extremo a extremo:
 
 ## Estado vs hoja de ruta
 
-`docs/GAPS.md` es histórico en v0.4.3. La versión actual referenciada por el resumen es v0.6.0, y `docs/ROADMAP-PARITY.md` es la fuente de estado actual.
+`docs/GAPS.md` es histórico en v0.4.3. La versión actual referenciada por el resumen es v0.7.0, y `docs/ROADMAP-PARITY.md` es la fuente de estado actual.
 
 | Brecha | Estado Histórico | Reconciliación del Código Actual |
 | --- | --- | --- |

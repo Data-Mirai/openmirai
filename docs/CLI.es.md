@@ -18,7 +18,7 @@ Documentación relacionada: [ARCHITECTURE.md](ARCHITECTURE.md) · [backend/API.m
 ```bash
 # Desde la raíz del repositorio
 cargo build --release
-./target/release/mirai version       # → mirai 0.6.0
+./target/release/mirai version       # → mirai 0.7.0
 
 # O ejecutar sin optimizar durante el desarrollo
 cargo run -p openmirai-cli -- run examples/hello-world.yaml
@@ -490,4 +490,4 @@ mirai
 
 ---
 
-*Fuente de verdad: `cli/src/*.rs` en v0.6.0. Si el CLI cambia, actualiza este documento y las tablas de comandos anteriores para que coincidan con el código.*
+*Fuente de verdad: `cli/src/*.rs` en v0.7.0. Si el CLI cambia, actualiza este documento y las tablas de comandos anteriores para que coincidan con el código.*

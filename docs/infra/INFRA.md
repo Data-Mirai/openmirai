@@ -2,7 +2,16 @@
 
 # Infrastructure & Deployment
 
-OpenMirai is a **single portable binary** with zero external runtime dependencies. It embeds SQLite for persistence, uses rustls for TLS, and requires no containers, databases, or cloud services to run.
+OpenMirai's core engine and HTTP server compile into a **single portable
+binary**. It embeds SQLite and uses Rustls for outbound HTTPS, so the core does
+not require an external database server or OpenSSL runtime. Some built-in tools
+still require host programs such as `sh`, `ps`, `git`, Python, or Node, and the
+tmux orchestrator requires Unix, `tmux`, and the `claude` CLI.
+
+The Axum listener serves plain HTTP; terminate inbound TLS at an ingress or
+reverse proxy. The repository does not currently ship a Dockerfile. See
+[CLOUD-DEPLOYMENT.md](CLOUD-DEPLOYMENT.md) for the container architecture,
+security boundary, persistence matrix, and scaling blockers.
 
 ## Build System
 
@@ -34,7 +43,7 @@ The release binary is at `target/release/mirai` (Unix) or `target/release/mirai.
 **Default features** (`features = ["server", "builtin-tools"]`):
 
 - `server` — HTTP API server (Axum, tower-http, CORS)
-- `builtin-tools` — All 50 built-in tools (file, data, ai, logic, system, git, webhook, etc.)
+- `builtin-tools` — All 52 built-in tools (file, data, AI, logic, system, git, trigger, MCP, state, etc.)
 
 To disable the server and use only the graph runner:
 
@@ -81,7 +90,7 @@ All CI gates are defined in `.github/workflows/ci.yml` and run on every `push` t
 - Commands:
   - `cargo build --workspace --all-features`
   - `cargo test --workspace --all-features`
-- Purpose: Verify all 712 tests pass on Linux and macOS
+- Purpose: Verify the current workspace test suite passes on Linux and macOS
 - Failure blocks merge
 
 ### CI Environment
@@ -170,11 +179,14 @@ The HTTP server reads its version at compile time via `env!("CARGO_PKG_VERSION")
 
 ## Deployment
 
-OpenMirai is deployed as a **single self-contained binary** with zero external dependencies:
+OpenMirai can be deployed as a single native binary:
 
 - SQLite is **bundled** (compiled in via `rusqlite` with feature `bundled`)
 - TLS is handled by **rustls** (no system OpenSSL needed)
-- No environment containers, no database servers, no sidecar services
+- No external database server is required for the current single-process run-history store
+
+This does not make every tool dependency-free or the server stateless. Read
+[CLOUD-DEPLOYMENT.md](CLOUD-DEPLOYMENT.md) before building an image.
 
 ### Deployment Models
 
@@ -183,13 +195,9 @@ OpenMirai is deployed as a **single self-contained binary** with zero external d
 Download a binary from [GitHub Releases](https://github.com/Data-Mirai/openmirai/releases), verify the SHA256, and run:
 
 ```bash
-# macOS (Apple Silicon)
-curl -L https://github.com/.../releases/download/v0.6.0/mirai-darwin-arm64 -o mirai
-chmod +x mirai
-./mirai run my-agent.yaml
-
-# Linux
-curl -L https://github.com/.../releases/download/v0.6.0/mirai-linux-x86_64 -o mirai
+# Download the matching release asset. Asset names include the workflow build
+# number, for example mirai-v0.7.0-build.<N>-linux-x86_64.
+mv mirai-v0.7.0-build.<N>-linux-x86_64 mirai
 chmod +x mirai
 ./mirai run my-agent.yaml
 
@@ -200,14 +208,17 @@ chmod +x mirai
 #### 2. HTTP Server (Remote/Cloud)
 
 ```bash
-# Start the server on localhost:3000
+# Start the server on localhost:3000 for development
 ./mirai serve --port 3000
 
-# Or use environment variable (see Environment Variables below)
-MIRAI_API_KEY=secret-key ./mirai serve --port 8080
+# Cloud/LAN bind: authentication is mandatory
+MIRAI_API_KEY=secret-key ./mirai serve --host 0.0.0.0 --port 8080 \
+  --db-path /data/openmirai/engine.db
 ```
 
-The server exposes the full API at `/api/v1/*` with optional API key authentication.
+The server exposes the full API at `/api/v1/*`. Authentication is optional
+only for a loopback bind; the server refuses a non-loopback bind without an API
+key.
 
 #### 3. Embedded (Rust Crate)
 
@@ -263,8 +274,8 @@ export MIRAI_LLM_MODEL=gpt-4o
 #### `MIRAI_API_KEY`
 
 **Type:** String  
-**Default:** None (unauthenticated server if omitted)  
-**Purpose:** API key for the HTTP server (`mirai serve`). Clients must include this in the `X-API-Key` header. Note: `/health` and `/version` endpoints bypass authentication.
+**Default:** None (permitted only for loopback)
+**Purpose:** API key for the HTTP server (`mirai serve`). Clients must include this in the `X-API-Key` header. The server refuses a non-loopback bind without a key. Note: `/health`, `/version`, and static `/ui` content bypass authentication.
 
 **Example:**
 ```bash
@@ -281,12 +292,16 @@ curl -H "X-API-Key: $MIRAI_API_KEY" http://localhost:3000/api/v1/agents
 
 **Type:** File path  
 **Default:** None (tools receive no scratch directory if omitted)  
-**Purpose:** Temporary directory injected into bash tool execution. Available to bash scripts via the `$MIRAI_SCRATCH_DIR` environment variable.
+**Purpose:** Intended scratch directory for tool execution. The `system/bash`
+tool exports a scratch directory only when the host sets it on
+`ExecutionContext`. The current CLI/server context builders do not read this
+environment variable into the context, so setting it alone does not activate
+the feature in those paths.
 
 **Example:**
 ```bash
 export MIRAI_SCRATCH_DIR=/tmp/agent-workspace
-./mirai run agent.yaml  # Bash tool can write to $MIRAI_SCRATCH_DIR
+# Requires host/context wiring before system/bash receives this value.
 ```
 
 #### `MIRAI_BENCHMARK`
@@ -366,11 +381,17 @@ export OLLAMA_BASE_URL=http://192.168.1.100:11434
 
 ### SQLite (Bundled)
 
-The engine bundles SQLite (no external database server needed). Agent state, memory, and logs are persisted to a local SQLite database.
+The engine bundles SQLite (no external database server needed). In the current
+HTTP server, final run results—status, state, trace, transcript, error, and
+timings—are persisted to a local SQLite database.
 
-- **Location:** Configured at runtime (default: in-memory for CLI, persistent for servers)
-- **Tables:** Agents, graphs, execution logs, memory snapshots, webhooks
+- **Location:** `--db-path`, then `MIRAI_DB_PATH`, then `~/.openmirai/engine.db`
+- **Tables used by the server run repository:** parent graph/agent rows and final sessions/runs
 - **Compiled in:** No `sqlite3` binary or libraries required
+
+HTTP-created graph and agent registries, agent KV memory, scheduler state, and
+in-flight execution state remain process-local and are not restored from this
+database. The direct CLI path uses in-memory DB/storage resources.
 
 ### Scratch Directory
 
@@ -440,14 +461,16 @@ cargo test --workspace --all-features -- --test-threads=1
 
 ## Version Management
 
-Version is stored in **one source of truth**:
+Runtime version metadata has **one source of truth**:
 
-- **`VERSION` file** — contains the semver tag (e.g., `0.6.0`)
+- **`VERSION` file** — contains the semver tag (e.g., `0.7.0`)
 - **`engine/Cargo.toml`** — `version` field must match
 - **`cli/Cargo.toml`** — `version` field must match
-- **HTTP server** — reads version at compile time via `env!("CARGO_PKG_VERSION")`
+- **CLI and HTTP server** — build scripts inject `MIRAI_VERSION` from `VERSION`
 
-When bumping version, update all four and commit before tagging.
+The release process still requires every version-bearing manifest/SDK file to
+match `VERSION`; build scripts warn on crate-manifest drift and the release
+workflow rejects a tag that disagrees with `VERSION`.
 
 ```bash
 # Check current version
@@ -466,5 +489,7 @@ cargo build --release
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) — Development workflow
 - [RELEASING.md](../../RELEASING.md) — Release process detail
 - [ARCHITECTURE.md](../ARCHITECTURE.md) — System design
+- [SYSTEM_LIFECYCLE.md](../SYSTEM_LIFECYCLE.md) — End-to-end component and execution lifecycle
+- [CLOUD-DEPLOYMENT.md](CLOUD-DEPLOYMENT.md) — Docker/cloud readiness and production boundaries
 - [GitHub Releases](https://github.com/Data-Mirai/openmirai/releases) — Download binaries
 - [GitHub Actions](https://github.com/Data-Mirai/openmirai/actions) — CI/CD status

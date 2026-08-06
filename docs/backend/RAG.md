@@ -462,7 +462,7 @@ This is the end-to-end HTTP path:
 
 ## Status vs roadmap
 
-`docs/GAPS.md` is historical at v0.4.3. The current version referenced by the brief is v0.6.0, and `docs/ROADMAP-PARITY.md` is the current status source.
+`docs/GAPS.md` is historical at v0.4.3. The current version referenced by the brief is v0.7.0, and `docs/ROADMAP-PARITY.md` is the current status source.
 
 | Gap | Historical Status | Current Code Reconciliation |
 | --- | --- | --- |

@@ -16,7 +16,11 @@ Reglas:
 
 # Test Strategy
 
-OpenMirai implements a **712-test suite** across unit, integration, and system-level tests. No external services are required—all tests run in-process with bundled SQLite and in-memory adapters.
+OpenMirai has a comprehensive suite across unit, integration, and system-level
+tests. The exact count changes as the engine evolves; use `cargo test
+--workspace --all-features -- --list` when an exact count is required. No
+external services are required—the suite uses bundled SQLite, in-memory
+adapters, mocks, and temporary directories.
 
 ## Running Tests
 
@@ -117,7 +121,7 @@ Async tests using Tokio runtime. Most tests run a full graph execution with stub
 - `graph_crud_lifecycle`: Create, list, get, delete graph, final get → 404.
 - `agent_crud_lifecycle`: Create graph, create agent from graph, list, get agent.
 - `execute_agent_from_spec`: POST `/api/v1/agents/from-spec`, execute via trigger/manual, verify status.
-- `list_tools_returns_all_builtins`: GET `/api/v1/tools` → 50 builtin tools.
+- `list_tools_returns_all_builtins`: GET `/api/v1/tools` → all 52 builtin tools.
 - `create_agent_with_invalid_graph_returns_404`: Reference nonexistent graph → 404.
 - `get_nonexistent_session_returns_404`: GET `/api/v1/sessions/ghost` → 404.
 - `webhook_returns_received`: POST `/webhooks/my-hook` → 200 OK with `{"received": true}`.
@@ -306,7 +310,7 @@ fn test_llm_factory() -> LLMFactory {
 | Tools & LLM adapters | ~200 | Mixed | All PRs | In-memory or mock |
 | Memory & persistence | ~45 | Sync+Async | All PRs | SQLite bundled, no external |
 | System & cross-cutting | ~300 | Sync+Async | All PRs | SQLite bundled, no external |
-| **Total** | **712** | — | — | **Zero external dependencies** |
+| **Total** | **Current workspace suite** | — | — | **No external services** |
 
 ## CI Pipeline
 
@@ -316,7 +320,7 @@ fn test_llm_factory() -> LLMFactory {
 2. **clippy**: Linter (treat warnings as errors)
 3. **test**: Full `cargo test --workspace --all-features` on Ubuntu & macOS
 
-All 712 tests must pass before merge.
+The complete workspace suite must pass before merge.
 
 ## Notes
 
@@ -324,4 +328,4 @@ All 712 tests must pass before merge.
 - **MockLLMResource is test-only**: Never shipped to server/CLI/runtime.
 - **Deterministic**: No flaky tests, no timing assumptions, tokio::time::pause for timeout tests.
 - **Coverage**: Graph logic, tool execution, LLM integration, error handling, state management, API surface, hooks, interrupts.
-- **50 builtin tools**: Registered tools include 7 logic, 4 AI, 11 data, 12 filesystem, 3 system, 4 git, 1 output, 1 agent, 1 MCP, 5 trigger, 1 state operations.
+- **52 builtin tools**: Registered tools include 7 logic, 6 AI, 11 data, 12 filesystem, 3 system, 4 git, 1 output, 1 agent, 1 MCP, 5 trigger, and 1 state tool.

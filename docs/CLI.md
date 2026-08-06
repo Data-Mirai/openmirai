@@ -30,7 +30,7 @@ Related docs: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 ```bash
 # From the repo root
 cargo build --release
-./target/release/mirai version       # → mirai 0.6.0
+./target/release/mirai version       # → mirai 0.7.0
 
 # Or run unoptimized during development
 cargo run -p openmirai-cli -- run examples/hello-world.yaml
@@ -608,5 +608,5 @@ mirai
 
 ---
 
-*Source of truth: `cli/src/*.rs` at v0.6.0. If the CLI changes, update this doc
+*Source of truth: `cli/src/*.rs` at v0.7.0. If the CLI changes, update this doc
 and the command tables above to match the code.*

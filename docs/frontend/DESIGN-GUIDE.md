@@ -149,7 +149,7 @@ Se muestra al iniciar sesión interactiva. El banner y la información de sesió
 
 ```
 ╔════════════════════════════════════════╗
-║         OpenMirai v0.6.0               ║
+║         OpenMirai v0.7.0               ║
 ║   Agentic coding in your terminal      ║
 ╚════════════════════════════════════════╝
 

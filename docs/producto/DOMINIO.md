@@ -80,7 +80,7 @@
 Product Engineer (humano)
   └── usa → CLI / Server (interfaz)
                 └── delega → Engine (motor)
-                                ├── Tools (50 herramientas)
+                                ├── Tools (52 herramientas)
                                 ├── Providers (7 LLM adapters)
                                 ├── MCP Servers (herramientas externas)
                                 └── Adapters (DB, Storage, Vector)

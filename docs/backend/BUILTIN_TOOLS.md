@@ -13,7 +13,7 @@ the tool library, audit its behavior, or wire it into a new host.
 > it must not cross. For the underlying trait/pattern definitions, see
 > [`PRIMITIVES.md`](./PRIMITIVES.md).
 
-Engine version at time of writing: **0.6.0**.
+Engine version at time of writing: **0.7.0**.
 
 ---
 
@@ -39,14 +39,14 @@ pub fn register_all_builtin_tools(registry: &mut ToolRegistry) {
 }
 ```
 
-Each family exposes a `register_*_tools()` function. There are **50 registered
+Each family exposes a `register_*_tools()` function. There are **52 registered
 tools** across 11 families (the count is asserted in
 `builtin::tests::register_all_builtin_tools_adds_all`):
 
 | Family | Module | Count | `tool_type` prefix |
 |--------|--------|------:|--------------------|
 | Logic | `logic.rs` | 7 | `logic/` |
-| AI | `ai.rs` | 4 | `ai/` |
+| AI | `ai.rs` | 6 | `ai/` |
 | Data | `data/` | 11 | `data/` |
 | Filesystem | `filesystem/` | 12 | `filesystem/` |
 | System | `system.rs` | 3 | `system/` |
@@ -560,7 +560,7 @@ host (server/scheduler).
    `register_alias(old, new)` for one release.
 5. **For a new family**, add `pub mod <family>;` and a `register_*_tools()` call
    to `builtin/mod.rs`, then update the total in
-   `register_all_builtin_tools_adds_all` (currently 50).
+   `register_all_builtin_tools_adds_all` (currently 52).
 6. **Respect the boundaries.** If the tool touches the filesystem, shell, or
    network, re-read §13 first and prefer routing through an `ExecutionContext`
    resource (`db`/`storage`/`vector`) or `system/sandbox_exec` rather than raw
@@ -639,7 +639,7 @@ which act on the host directly and are not mediated by the `ExecutionContext`.
 - **Registration test per family.** Each `register_*_tools()` has a test
   asserting the registered tools resolve and the `list_tools()` count is exact
   (`register_*_tools_adds_*`). Update it when you add or remove a tool, and keep
-  the aggregate `register_all_builtin_tools_adds_all` (50) in sync.
+  the aggregate `register_all_builtin_tools_adds_all` (52) in sync.
 - **Aliases** get their own resolution test
   (`legacy_fs_aliases_resolve`, `legacy_mcp_alias_resolves`).
 

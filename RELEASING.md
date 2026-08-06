@@ -22,7 +22,10 @@ Bump all of these before tagging:
 | `sdks/typescript/package.json` | `version` |
 | `CHANGELOG.md` | new entry at the top |
 
-The HTTP server reads its version from `CARGO_PKG_VERSION` at compile time — no manual sync needed.
+The CLI and HTTP server read `MIRAI_VERSION`, injected by both crate build
+scripts from the root `VERSION` file. The build warns if a crate manifest and
+`VERSION` disagree, but all version-bearing files still need to be updated
+before release.
 
 ## Process
 

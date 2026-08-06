@@ -61,12 +61,12 @@ curl -H "X-API-Key: tu-api-key" http://localhost:3000/api/v1/agents
 ```json
 {
   "status": "ok",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "engine": "openmirai-engine-rs",
   "uptime_seconds": 1234,
   "agents_loaded": 5,
   "sessions_total": 42,
-  "tools_registered": 50
+  "tools_registered": 52
 }
 ```
 
@@ -82,7 +82,7 @@ curl -H "X-API-Key: tu-api-key" http://localhost:3000/api/v1/agents
 
 ```json
 {
-  "version": "0.6.0",
+  "version": "0.7.0",
   "engine": "openmirai-engine-rs"
 }
 ```
@@ -736,7 +736,7 @@ data: {"status": "Completed", "session_id": "...", "error": null}
 ```
 
 **Notas:**
-- 50+ herramientas builtin disponibles
+- 52 herramientas builtin disponibles
 - Incluye categories: llm, files, network, math, agent, system, etc
 - Cada tool tiene inputs/outputs tipados y requeridos
 
@@ -861,7 +861,7 @@ data: {"status": "Completed", "session_id": "...", "error": null}
     "total_duration_ms": 125000,
     "avg_duration_ms": 277.78
   },
-  "tools_registered": 50,
+  "tools_registered": 52,
   "agents_loaded": 8
 }
 ```

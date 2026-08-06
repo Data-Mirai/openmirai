@@ -1,5 +1,16 @@
 # OpenMirai — Architecture
 
+This document is the compact module map. For the complete path from build and
+process startup through graph execution, persistence, streaming, and shutdown,
+read [SYSTEM_LIFECYCLE.md](SYSTEM_LIFECYCLE.md). For the consequences of that
+architecture in Docker and cloud environments, read
+[infra/CLOUD-DEPLOYMENT.md](infra/CLOUD-DEPLOYMENT.md).
+
+The engine crate contains both production-wired components and reusable
+library primitives. A public type is not proof that the CLI/server activates
+it. `SYSTEM_LIFECYCLE.md` labels each major component as wired, library-only,
+partial, or placeholder.
+
 ## 1. Stack
 
 | Layer | Technology | Version |
@@ -23,7 +34,10 @@ Single compiled binary: `mirai`
 | **Library** | `cargo add openmirai-engine` | Embeddable Rust crate |
 | **Python SDK** | `pip install openmirai` | Thin wrapper over HTTP API or CLI |
 
-No Docker, no Node.js, no Python runtime required for the engine itself. One binary, any platform.
+Docker, Node.js, and Python are not required for the core engine or HTTP
+server. The repository does not currently ship a Dockerfile. Individual tools
+can require host programs (`sh`, `ps`, `git`, Python, Node), and tmux session
+orchestration requires Unix, `tmux`, and the `claude` CLI.
 
 ## 3. Module Architecture
 
@@ -162,7 +176,7 @@ ExecutionContext provides abstract access to resources:
 
 | Type | Tool | Count |
 |---|---|---|
-| Unit + Integration | `cargo test` | 712 tests |
+| Unit + Integration | `cargo test --workspace --all-features` | Hundreds of tests; use the command for the current exact count |
 
 All tests run with `cargo test`. No external services required (SQLite bundled, mocks for LLM in test-only code).
 
@@ -203,7 +217,7 @@ Authentication: `X-API-Key` header (optional, configured via `MIRAI_API_KEY`).
 openmirai-engine (open source, Apache-2.0)     Mirai Local (free desktop app)
 ┌──────────────────────────────┐       ┌─────────────────────────────┐
 │ Graph execution engine        │       │ Implements Engine            │
-│ 50 built-in tools             │◄──────│ Desktop UI for agents        │
+│ 52 built-in tools             │◄──────│ Desktop UI for agents        │
 │ 7 LLM providers              │  uses │ Local-first, no cloud needed │
 │ HTTP API + CLI                │       └─────────────────────────────┘
 │ YAML agent specs              │
@@ -216,3 +230,34 @@ openmirai-engine (open source, Apache-2.0)     Mirai Local (free desktop app)
 ```
 
 Engine is the core. Local and Cloud consume it as a dependency.
+
+## 10. Production wiring summary
+
+The default executable wires this primary chain:
+
+```text
+CLI or Axum handler
+  -> AgentSpec parse/validation
+  -> GraphDef conversion and runtime injection
+  -> GraphRunner
+  -> RegistryExecutor
+  -> built-in Tool
+  -> ExecutionContext resource port
+  -> concrete adapter / LLM provider
+  -> SharedState + trace + transcript
+  -> HTTP response and optional final-run SQLite persistence
+```
+
+Current boundaries that matter architecturally:
+
+- HTTP-created graph and agent registries are in memory.
+- Final server run results persist to SQLite; this is separate from the
+  per-execution `DBResource` exposed to tools.
+- Agent KV memory and live scheduling state are process-local.
+- Checkpoint callbacks and `GraphRunner::resume()` are library primitives not
+  exposed by the current CLI/server.
+- Streaming and synchronous execution differ in validation, memory, timeout,
+  and emitted-event behavior.
+- Filesystem/system/git tools can act with the OS permissions of the process.
+
+See the lifecycle document for the exact sequence and limitations.

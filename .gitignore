@@ -6,6 +6,8 @@ Cargo.lock.bak
 # Binaries (distributed via GitHub Releases, not git)
 mirai
 mirai.exe
+mirai.bin
+*.bin
 releases/
 
 # Python

@@ -1484,9 +1484,18 @@ fn print_help() {
     mirai run <file> [options]               Execute agent from JSON/YAML file
     mirai validate <file>                    Validate agent spec
     mirai serve [--port N] [--ui-dir <dir>] [--db-path <file>]  Start HTTP server (+ web UI at /ui; runs persisted to SQLite, default ~/.openmirai/engine.db)
+    mirai sessions <cmd>                     Orchestrate live coding sessions (needs tmux + a
+                                             running `mirai serve`; `mirai sessions help`)
+    mirai edit <file>                        Visual editor for an agent in your browser
+    mirai new [name]                         Scaffold a new agent from a template
+    mirai templates                          List available agent templates
+    mirai tools                              List the built-in tools
+    mirai describe <file>                    Explain what an agent does
+    mirai models                             List models available from the configured provider
+    mirai eval <file>                        Run an evaluation suite
+    mirai rag <cmd>                          Index and search a local knowledge base
+    mirai doctor                             Diagnose the local setup
     mirai version                            Show version
-    mirai agent load <file>                  Import agent from YAML
-    mirai agent list                         List agents
     mirai help                               This message
 
 {bold}RUN OPTIONS:{reset}

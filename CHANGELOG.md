@@ -4,9 +4,20 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
-## v0.7.0 (2026-08-03)
+## v0.7.0 (2026-08-06)
 
-Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. The agent YAML spec, runtime, and API stay backward-compatible; the one behavioral change to note is the CORS default, now loopback-only (see Security) — if you served a browser client from a non-loopback origin against the engine API, that request path is now intentionally blocked.
+Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. **The agent YAML spec and the HTTP API stay backward-compatible; the Rust crate API does not** — see Breaking below before upgrading a custom adapter.
+
+### Breaking
+- **Rust API — `LLMAdapter::max_tokens` is now `Option<u32>`** across its three methods. Custom adapters must update their signatures.
+- **Rust API — `LLMError` gained a `Truncated(String)` variant** and the enum is not `#[non_exhaustive]`: exhaustive `match`es on it stop compiling.
+- **Truncated LLM responses now fail** instead of returning partial text as success. Correct, but observable: code that "worked" on a cut-off answer now sees an error.
+- **CORS is loopback-only** and cross-site POSTs are rejected (see Security). A browser client served from a non-loopback origin can no longer call the engine API; requests without an `Origin` header (curl, the SDKs, server-to-server) are unaffected.
+- **`mirai serve` binds `127.0.0.1` by default** (was `0.0.0.0`). Pass `--host 0.0.0.0` — with `--api-key` — to expose it.
+- **Release binaries are named `mirai-v<version>+build.<N>-<target>`** (was `mirai-<target>`). Install scripts pinned to the old names need updating.
+- **MSRV is Rust 1.80** and the toolchain is pinned via `rust-toolchain.toml`; distro-packaged cargo can no longer build this repo.
+- **`mirai edit` rejects `--provider mock`** (since 0.6.2, never published) — it is a debugging surface against a real model.
+- **The repo moved to the [Data-Mirai](https://github.com/Data-Mirai) org**; update any automation that hardcodes the old owner.
 
 ### Added
 - **Persistent runs — executions survive restarts.** Every agent execution (`/execute` and `/stream`) is now recorded to SQLite (WAL) at `~/.openmirai/engine.db` (`--db-path` / `MIRAI_DB_PATH` to override): status, error, per-node timeline, transcript, and final state. `GET /api/v1/sessions` reads DB-first (the `?agent_id=` filter is now real, via SQL) and `GET /sessions/{id}` + `/sessions/{id}/otel-trace` fall back to the DB after a restart or memory eviction — the observability base for goals/agents tracing. In-memory stays as the hot cache; a persistence failure never fails the request.
@@ -22,6 +33,7 @@ Session orchestration, voice, large media, a visual Studio, and community contri
 - **Real-world showcase examples.** `examples/showcase/` with donated agents: tunevision, voice-aftrmeet, langgraph-comparison.
 - **`ai/image_edit` tool — OpenAI GPT-Image-1 inpainting (PRD-017).**
 - **Centralized tool macros, execution-state fork/join, field validation, and OpenTelemetry tracing (community PR #7, @alinedmooner).** Reusable `define_tool!` macros collapse per-tool boilerplate across the 11 builtin tool modules; execution-state fork/merge on parallel fan-out; field-level input validation (min/max value, length, regex); and an end-to-end OTel trace endpoint with server E2E tests and CI.
+- **Configurable STT timeout.** The `ai/transcribe` HTTP route accepts a `timeout_seconds` (default 120s, max 3600s) so long recordings are not cut short by a fixed ceiling.
 - **Binary version traceability.** Every binary reports name, version, and build from a single source of truth (the `VERSION` file): `mirai --version` → `mirai v0.7.0+build.<N> (<git-sha>, <ts>)`, and `/health` / `/version` expose the same — so you always know which build produced a run.
 
 ### Changed
@@ -32,11 +44,13 @@ Session orchestration, voice, large media, a visual Studio, and community contri
 
 ### Fixed
 - **Voice transcription defaults to `gemini-2.5-flash`** — the LLM route returned `404 models/default` when the client sent no model (macOS ClaudeOrchestrator case).
+- **CORS accepts the Tauri webview origin** (`tauri://localhost`) so a desktop shell can talk to a local engine without reopening the loopback-only policy to the web.
 
 ### Security
 - **Command injection (RCE) closed in session spawn.** `model` and `effort` from the spawn request were interpolated into the shell command tmux runs via `/bin/sh -c`; they are now strictly allowlisted (`[A-Za-z0-9._-]`) before the command is built, rejecting shell metacharacters. This was unauthenticated when the server runs open (`0.0.0.0` without `--api-key`) — upgrading is recommended, and running with `--api-key` is advised.
 - **Drive-by RCE closed: CORS is now loopback-only.** `CorsLayer::permissive()` allowed any website open in your browser to POST cross-origin to the local engine (e.g. agent execute or session spawn). Allowed origins are now restricted to loopback via predicate, with a cross-origin guard covering no-preflight "simple" requests too.
-- **Auth hardening.** API-key comparison is constant-time (SHA-256 digests on both sides), and binding a non-loopback host without `--api-key` is now a startup error instead of a silent foot-gun.
+- **`mirai serve` is safe by default.** The bind host default changed from `0.0.0.0` to `127.0.0.1`: the previous default exposed `/api/v1/agents/*/execute` and `/api/v1/orchestrator/*` — which amount to remote command execution — to anyone on the network. Use `--host 0.0.0.0` explicitly when you mean it.
+- **Auth hardening.** API-key comparison is constant-time (SHA-256 digests on both sides), and binding a non-loopback host without `--api-key` now genuinely aborts startup (it previously only logged an error and kept serving).
 - **Path traversal in `/ui` fixed for Windows** — `Component::Prefix`/`RootDir` are rejected when resolving static paths.
 - **AppleScript injection escaped in the native folder picker** (`POST /orchestrator/pick-folder`).
 

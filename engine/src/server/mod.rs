@@ -209,7 +209,31 @@ fn origin_is_trusted(origin: &HeaderValue, path: &str) -> bool {
         // file:// pages (Claude-Orchestrator web UI) — orchestrator API only.
         return path.starts_with("/api/v1/orchestrator/");
     }
+    if origin_is_tauri_app(origin) {
+        return true;
+    }
     origin_is_loopback(origin)
+}
+
+/// AgentMirai's Tauri webview origin.
+///
+/// The bundled visualizer (`vista-mirai.html`) runs inside the desktop app's
+/// webview and fetches this API with absolute URLs, so its origin has to be
+/// trusted or every request is blocked by CORS. Tauri serves the app from
+/// `tauri://localhost` (macOS/iOS/Linux) and `http://tauri.localhost`
+/// (Windows) — neither passes `origin_is_loopback`, because the first is not
+/// an http(s) scheme and the second's host is `tauri.localhost`, not
+/// `localhost`. Until v0.7.0 the server ran `CorsLayer::permissive()` and this
+/// worked by accident; tightening CORS silently broke the desktop app.
+///
+/// Security note: this is strictly NARROWER than the `null` allowance above.
+/// A web page cannot forge a `tauri://` origin — browsers never emit one — so
+/// only a Tauri app already running on this machine can present it, whereas
+/// any sandboxed iframe can present `null`.
+fn origin_is_tauri_app(origin: &str) -> bool {
+    origin.eq_ignore_ascii_case("tauri://localhost")
+        || origin.eq_ignore_ascii_case("http://tauri.localhost")
+        || origin.eq_ignore_ascii_case("https://tauri.localhost")
 }
 
 /// `http(s)://localhost|127.x.x.x|[::1]` on any port.

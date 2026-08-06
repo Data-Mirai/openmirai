@@ -1,0 +1,74 @@
+# Flujo 02 — Ruteo condicional
+#
+# Qué prueba en la nube: que la decisión de camino ocurre DENTRO del motor y no
+# en el cliente. El caller manda datos; el grafo elige la rama. El smoke lo
+# ejecuta dos veces con entradas distintas y verifica que la traza contiene una
+# rama y no la otra.
+#
+# Por qué NO usa el nodo logic/condition:
+#   El nodo declara su input `value` como Object y su operador se llama
+#   `operator` (no `op`). Con un comparando string —el caso más común— el
+#   validador lo rechaza antes de ejecutar:
+#     "missing required input 'operator'; input 'value' expected object, got string"
+#   Es reproducible con el propio test del repo:
+#     mirai run test/test_02_conditional_equals.yaml --provider mock  → Failed
+#   Ver "Brechas para producción" en docker/README.md.
+#
+# Las condiciones de ARISTA, en cambio, están bien implementadas
+# (GraphRunner::evaluate_condition) y son las que se usan acá: comparan un
+# campo plano del output del nodo fuente. Por eso el grafo primero produce un
+# campo plano (stdout) y rutea sobre él.
+#
+# Con un LLM real el patrón es idéntico, cambiando el nodo `clasificar` por un
+# ai/llm_call y ruteando sobre `response`.
+
+name: 02-ruteo-condicional
+version: v1
+description: "Enruta a la rama urgente o normal según la entrada recibida"
+
+inputs:
+  prioridad:
+    type: text
+    required: true
+    description: "alta | baja"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    # Normaliza la entrada a un campo plano (stdout) que las aristas puedan
+    # evaluar. Las comillas evitan que un input arbitrario se interprete
+    # como comando.
+    - id: clasificar
+      tool_type: system/bash
+      config:
+        timeout: 10
+
+    - id: rama_urgente
+      tool_type: output/response
+      config:
+        message: "ruta-urgente"
+
+    - id: rama_normal
+      tool_type: output/response
+      config:
+        message: "ruta-normal"
+
+  edges:
+    - source: trigger
+      target: clasificar
+      data_map:
+        command: 'echo "${trigger.payload.prioridad}"'
+
+    # Primera arista cuya condición matchea gana (ruteo exclusivo).
+    - source: clasificar
+      target: rama_urgente
+      condition:
+        field: stdout
+        op: contains
+        value: "alta"
+
+    # Arista sin condición: fallback cuando ninguna condición matchea.
+    - source: clasificar
+      target: rama_normal

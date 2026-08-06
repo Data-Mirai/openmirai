@@ -1,0 +1,51 @@
+# Flujo 03 — Fan-out / fan-in
+#
+# Qué prueba en la nube: concurrencia real dentro de UN request HTTP. Tres
+# ramas salen del trigger y convergen en un nodo de cierre. Si el runtime del
+# contenedor tuviera un solo worker o el scheduler de tokio estuviera limitado,
+# esto se degrada o falla.
+#
+# Esperado: status Completed, traza de 5 nodos (las 3 ramas ejecutan).
+
+name: 03-fanout-paralelo
+version: v1
+description: "Tres ramas en paralelo que convergen en un cierre"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          tarea: "carga en paralelo"
+
+    - id: rama_a
+      tool_type: logic/merge
+      config: {}
+
+    - id: rama_b
+      tool_type: logic/merge
+      config: {}
+
+    - id: rama_c
+      tool_type: logic/merge
+      config: {}
+
+    - id: cierre
+      tool_type: output/response
+      config:
+        message: "fanout-ok"
+
+  edges:
+    - source: trigger
+      target: rama_a
+    - source: trigger
+      target: rama_b
+    - source: trigger
+      target: rama_c
+    - source: rama_a
+      target: cierre
+    - source: rama_b
+      target: cierre
+    - source: rama_c
+      target: cierre

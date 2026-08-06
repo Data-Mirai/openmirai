@@ -1,0 +1,54 @@
+# Flujo 08 — Agente live (ejecución continua)
+#
+# Qué prueba en la nube: el pilar de "ejecución 24/7". A diferencia del resto,
+# este agente no se dispara con /execute sino con /play: el scheduler interno
+# lo cicla cada `interval_seconds` hasta `max_cycles` (o hasta /stop).
+#
+# El smoke hace: play → espera → GET /cycles → GET /memory → stop.
+#
+# Ojo para producción: el scheduler vive en memoria del proceso. Si el
+# contenedor se reinicia, los agentes en play NO vuelven solos — hay que
+# re-lanzarlos. Ver "Brechas para producción" en docker/README.md.
+
+name: 08-agente-live
+version: v1
+description: "Agente que cicla solo y recuerda el último ciclo ejecutado"
+
+agent_type: live
+
+schedule:
+  interval_seconds: 1
+  max_cycles: 3
+  on_cycle_error: continue
+
+graph:
+  # Memoria declarada: solo estas claves se persisten entre ciclos.
+  # persist: cycle → se mantiene durante la sesión de play, se reinicia al
+  # volver a arrancar con play después de un stop.
+  memory:
+    persist: cycle
+    keys:
+      ultimo_ciclo: 0
+
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: recordar
+      tool_type: state/memory
+      config: {}
+
+    - id: responder
+      tool_type: output/response
+      config:
+        message: "ciclo-ok"
+
+  edges:
+    # El scheduler inyecta cycle_number y triggered_by en el payload del trigger.
+    - source: trigger
+      target: recordar
+      data_map:
+        ultimo_ciclo: "trigger.payload.cycle_number"
+
+    - source: recordar
+      target: responder

@@ -1,0 +1,48 @@
+# Flujo 04 — Llamada a LLM
+#
+# Qué prueba en la nube: que el servidor arma su LLMFactory con el proveedor
+# configurado por entorno (MIRAI_LLM_PROVIDER) y que el nodo ai/llm_call lo
+# usa. El YAML NO fija proveedor: eso es decisión del despliegue.
+#
+#   MIRAI_LLM_PROVIDER=mock    → respuesta determinista, sin red ni API key
+#   MIRAI_LLM_PROVIDER=gemini  → llamada real (necesita GOOGLE_API_KEY)
+#
+# Ese es justamente el contrato que interesa en la nube: el mismo flujo corre
+# con proveedor falso en CI y con proveedor real en producción.
+
+name: 04-llm-basico
+version: v1
+description: "Una pregunta al LLM configurado en el servidor"
+
+inputs:
+  pregunta:
+    type: text
+    required: true
+    description: "La pregunta a responder"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: pensar
+      tool_type: ai/llm_call
+      config:
+        prompt: "Respondé de forma concisa y precisa."
+        temperature: 0.2
+        max_tokens: 256
+
+    - id: responder
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: trigger
+      target: pensar
+      data_map:
+        context: "trigger.payload.pregunta"
+
+    # La respuesta del LLM llega al cliente en state.pensar.response.
+    - source: pensar
+      target: responder

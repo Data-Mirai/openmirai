@@ -1,0 +1,34 @@
+# Flujo 01 — Pipeline lineal
+#
+# Qué prueba en la nube: que el contenedor ejecuta un grafo de punta a punta
+# vía HTTP (from-spec → execute) sin depender de ningún LLM ni red externa.
+# Es el "¿está vivo el motor?" con recorrido real de nodos.
+#
+# Esperado: status Completed, traza de 3 nodos.
+
+name: 01-pipeline-lineal
+version: v1
+description: "Recorrido secuencial mínimo: trigger → merge → respuesta"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          origen: "smoke-docker"
+
+    - id: fusionar
+      tool_type: logic/merge
+      config: {}
+
+    - id: responder
+      tool_type: output/response
+      config:
+        message: "pipeline-lineal-ok"
+
+  edges:
+    - source: trigger
+      target: fusionar
+    - source: fusionar
+      target: responder

@@ -1,0 +1,43 @@
+# Contexto de build de Docker — mantenerlo chico acelera cada `docker build`.
+# El Dockerfile solo necesita: Cargo.toml, Cargo.lock, engine/src, cli/src y docker/.
+
+.git
+.github
+target
+**/target
+releases
+
+# Docs y SDKs: no entran en la imagen del motor.
+docs
+sdks
+examples
+test
+*.md
+!docker/README.md
+
+# Entorno y secretos — nunca deben viajar al contexto de build.
+.env
+.env.*
+!.env.example
+
+# Artefactos locales
+*.db
+*.sqlite
+*.sqlite3
+*.log
+node_modules
+__pycache__
+.venv
+venv
+
+# Herramientas de trabajo internas (ya ignoradas en git)
+blueprint
+CLAUDE.md
+.claude
+BITACORA.md
+
+# Editores / SO
+.idea
+.vscode
+.DS_Store
+*.swp

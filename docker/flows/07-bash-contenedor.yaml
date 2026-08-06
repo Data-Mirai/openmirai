@@ -1,0 +1,43 @@
+# Flujo 07 — Shell dentro del contenedor
+#
+# Qué prueba en la nube: dos cosas de infraestructura, no de grafos.
+#
+#   1. La imagen runtime tiene shell. Si mañana se migra a distroless o a
+#      `scratch` para achicar la imagen, la herramienta system/bash deja de
+#      funcionar y este flujo lo detecta.
+#   2. El proceso NO corre como root. `id -un` debe devolver "mirai". El motor
+#      expone bash y filesystem/* a cualquier YAML: correr como root le daría
+#      a un spec arbitrario control total del contenedor.
+
+name: 07-bash-contenedor
+version: v1
+description: "Ejecuta un comando y reporta el usuario del proceso"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          motivo: "verificación de entorno"
+
+    - id: ejecutar
+      tool_type: system/bash
+      config:
+        command: "echo bash-en-docker-ok; id -un"
+        timeout: 15
+
+    - id: responder
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: trigger
+      target: ejecutar
+    # Sin data_map hacia el cierre: output/response exige que `data` sea un
+    # objeto y stdout es un string. La salida completa de cada nodo viaja igual
+    # en el campo `state` de la respuesta de /execute, que es de donde la lee
+    # el smoke (state.ejecutar.stdout).
+    - source: ejecutar
+      target: responder

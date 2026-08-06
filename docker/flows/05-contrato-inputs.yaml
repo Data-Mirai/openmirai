@@ -1,0 +1,51 @@
+# Flujo 05 — Contrato de entrada
+#
+# Qué prueba en la nube: que el motor valida en su propio borde. Un servicio
+# expuesto por HTTP recibe basura tarde o temprano; el rechazo tiene que salir
+# del motor (422 con mensaje claro), no de una capa de validación del cliente.
+#
+# El smoke lo ejecuta dos veces:
+#   con {"documento": "..."} → 200 Completed
+#   con {}                   → 422 input validation failed
+
+name: 05-contrato-inputs
+version: v1
+description: "Declara entradas tipadas y exige las obligatorias"
+
+inputs:
+  documento:
+    type: text
+    required: true
+    description: "Texto a procesar"
+  idioma:
+    type: text
+    required: false
+    default: "es"
+    description: "Idioma de salida"
+  # Ojo: los tipos válidos son text, number, boolean, json, file.
+  # USAGE.md menciona además integer/array/object — el motor los rechaza.
+  reintentos:
+    type: number
+    required: false
+    default: 1
+
+outputs:
+  resultado:
+    type: text
+    description: "Confirmación del contrato cumplido"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: responder
+      tool_type: output/response
+      config:
+        message: "contrato-ok"
+
+  edges:
+    - source: trigger
+      target: responder
+      data_map:
+        data: "trigger.payload"

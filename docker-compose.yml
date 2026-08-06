@@ -1,0 +1,113 @@
+# OpenMirai — prototipo de despliegue en contenedores.
+#
+#   docker compose up -d --build        levanta el motor
+#   docker compose run --rm smoke       corre la suite e2e contra el motor
+#   docker compose --profile llm-local up -d   agrega Ollama (LLM sin API key)
+#
+# Configuración: copiar .env.example a .env y ajustar.
+
+name: openmirai
+
+services:
+  # -------------------------------------------------------------------------
+  # engine — el motor OpenMirai sirviendo su API HTTP
+  # -------------------------------------------------------------------------
+  engine:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: runtime
+    image: openmirai/engine:0.6.0-proto
+    container_name: openmirai-engine
+
+    # Lista, no mapa: la forma `- VAR` (sin `=`) pasa la variable solo si
+    # existe en el entorno o en .env. Con `VAR: ${VAR:-}` se definiría vacía y
+    # el motor la tomaría como valor real — un modelo vacío, por ejemplo.
+    environment:
+      # Autenticación de la API (header X-API-Key). Vacío = API abierta.
+      - MIRAI_API_KEY=${MIRAI_API_KEY:-openmirai-dev}
+      # Proveedor de LLM. `mock` = respuestas deterministas sin red ni API key.
+      - MIRAI_LLM_PROVIDER=${MIRAI_LLM_PROVIDER:-mock}
+      - MIRAI_PORT=3000
+      - MIRAI_HOST=0.0.0.0
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - MIRAI_LLM_MODEL
+      - ANTHROPIC_API_KEY
+      - GOOGLE_API_KEY
+      - OPENAI_API_KEY
+      - GROQ_API_KEY
+      - NVIDIA_API_KEY
+      - OPENROUTER_API_KEY
+
+    ports:
+      # 4321 en el host es el puerto que el resto del ecosistema Mirai espera
+      # del motor; adentro el servidor escucha en 3000.
+      - "${MIRAI_PUBLIC_PORT:-4321}:3000"
+
+    volumes:
+      # Specs de agentes. Read-only: el motor los lee, no los escribe.
+      - ./docker/flows:/opt/openmirai/flows:ro
+      # Volumen de trabajo. Es el WORKDIR del contenedor: lo que escriban las
+      # herramientas filesystem/* con rutas relativas cae acá.
+      - mirai-datos:/data
+
+    restart: unless-stopped
+
+    # El motor solo necesita bindear un puerto alto y hablar HTTPS de salida.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Endurecimiento adicional, pendiente de validar en este prototipo: con
+    # `read_only: true` hay que dar tmpfs a /tmp (el motor usa tempfile) y
+    # revisar que git/bash no necesiten escribir en $HOME.
+    #   read_only: true
+    #   tmpfs: [/tmp]
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+    # El healthcheck viene del Dockerfile (curl a /health, que es público).
+
+  # -------------------------------------------------------------------------
+  # smoke — suite e2e. No se despliega: se corre a demanda.
+  # -------------------------------------------------------------------------
+  smoke:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: tester
+    image: openmirai/smoke:0.6.0-proto
+    profiles: ["test"]
+    depends_on:
+      engine:
+        condition: service_healthy
+    environment:
+      - OPENMIRAI_URL=http://engine:3000
+      - MIRAI_API_KEY=${MIRAI_API_KEY:-openmirai-dev}
+    volumes:
+      # Montado para poder editar los flujos sin reconstruir la imagen.
+      - ./docker/flows:/opt/openmirai/flows:ro
+
+  # -------------------------------------------------------------------------
+  # ollama — LLM local opcional, para probar con un modelo real sin API key
+  #          docker compose --profile llm-local up -d
+  #          docker compose exec ollama ollama pull qwen3:8b
+  #          (y poner MIRAI_LLM_PROVIDER=ollama en .env)
+  # -------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: openmirai-ollama
+    profiles: ["llm-local"]
+    volumes:
+      - ollama-modelos:/root/.ollama
+    ports:
+      - "${OLLAMA_PUBLIC_PORT:-11434}:11434"
+    restart: unless-stopped
+
+volumes:
+  mirai-datos:
+  ollama-modelos:

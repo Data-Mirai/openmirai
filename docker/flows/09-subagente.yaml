@@ -1,0 +1,49 @@
+# Flujo 09 — Sub-agente (BRECHA CONOCIDA)
+#
+# Este flujo NO demuestra una capacidad: documenta una que falta.
+#
+# La herramienta agent/run_agent está registrada y valida lo suyo (profundidad
+# máxima de anidamiento, referencias circulares), pero su `execute` devuelve un
+# placeholder — el comentario en engine/src/tools/builtin/agent.rs lo dice
+# textual: "the real execution happens in the app layer". Ni el servidor HTTP
+# ni el CLI implementan esa capa.
+#
+# Consecuencia para la nube: componer agentes vía HTTP todavía no funciona. El
+# grafo completa igual (status Completed), pero el nodo devuelve
+# status="placeholder" y result={} — un falso verde si nadie lo mira.
+#
+# El smoke afirma el comportamiento ACTUAL. El día que se implemente la
+# ejecución real, este test falla y obliga a actualizar la expectativa. Eso es
+# deliberado.
+
+name: 09-subagente
+version: v1
+description: "Invoca otro agente — hoy devuelve un placeholder"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          tema: "composición de agentes"
+
+    - id: delegar
+      tool_type: agent/run_agent
+      config:
+        agent_id: "01-pipeline-lineal"
+        timeout_seconds: 30
+
+    - id: responder
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: trigger
+      target: delegar
+      data_map:
+        input_data: "trigger.payload"
+
+    - source: delegar
+      target: responder

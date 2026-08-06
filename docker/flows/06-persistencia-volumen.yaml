@@ -1,0 +1,50 @@
+# Flujo 06 — Escritura y lectura en el volumen
+#
+# Qué prueba en la nube: que el contenedor tiene un directorio escribible
+# (/data, el volumen persistente) y que el usuario sin privilegios del runtime
+# puede usarlo. Si /data quedara como root, este flujo falla — y ese es
+# exactamente el error que uno NO quiere descubrir en producción.
+#
+# También delimita el alcance: escribe dentro del volumen, no en el filesystem
+# de la imagen (que conviene tratar como inmutable).
+
+name: 06-persistencia-volumen
+version: v1
+description: "Escribe un archivo en /data y lo vuelve a leer"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          marca: "persistencia-docker-ok"
+
+    # Path relativo a propósito: el WORKDIR de la imagen es /data, que es el
+    # volumen persistente. El mismo YAML funciona fuera de Docker (escribe
+    # donde se haya lanzado el motor) sin acoplarse a una ruta absoluta.
+    - id: escribir
+      tool_type: filesystem/write_file
+      config:
+        path: "smoke/06-persistencia.txt"
+        content: "persistencia-docker-ok"
+
+    - id: leer
+      tool_type: filesystem/read_file
+      config:
+        path: "smoke/06-persistencia.txt"
+
+    - id: responder
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: trigger
+      target: escribir
+    - source: escribir
+      target: leer
+    # Sin data_map: `data` debe ser objeto y content es string. El contenido
+    # leído viaja en state.leer.content dentro de la respuesta de /execute.
+    - source: leer
+      target: responder

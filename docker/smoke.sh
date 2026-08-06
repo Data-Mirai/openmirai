@@ -225,6 +225,33 @@ USUARIO=$(tail -n1 <<<"$SALIDA" | tr -d '[:space:]')
 [ "$USUARIO" != "root" ] && afirmar "07 el motor no corre como root" 0 "usuario: $USUARIO" \
                          || afirmar "07 el motor no corre como root" 1 "corre como root — cualquier YAML tendría el contenedor entero"
 
+# --- 08 agente live: ciclado autónomo ---
+# El flujo declara interval_seconds 1 y max_cycles 3, y el primer ciclo sale
+# sin esperar: a los 5 segundos tienen que estar los tres.
+ID=$(registrar 08-agente-live.yaml)
+PLAY=$(api POST "/api/v1/agents/$ID/play")
+ESTADO_PLAY=$(jq -r '.status // "?"' <<<"$PLAY")
+[ "$ESTADO_PLAY" = "playing" ] && afirmar "08 agente live acepta play" 0 "intervalo 1s, máximo 3 ciclos" \
+                               || afirmar "08 agente live acepta play" 1 "status=$ESTADO_PLAY"
+
+sleep 5
+CICLOS=$(api GET "/api/v1/agents/$ID/cycles")
+TOTAL=$(jq -r '.total_cycles // 0' <<<"$CICLOS")
+COMPLETADOS=$(jq -r '[.cycles[]? | select(.status=="completed" or .status=="Completed")] | length' <<<"$CICLOS")
+[ "$TOTAL" -eq 3 ] && afirmar "08 el agente cicla solo" 0 "$TOTAL ciclos, $COMPLETADOS completados" \
+                   || afirmar "08 el agente cicla solo" 1 "total_cycles=$TOTAL (se esperaban 3)"
+
+RECUERDO=$(api GET "/api/v1/agents/$ID/memory" | jq -r '.memory.ultimo_ciclo // "vacía"')
+[ "$RECUERDO" = "3" ] && afirmar "08 la memoria persiste entre ciclos" 0 "ultimo_ciclo=$RECUERDO" \
+                      || afirmar "08 la memoria persiste entre ciclos" 1 "ultimo_ciclo=$RECUERDO (se esperaba 3)"
+
+# Al agotar max_cycles el agente tiene que quedar desregistrado: si siguiera
+# figurando como activo, este segundo play devolvería 409.
+CODIGO=$(codigo_http POST "/api/v1/agents/$ID/play")
+[ "$CODIGO" = "200" ] && afirmar "08 se puede volver a lanzar tras terminar" 0 "segundo play aceptado" \
+                      || afirmar "08 se puede volver a lanzar tras terminar" 1 "devolvió $CODIGO (409 = quedó registrado sin correr)"
+api POST "/api/v1/agents/$ID/stop" >/dev/null
+
 # --- SSE en vivo ---
 ID=$(registrar 01-pipeline-lineal.yaml)
 EVENTOS=$(timeout 30 curl -sN -X POST "$URL/api/v1/agents/$ID/stream" \
@@ -252,23 +279,6 @@ CLAVES=$(api GET /api/v1/metrics | jq -r 'keys | join(",")')
 # ===========================================================================
 titulo "── Brechas conocidas del motor (verificadas, no son fallos) ────────"
 # ===========================================================================
-
-# --- 08 agente live: el scheduler nunca arranca ---
-ID=$(registrar 08-agente-live.yaml)
-PLAY=$(api POST "/api/v1/agents/$ID/play")
-ESTADO_PLAY=$(jq -r '.status // "?"' <<<"$PLAY")
-if [ "$ESTADO_PLAY" = "playing" ]; then
-    sleep 4
-    CICLOS=$(api GET "/api/v1/agents/$ID/cycles" | jq -r '.total_cycles // 0')
-    api POST "/api/v1/agents/$ID/stop" >/dev/null
-    if [ "$CICLOS" -eq 0 ]; then
-        brecha "08 agente live no cicla" "play devuelve 'playing' pero total_cycles=0 tras 4s (intervalo 1s)"
-    else
-        afirmar "08 agente live cicla (brecha resuelta)" 0 "$CICLOS ciclos — actualizar docker/README.md"
-    fi
-else
-    afirmar "08 agente live acepta play" 1 "status=$ESTADO_PLAY"
-fi
 
 # --- 09 sub-agente: la ejecución real no está implementada ---
 ID=$(registrar 09-subagente.yaml)

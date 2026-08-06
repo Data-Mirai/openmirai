@@ -4,7 +4,7 @@
 //! interval, then calls the provided execution callback.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -43,6 +43,11 @@ struct ScheduledEntry {
     interval_seconds: u64,
     handle: JoinHandle<()>,
     max_cycles: Option<u64>,
+    /// Identifica la sesión de play que creó esta entrada. La tarea de fondo
+    /// solo se auto-desregistra si la entrada sigue siendo la suya: sin esto,
+    /// el cleanup de una sesión vieja podría borrar la entrada de un `play`
+    /// posterior sobre el mismo agente.
+    session_id: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +62,8 @@ pub struct Scheduler {
     cycle_history: Arc<RwLock<HashMap<String, Vec<CycleRecord>>>>,
     /// Per-agent cycle counter (total cycles completed in current session).
     cycle_counters: Arc<RwLock<HashMap<String, u64>>>,
+    /// Secuencia monotónica de sesiones de play. Ver [`ScheduledEntry::session_id`].
+    session_seq: Arc<AtomicU64>,
 }
 
 impl Scheduler {
@@ -66,10 +73,15 @@ impl Scheduler {
             running: Arc::new(AtomicBool::new(false)),
             cycle_history: Arc::new(RwLock::new(HashMap::new())),
             cycle_counters: Arc::new(RwLock::new(HashMap::new())),
+            session_seq: Arc::new(AtomicU64::new(0)),
         }
     }
 
     /// Mark the scheduler as running.
+    ///
+    /// No hace falta llamarlo antes de [`Scheduler::schedule_agent`]: agendar
+    /// un agente ya activa el scheduler. Queda como control explícito para
+    /// reanudar después de un [`Scheduler::stop`].
     pub fn start(&self) {
         self.running.store(true, Ordering::SeqCst);
         info!("Scheduler started");
@@ -106,6 +118,16 @@ impl Scheduler {
             counters.insert(agent_id.to_string(), 0);
         }
 
+        // Agendar un agente implica que el scheduler tiene que estar corriendo.
+        // Antes esto dependía de que el host llamara `start()` por su cuenta y
+        // el servidor HTTP nunca lo hacía: `/play` registraba el agente, la
+        // tarea de fondo arrancaba con el `while running` en false y salía sin
+        // ejecutar un solo ciclo. Activarlo acá deja el invariante en el propio
+        // scheduler, en vez de repartido entre sus llamadores.
+        self.running.store(true, Ordering::SeqCst);
+
+        let session_id = self.session_seq.fetch_add(1, Ordering::SeqCst);
+
         let running = Arc::clone(&self.running);
         let aid = agent_id.to_string();
         let interval = interval_seconds;
@@ -113,6 +135,13 @@ impl Scheduler {
         let max = max_cycles;
         let history = Arc::clone(&self.cycle_history);
         let counters = Arc::clone(&self.cycle_counters);
+        let entries_para_limpieza = Arc::clone(&self.entries);
+
+        // El lock de `entries` se toma ANTES de lanzar la tarea y se suelta
+        // recién después de insertarla. Así, si el bucle termina de inmediato
+        // (max_cycles muy chico), su auto-desregistro espera a que la entrada
+        // exista en lugar de correr antes y dejarla huérfana.
+        let mut entries = self.entries.write().await;
 
         let handle = tokio::spawn(async move {
             let mut cycle_num: u64 = 0;
@@ -199,17 +228,33 @@ impl Scheduler {
                     break;
                 }
             }
+
+            // El bucle terminó solo (max_cycles alcanzado u on_cycle_error=stop):
+            // sacarse del registro para que `is_scheduled` diga la verdad y un
+            // `play` posterior no reciba un 409 por un agente que ya no corre.
+            // Si en cambio la tarea fue abortada (unschedule/stop), este await
+            // se cancela y es el llamador el que ya removió la entrada.
+            let mut entries = entries_para_limpieza.write().await;
+            match entries.get(&aid) {
+                Some(entry) if entry.session_id == session_id => {
+                    entries.remove(&aid);
+                    info!(agent_id = %aid, "Agent unscheduled (cycles finished)");
+                }
+                // La entrada es de otra sesión de play: no es nuestra.
+                _ => {}
+            }
         });
 
-        let mut entries = self.entries.write().await;
         entries.insert(
             agent_id.to_string(),
             ScheduledEntry {
                 interval_seconds,
                 handle,
                 max_cycles,
+                session_id,
             },
         );
+        drop(entries);
         info!(agent_id = %agent_id, interval_seconds = interval_seconds, "Agent scheduled");
     }
 
@@ -347,5 +392,139 @@ mod tests {
         assert!(sched.is_scheduled("a1").await);
 
         sched.stop().await;
+    }
+
+    // -----------------------------------------------------------------------
+    // Ejecución real de ciclos
+    //
+    // Los tests de arriba solo miran el registro de agentes, y por eso no
+    // detectaron que ningún ciclo llegaba a ejecutarse: todos llamaban
+    // `start()` a mano, cosa que el servidor HTTP nunca hacía.
+    // Estos usan `start_paused`, así que el reloj es virtual y no hay esperas
+    // reales.
+    // -----------------------------------------------------------------------
+
+    /// Callback que cuenta invocaciones.
+    fn contador() -> (CycleCallback, Arc<AtomicU64>) {
+        let cuenta = Arc::new(AtomicU64::new(0));
+        let interno = Arc::clone(&cuenta);
+        let cb: CycleCallback = Arc::new(move |_aid, _cycle, _first| {
+            let c = Arc::clone(&interno);
+            Box::pin(async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        (cb, cuenta)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ejecuta_ciclos_sin_llamar_start() {
+        let sched = Scheduler::new();
+        let (cb, cuenta) = contador();
+
+        // Sin sched.start(): es exactamente lo que hace el servidor HTTP.
+        sched
+            .schedule_agent("live", 1, Some(3), "continue", cb)
+            .await;
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        assert_eq!(
+            cuenta.load(Ordering::SeqCst),
+            3,
+            "el agente live no ejecutó sus ciclos"
+        );
+        assert_eq!(sched.get_cycle_count("live").await, 3);
+        assert_eq!(sched.get_cycles("live", 10).await.len(), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn se_desregistra_al_agotar_max_cycles() {
+        let sched = Scheduler::new();
+        let (cb, _) = contador();
+
+        sched
+            .schedule_agent("live", 1, Some(2), "continue", cb)
+            .await;
+        assert!(sched.is_scheduled("live").await);
+
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        assert!(
+            !sched.is_scheduled("live").await,
+            "el agente terminó sus ciclos pero quedó registrado: un play posterior daría 409"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn se_puede_volver_a_agendar_tras_terminar() {
+        let sched = Scheduler::new();
+        let (cb1, cuenta1) = contador();
+        sched
+            .schedule_agent("live", 1, Some(1), "continue", cb1)
+            .await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        assert_eq!(cuenta1.load(Ordering::SeqCst), 1);
+
+        // Segunda sesión de play sobre el mismo agente.
+        let (cb2, cuenta2) = contador();
+        sched
+            .schedule_agent("live", 1, Some(2), "continue", cb2)
+            .await;
+        assert!(sched.is_scheduled("live").await);
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        assert_eq!(cuenta2.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            sched.get_cycle_count("live").await,
+            2,
+            "el contador se reinicia por sesión"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_global_corta_los_ciclos() {
+        let sched = Scheduler::new();
+        let (cb, cuenta) = contador();
+
+        // Sin límite de ciclos: solo lo frena el stop.
+        sched.schedule_agent("live", 1, None, "continue", cb).await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        let antes = cuenta.load(Ordering::SeqCst);
+        assert!(antes > 0, "no llegó a ciclar antes del stop");
+
+        sched.stop().await;
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        assert_eq!(
+            cuenta.load(Ordering::SeqCst),
+            antes,
+            "siguió ciclando después del stop"
+        );
+        assert!(!sched.is_scheduled("live").await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn on_cycle_error_stop_detiene_al_primer_fallo() {
+        let sched = Scheduler::new();
+        let cuenta = Arc::new(AtomicU64::new(0));
+        let interno = Arc::clone(&cuenta);
+        let cb: CycleCallback = Arc::new(move |_aid, _cycle, _first| {
+            let c = Arc::clone(&interno);
+            Box::pin(async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Err("falla deliberada".to_string())
+            })
+        });
+
+        sched.schedule_agent("live", 1, Some(5), "stop", cb).await;
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        assert_eq!(cuenta.load(Ordering::SeqCst), 1, "no frenó al primer error");
+        let ciclos = sched.get_cycles("live", 10).await;
+        assert_eq!(ciclos.len(), 1);
+        assert_eq!(ciclos[0].status, CycleStatus::Failed);
+        assert!(!sched.is_scheduled("live").await);
     }
 }

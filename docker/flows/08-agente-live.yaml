@@ -4,7 +4,11 @@
 # este agente no se dispara con /execute sino con /play: el scheduler interno
 # lo cicla cada `interval_seconds` hasta `max_cycles` (o hasta /stop).
 #
-# El smoke hace: play → espera → GET /cycles → GET /memory → stop.
+# El smoke hace: play → espera → GET /cycles → GET /memory → segundo play.
+#
+# El primer ciclo sale sin esperar el intervalo, así que con interval_seconds 1
+# y max_cycles 3 los tres ciclos terminan a los ~2 segundos. Al agotarlos, el
+# agente se desregistra solo y vuelve a aceptar play.
 #
 # Ojo para producción: el scheduler vive en memoria del proceso. Si el
 # contenedor se reinicia, los agentes en play NO vuelven solos — hay que

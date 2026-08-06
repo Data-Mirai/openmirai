@@ -4,6 +4,16 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## Unreleased
+
+### Fixed
+- **Live agents never ran a single cycle.** `Scheduler` started with its `running` flag set to `false` and only turned it on via `start()`, which nothing outside the module's own unit tests ever called — the HTTP server included. `POST /api/v1/agents/{id}/play` returned `{"status":"playing"}` while the background task exited immediately, leaving `total_cycles` at `0` forever. Scheduling an agent now activates the scheduler itself, so the invariant lives in `Scheduler` instead of being spread across its callers. `start()` stays available to resume after an explicit `stop()`.
+- **Agents that finished their cycles stayed registered.** After exhausting `max_cycles` (or stopping on `on_cycle_error: stop`), the entry remained in the scheduler: `is_scheduled` kept reporting the agent as active and a second `play` was rejected with `409 Conflict`. The background task now removes its own entry when its loop ends, guarded by a per-session id so a finishing task can never evict the entry of a newer `play` on the same agent.
+
+Five regression tests cover cycle execution, `max_cycles`, self-deregistration, re-scheduling, `stop()`, and `on_cycle_error: stop`. The suite goes from 712 to 717 tests.
+
+---
+
 ## v0.6.0 (2026-05-31)
 
 ### Changed

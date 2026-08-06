@@ -5,8 +5,12 @@ una suite e2e que ejercita capacidades distintas del runtime. El objetivo no es
 un despliegue productivo: es **medir qué tan lista está la v0.6.0 para correr en
 la nube** y dejar el diagnóstico por escrito.
 
-Resultado de la corrida de referencia: **18 verificaciones en verde, 2 brechas
+Resultado de la corrida de referencia: **22 verificaciones en verde, 1 brecha
 del motor** (ver [Brechas para producción](#brechas-para-producción)).
+
+Del diagnóstico salió además un arreglo al motor: los agentes live no
+ejecutaban un solo ciclo. Está corregido en `engine/src/runtime/scheduler.rs`
+—ver el CHANGELOG— y el flujo 08 lo verifica de punta a punta.
 
 ---
 
@@ -99,7 +103,7 @@ cliente de la nube.
 | `05-contrato-inputs` | El motor valida en su propio borde: entrada incompleta → 422 desde el motor. |
 | `06-persistencia-volumen` | El volumen es escribible por el usuario sin privilegios. |
 | `07-bash-contenedor` | Hay shell en la imagen **y** el proceso no corre como root. |
-| `08-agente-live` | Ciclado autónomo (play/stop). **Brecha: no cicla.** |
+| `08-agente-live` | Ciclado autónomo: `play` → cicla solo → memoria persistida entre ciclos → se desregistra al agotar `max_cycles` y vuelve a aceptar `play`. |
 | `09-subagente` | Composición de agentes. **Brecha: devuelve un placeholder.** |
 
 Más SSE (`/stream` emite el ciclo completo de eventos), autenticación
@@ -122,28 +126,7 @@ JSON, no YAML. La imagen `tester` ya los trae.
 Lo que encontró este prototipo. Cada punto está verificado contra el código de
 la v0.6.0, con la reproducción al lado.
 
-### 1. Los agentes live nunca ejecutan un ciclo
-
-`Scheduler::new()` deja su bandera `running` en `false`
-(`engine/src/runtime/scheduler.rs:66`) y **nadie llama a `start()`** fuera de los
-tests unitarios del propio módulo. El bucle de ciclos es
-`while running.load(...)`, así que no entra nunca.
-
-`POST /play` responde `{"status":"playing"}` igualmente: el agente queda
-registrado y jamás corre.
-
-```bash
-curl -X POST .../api/v1/agents/$ID/play     # {"status":"playing"}
-sleep 4                                      # interval_seconds: 1
-curl .../api/v1/agents/$ID/cycles            # {"total_cycles":0}
-```
-
-Es la brecha más cara: la ejecución continua es justamente lo que se busca al
-llevar el motor a la nube. El arreglo es una línea —llamar `scheduler.start()`
-al construir el `AppState` o al levantar `serve()`—, pero toca el core y queda
-fuera del alcance de este prototipo.
-
-### 2. Los sub-agentes no se ejecutan
+### 1. Los sub-agentes no se ejecutan
 
 `agent/run_agent` valida profundidad de anidamiento y referencias circulares,
 pero su `execute` devuelve un placeholder: *"the real execution happens in the
@@ -153,7 +136,7 @@ CLI implementan esa capa.
 El grafo completa con `status: Completed` y el nodo devuelve
 `status: "placeholder"`, `result: {}`. Verde falso si nadie mira el nodo.
 
-### 3. Todo el estado vive en memoria del proceso
+### 2. Todo el estado vive en memoria del proceso
 
 `AppState` guarda agentes, grafos y sesiones en `HashMap`
 (`engine/src/server/state.rs`), y cada ejecución arma su contexto con
@@ -173,7 +156,7 @@ Consecuencias directas:
 
 El volumen `/data` cubre solo lo que escriban las herramientas `filesystem/*`.
 
-### 4. El motor no emite un solo log
+### 3. El motor no emite un solo log
 
 El código está instrumentado con `tracing` (`info!`, `warn!`), pero **no hay
 ningún subscriber**: `tracing-subscriber` no figura en las dependencias de
@@ -184,7 +167,7 @@ En la práctica: el contenedor imprime el banner del entrypoint y después
 silencio. Sin logs de acceso, sin errores, sin trazas. Para diagnosticar en la
 nube hay que agregar un subscriber (una dependencia y una línea en `main`).
 
-### 5. `logic/condition` y `logic/switch` no comparan escalares
+### 4. `logic/condition` y `logic/switch` no comparan escalares
 
 Ambos declaran su input de comparación como `FieldType::Object`, y la validación
 es estricta (`value.is_object()`, `engine/src/tools/base.rs:109`). Además el nodo
@@ -205,19 +188,19 @@ mirai run test/test_02_conditional_equals.yaml --provider mock   # → Failed
 Las condiciones de **arista** sí están bien implementadas
 (`GraphRunner::evaluate_condition`), y son las que usa `02-ruteo-condicional`.
 
-### 6. La suite del repo reporta verdes falsos
+### 5. La suite del repo reporta verdes falsos
 
 `test/run_all.sh` decide si un test pasó buscando la palabra `Completed` en
 cualquier parte de la salida. Esa palabra aparece en la traza de cada nodo que
 sí funcionó (`"Completed trigger/manual in 0ms"`), así que una ejecución con
 `status: Failed` se reporta como **PASS**. Es lo que pasa hoy con
-`test_02_conditional_equals` y la brecha 5: `11 passed, 0 failed` con el flujo
+`test_02_conditional_equals` y la brecha 4: `11 passed, 0 failed` con el flujo
 roto.
 
 Por eso `docker/smoke.sh` afirma sobre el campo `status` del JSON y sobre
 `state`/`trace`, nunca por `grep` de texto.
 
-### 7. `USAGE.md` está desactualizado en dos puntos
+### 6. `USAGE.md` está desactualizado en dos puntos
 
 - Tipos de entrada: documenta `integer`, `array` y `object`; el motor solo
   acepta `text`, `number`, `boolean`, `json`, `file`
@@ -225,7 +208,7 @@ Por eso `docker/smoke.sh` afirma sobre el campo `status` del JSON y sobre
   `type: integer` no valida.
 - Sub-agentes: el ejemplo usa `agent_file`; la herramienta lee `agent_id`.
 
-### 8. Pendientes de endurecimiento
+### 7. Pendientes de endurecimiento
 
 - CORS es `permissive()` (`engine/src/server/mod.rs`): cualquier origen.
 - La autenticación es una única clave compartida, sin rotación ni multi-tenant.
@@ -239,12 +222,16 @@ Por eso `docker/smoke.sh` afirma sobre el campo `status` del JSON y sobre
 
 En orden de impacto:
 
-1. **Arrancar el scheduler** (brecha 1). Una línea, desbloquea la ejecución 24/7.
-2. **Persistir el registro de agentes** (brecha 3): sin esto, cada reinicio es
-   una pérdida de estado y no hay más de una réplica posible.
-3. **Un subscriber de tracing** (brecha 4): sin logs no hay operación posible.
-4. **Arreglar `logic/condition`** (brecha 5) y la suite que lo tapa (brecha 6).
-5. Imagen `-musl` estática para bajar de ~180 MB a decenas, una vez que el
+1. **Persistir el registro de agentes** (brecha 2): sin esto, cada reinicio es
+   una pérdida de estado y no hay más de una réplica posible. Es lo que más
+   pesa ahora que los agentes live sí ciclan: un reinicio los apaga a todos y
+   nadie los vuelve a lanzar.
+2. **Un subscriber de tracing** (brecha 3): sin logs no hay operación posible.
+   El scheduler ya emite `Cycle started` / `Cycle completed` por `tracing`, así
+   que basta con conectar un subscriber para tener visibilidad de los agentes
+   live.
+3. **Arreglar `logic/condition`** (brecha 4) y la suite que lo tapa (brecha 5).
+4. Imagen `-musl` estática para bajar de ~180 MB a decenas, una vez que el
    catálogo de herramientas que dependen del shell esté acotado.
-6. Publicar la imagen en un registry y clavar el tag del builder
+5. Publicar la imagen en un registry y clavar el tag del builder
    (`ARG RUST_VERSION=1.97` en lugar de `1`) para builds reproducibles.

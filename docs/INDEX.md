@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 50 built-in tools, 7 LLM providers, 712 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.6.0.
+Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 50 built-in tools, 7 LLM providers, 717 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.6.0.
 
 ## 2. Stack
 

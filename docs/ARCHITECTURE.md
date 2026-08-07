@@ -162,7 +162,7 @@ ExecutionContext provides abstract access to resources:
 
 | Type | Tool | Count |
 |---|---|---|
-| Unit + Integration | `cargo test` | 727 tests |
+| Unit + Integration | `cargo test` | 895 tests |
 
 All tests run with `cargo test`. No external services required (SQLite bundled, mocks for LLM in test-only code).
 
@@ -200,7 +200,7 @@ Authentication: `X-API-Key` header (optional, configured via `MIRAI_API_KEY`).
 ## 9. Relation to Ecosystem
 
 ```
-openmirai-engine (open source, MIT)     Mirai Local (free desktop app)
+openmirai-engine (open source, Apache-2.0)     Mirai Local (free desktop app)
 ┌──────────────────────────────┐       ┌─────────────────────────────┐
 │ Graph execution engine        │       │ Implements Engine            │
 │ 50 built-in tools             │◄──────│ Desktop UI for agents        │

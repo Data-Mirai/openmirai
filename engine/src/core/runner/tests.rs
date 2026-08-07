@@ -150,7 +150,7 @@ impl LLMResource for StubLLM {
         _prompt: &str,
         _context: &[serde_json::Value],
         _temperature: f64,
-        _max_tokens: u32,
+        _max_tokens: Option<u32>,
     ) -> Result<crate::core::context::LLMResponse, crate::core::context::ResourceError> {
         unimplemented!("stub")
     }
@@ -244,6 +244,49 @@ async fn linear_graph_executes_all_nodes() {
     assert_eq!(result.trace[2].node_id, "c");
     assert!(result.trace.iter().all(|t| t.status == TraceStatus::Ok));
     assert!(result.error.is_none());
+}
+
+#[tokio::test]
+async fn trace_entries_carry_real_timestamps() {
+    // 0.7.0: cada TraceEntry lleva started_at/finished_at reales (unix epoch),
+    // la base de la trazabilidad persistente y del export OTel fiel.
+    let graph = GraphDef {
+        id: "g-ts".into(),
+        name: "timestamps".into(),
+        version: "1.0.0".into(),
+        nodes: vec![make_node("a", "tool/echo"), make_node("b", "tool/echo")],
+        edges: vec![make_edge("e1", "a", "b")],
+        metadata: HashMap::new(),
+    };
+
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let runner = GraphRunner::new(Box::new(EchoExecutor));
+    let ctx = TestContext::new();
+    let result = runner.run(&graph, &ctx).await.unwrap();
+    let after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+
+    for entry in &result.trace {
+        assert!(
+            entry.started_at >= before - 1.0 && entry.finished_at <= after + 1.0,
+            "timestamps del nodo '{}' fuera de la ventana de ejecución: {} / {}",
+            entry.node_id,
+            entry.started_at,
+            entry.finished_at
+        );
+        assert!(
+            entry.finished_at >= entry.started_at,
+            "finished_at < started_at en '{}'",
+            entry.node_id
+        );
+    }
+    // Orden temporal: b no puede terminar antes de que a empiece.
+    assert!(result.trace[1].finished_at >= result.trace[0].started_at);
 }
 
 #[tokio::test]
@@ -889,6 +932,8 @@ fn serde_roundtrip_trace_entry() {
         status: TraceStatus::Ok,
         duration_ms: 150,
         retries: 0,
+        started_at: 0.0,
+        finished_at: 0.0,
         error: None,
     };
     let json = serde_json::to_string(&entry).unwrap();

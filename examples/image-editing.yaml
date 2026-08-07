@@ -1,0 +1,64 @@
+# Image Editing — AI inpainting on a local image (OpenAI GPT-Image-1)
+#
+# Edits a specific area of an image. The ai/image_edit tool calls the
+# OpenAI Images API directly, so a real key is required even with
+# `--provider mock` (the mock only replaces the LLM, not this API).
+#
+# Run:
+#   OPENAI_API_KEY=sk-... mirai run examples/image-editing.yaml \
+#     --input '{"image_path": "/path/to/photo.png", "prompt": "replace the sky with a sunset"}'
+
+name: image-editing
+version: v1
+description: "Edit a specific area of an image using AI inpainting (OpenAI GPT-Image-1)"
+
+inputs:
+  image_path:
+    type: file
+    required: true
+    description: "Base image to edit (PNG)"
+  mask_path:
+    type: file
+    required: false
+    description: "Mask image (PNG with alpha channel: transparent = area to edit)"
+  prompt:
+    type: text
+    required: true
+    description: "Description of the desired edit"
+
+outputs:
+  result:
+    type: file
+    description: "Edited image (PNG)"
+  revised_prompt:
+    type: text
+    description: "Prompt as revised by OpenAI"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: edit
+      tool_type: ai/image_edit
+      config:
+        model: gpt-image-1
+        size: auto
+        quality: high
+
+    - id: out
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: edit
+      data_map:
+        image_path: "start.payload.image_path"
+        mask_path: "start.payload.mask_path"
+        prompt: "start.payload.prompt"
+
+    - source: edit
+      target: out
+      data_map:
+        result: "edit.result_path"
+        revised_prompt: "edit.revised_prompt"

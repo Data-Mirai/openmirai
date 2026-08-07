@@ -16,7 +16,7 @@ Reglas:
 
 # Test Strategy
 
-OpenMirai implements a **727-test suite** across unit, integration, and system-level tests. No external services are required—all tests run in-process with bundled SQLite and in-memory adapters.
+OpenMirai implements an **895-test suite** across unit, integration, and system-level tests. No external services are required—all tests run in-process with bundled SQLite and in-memory adapters.
 
 ## Running Tests
 
@@ -304,9 +304,9 @@ fn test_llm_factory() -> LLMFactory {
 | Unit (graph, expr, backoff) | ~80 | Sync | All PRs | No async, no I/O |
 | Async (runner, API) | ~70 | Async | All PRs | Tokio runtime, in-memory |
 | Tools & LLM adapters | ~200 | Mixed | All PRs | In-memory or mock |
-| Memory & persistence | ~55 | Sync+Async | All PRs | SQLite bundled, no external |
-| System & cross-cutting | ~300 | Sync+Async | All PRs | SQLite bundled, no external |
-| **Total** | **727** | — | — | **Zero external dependencies** |
+| Memory & persistence | ~65 | Sync+Async | All PRs | SQLite bundled, no external |
+| System & cross-cutting | ~450 | Sync+Async | All PRs | SQLite bundled, no external |
+| **Total** | **895** | — | — | **Zero external dependencies** |
 
 ## CI Pipeline
 
@@ -316,7 +316,7 @@ fn test_llm_factory() -> LLMFactory {
 2. **clippy**: Linter (treat warnings as errors)
 3. **test**: Full `cargo test --workspace --all-features` on Ubuntu & macOS
 
-All 727 tests must pass before merge.
+All 895 tests must pass before merge.
 
 ## Notes
 

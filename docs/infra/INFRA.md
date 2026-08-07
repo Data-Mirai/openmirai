@@ -81,7 +81,7 @@ All CI gates are defined in `.github/workflows/ci.yml` and run on every `push` t
 - Commands:
   - `cargo build --workspace --all-features`
   - `cargo test --workspace --all-features`
-- Purpose: Verify all 727 tests pass on Linux and macOS
+- Purpose: Verify all 895 tests pass on Linux and macOS
 - Failure blocks merge
 
 ### CI Environment
@@ -154,7 +154,7 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-Once the tag is pushed, GitHub Actions automatically builds and publishes the release. Monitor progress at the [Actions](https://github.com/Gabo-TheCreator/openmirai/actions) tab.
+Once the tag is pushed, GitHub Actions automatically builds and publishes the release. Monitor progress at the [Actions](https://github.com/Data-Mirai/openmirai/actions) tab.
 
 ### Version Format
 
@@ -180,7 +180,7 @@ OpenMirai is deployed as a **single self-contained binary** with zero external d
 
 #### 1. CLI Usage (Local)
 
-Download a binary from [GitHub Releases](https://github.com/Gabo-TheCreator/openmirai/releases), verify the SHA256, and run:
+Download a binary from [GitHub Releases](https://github.com/Data-Mirai/openmirai/releases), verify the SHA256, and run:
 
 ```bash
 # macOS (Apple Silicon)
@@ -466,5 +466,5 @@ cargo build --release
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) — Development workflow
 - [RELEASING.md](../../RELEASING.md) — Release process detail
 - [ARCHITECTURE.md](../ARCHITECTURE.md) — System design
-- [GitHub Releases](https://github.com/Gabo-TheCreator/openmirai/releases) — Download binaries
-- [GitHub Actions](https://github.com/Gabo-TheCreator/openmirai/actions) — CI/CD status
+- [GitHub Releases](https://github.com/Data-Mirai/openmirai/releases) — Download binaries
+- [GitHub Actions](https://github.com/Data-Mirai/openmirai/actions) — CI/CD status

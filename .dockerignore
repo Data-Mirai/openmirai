@@ -7,11 +7,15 @@ target
 **/target
 releases
 
-# Docs y SDKs: no entran en la imagen del motor.
+# Docs, SDKs y superficies que no entran en la imagen del motor.
 docs
 sdks
 examples
 test
+showcase
+visualizer
+plan
+tools
 *.md
 !docker/README.md
 

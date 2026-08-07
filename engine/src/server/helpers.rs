@@ -38,7 +38,16 @@ pub(crate) fn build_cycle_callback(
                 td.insert("triggered_by".to_string(), json!("scheduler"));
                 td
             };
-            let result = run_agent_spec_with_memory(&sp, &trigger_data, &s, &aid, is_first).await;
+            // 0.7.0: cada ciclo es un run con su propio session_id.
+            let result = run_agent_spec_with_memory(
+                &sp,
+                &trigger_data,
+                &s,
+                &aid,
+                is_first,
+                &crate::utils::short_id(),
+            )
+            .await;
 
             persist_memory_after_execution(&sp, &aid, &result, &s).await;
 
@@ -57,7 +66,7 @@ pub(crate) fn build_cycle_callback(
 /// back but sit idle, and continuous execution stays broken across restarts.
 /// Returns `(agentes_cargados, agentes_relanzados)`.
 pub async fn restore_from_store(state: &AppState) -> (usize, usize) {
-    let store = match &state.store {
+    let store = match &state.agent_store {
         Some(s) => s,
         None => return (0, 0),
     };
@@ -192,20 +201,25 @@ pub(crate) async fn run_agent_spec(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
+    session_id: &str,
 ) -> ExecutionResult {
-    run_agent_spec_with_memory(spec, trigger_data, state, &spec.name, true).await
+    run_agent_spec_with_memory(spec, trigger_data, state, &spec.name, true, session_id).await
 }
 
 /// Run an agent spec with memory support (PRD-008).
 ///
 /// `agent_id`: used to key the memory store.
 /// `is_first_cycle_of_session`: controls cycle-mode memory behavior.
+/// `session_id`: id del run, generado por el handler ANTES de ejecutar. El
+/// contexto se construye con él para que los eventos, los logs y el registro
+/// persistido hablen del mismo run (antes cada capa inventaba el suyo).
 pub(crate) async fn run_agent_spec_with_memory(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
     agent_id: &str,
     is_first_cycle_of_session: bool,
+    session_id: &str,
 ) -> ExecutionResult {
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
@@ -279,7 +293,8 @@ pub(crate) async fn run_agent_spec_with_memory(
     let llm = (state.llm_factory)();
     let mut ctx_builder = DefaultExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
-        .with_storage(Box::new(InMemoryStorageResource::new()));
+        .with_storage(Box::new(InMemoryStorageResource::new()))
+        .with_session_id(session_id);
     if let Some(ref prompt) = system_prompt {
         ctx_builder = ctx_builder.with_system_prompt(prompt);
     }
@@ -308,12 +323,16 @@ pub(crate) async fn run_agent_spec_with_memory(
 }
 
 /// Internal: run an AgentSpec with real-time streaming via mpsc channel.
+///
+/// Devuelve el `ExecutionResult` final (si el grafo llegó a correr) para que
+/// el caller pueda registrar/persistir el run — los streams también son runs.
 pub(crate) async fn run_agent_spec_streaming(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
+    session_id: &str,
     event_tx: tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>,
-) {
+) -> Option<ExecutionResult> {
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
 
@@ -323,7 +342,7 @@ pub(crate) async fn run_agent_spec_streaming(
                 error: format!("Graph validation failed: {e}"),
             })
             .await;
-        return;
+        return None;
     }
 
     // Same injections as run_agent_spec.
@@ -363,7 +382,8 @@ pub(crate) async fn run_agent_spec_streaming(
     let llm = (state.llm_factory)();
     let mut ctx_builder = DefaultExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
-        .with_storage(Box::new(InMemoryStorageResource::new()));
+        .with_storage(Box::new(InMemoryStorageResource::new()))
+        .with_session_id(session_id);
     if let Some(ref prompt) = system_prompt {
         ctx_builder = ctx_builder.with_system_prompt(prompt);
     }
@@ -373,13 +393,14 @@ pub(crate) async fn run_agent_spec_streaming(
     let streaming_runner = state.runner.clone().with_stream_tx(event_tx.clone());
 
     match streaming_runner.run(&graph, &context).await {
-        Ok(_) => {} // GraphCompleted already sent by runner
+        Ok(result) => Some(result), // GraphCompleted already sent by runner
         Err(e) => {
             let _ = event_tx
                 .send(crate::streaming::StreamEvent::GraphError {
                     error: e.to_string(),
                 })
                 .await;
+            None
         }
     }
     // Channel drops when event_tx is dropped → receiver gets None → stream ends

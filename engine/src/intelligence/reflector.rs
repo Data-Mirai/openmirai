@@ -73,7 +73,7 @@ impl Reflector {
         let batch = Self::build_batch(trace);
         let prompt = Self::build_prompt(batch);
 
-        let response = llm.call("default", &prompt, &[], 0.3, 2048).await?;
+        let response = llm.call("default", &prompt, &[], 0.3, Some(2048)).await?;
 
         Ok(Self::parse_response(&response.response))
     }

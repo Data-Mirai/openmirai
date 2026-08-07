@@ -1,0 +1,124 @@
+# Market Pulse — Brief diario de mercado para trading (scrape -> IA -> archivo)
+#
+# Scrapea una página de mercado, la analiza como un trader (lectura risk-on/
+# risk-off, niveles clave por ticker, cifras citadas) y guarda un brief en
+# Markdown listo para leer antes de la apertura.
+#
+# Flujo: trigger -> data/web_scrape -> ai/llm_call -> filesystem/write_file -> output
+#
+# Run:
+#   mirai run agents/market-pulse.yaml \
+#     --input '{"tickers": "SPX, NDX, BTC, ETH, DXY, US10Y", "source_url": "https://www.investing.com/indices/major-indices"}'
+#
+#   # con ruta de salida propia (p. ej. una por día):
+#   mirai run agents/market-pulse.yaml \
+#     --input '{"tickers": "AAPL, NVDA, TSLA", "source_url": "https://finance.yahoo.com/most-active", "output_path": "reports/2026-07-01-brief.md"}'
+
+name: market-pulse
+version: v1
+description: "Brief diario de mercado para un trader: scrapea, analiza risk-on/risk-off con niveles y guarda un .md"
+
+inputs:
+  tickers:
+    type: text
+    required: true
+    description: "Tickers/activos a enfocar, separados por coma (ej: 'SPX, NDX, BTC, DXY, US10Y')"
+  source_url:
+    type: text
+    required: true
+    description: "URL de la página de mercado a scrapear (índices, cotizaciones, most-active, etc.)"
+  output_path:
+    type: text
+    required: false
+    default: "reports/market-pulse-brief.md"
+    description: "Ruta del brief Markdown a generar (por defecto reports/market-pulse-brief.md)"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    # 1) Trae el HTML/texto de la página de mercado.
+    - id: scrape
+      tool_type: data/web_scrape
+      config:
+        max_content_length: 12000
+        timeout_seconds: 30
+
+    # 2) Analiza como trader: lectura macro + tabla por ticker + niveles, citando cifras.
+    - id: analyze
+      tool_type: ai/llm_call
+      config:
+        system_prompt: |
+          Eres un analista de trading senior (mesa de sell-side). Escribes briefs
+          pre-mercado accionables, en español, secos y directos. Trabajas SOLO con
+          las cifras que aparecen en los datos entregados: si un dato no está, lo
+          declaras "n/d" — JAMÁS inventas precios, niveles ni variaciones (un número
+          inventado le hace perder plata al trader). No das consejo de inversión.
+        prompt: |
+          Con los DATOS DE LA PÁGINA DE MERCADO entregados en el contexto, redacta el
+          BRIEF DIARIO en Markdown para los tickers en `tickers_foco`. Cita SIEMPRE la
+          cifra concreta (precio, variación %, punto) tomada del texto; si algo no está
+          en la página, escribe "n/d". Estructura exacta:
+
+          # Market Pulse — Brief diario
+          *Fecha: usa la que aparezca en la página; si no aparece, escribe "n/d". Fuente: <url o nombre de la página>.*
+
+          ## 1. Lectura del día: RISK-ON / RISK-OFF / MIXTO
+          Una frase con el veredicto en negrita y 2-3 bullets que lo justifiquen citando
+          números (ej: índices al alza, dólar/DXY, tasa 10Y, cripto). Sé explícito con el porqué.
+
+          ## 2. Tablero por activo
+          Tabla Markdown con columnas: | Activo | Último | Var. % día | Nivel clave (sop./res.) | Sesgo |
+          - "Último" y "Var. %": exactos de la página.
+          - "Nivel clave": soporte/resistencia razonable a partir de los datos disponibles
+            (rango del día, cierre previo, máximos/mínimos citados); si no hay base, "n/d".
+          - "Sesgo": Alcista / Bajista / Lateral, coherente con la variación.
+
+          ## 3. Qué vigilar hoy
+          3-5 bullets: niveles gatillo ("si SPX pierde X…"), correlaciones (DXY vs. riesgo,
+          tasas vs. tech) y cualquier catalizador/evento que aparezca en la página.
+
+          ## 4. Riesgos / lo que invalida la lectura
+          2-3 bullets con el escenario que rompería el sesgo anterior.
+
+          ---
+          *No es consejo de inversión. Cifras tomadas de la fuente citada; verifícalas antes de operar.*
+
+          Reglas: devuelve SOLO el Markdown del brief, sin preámbulo ni cierre fuera de la
+          estructura. Prioriza los activos de `tickers_foco`; si alguno no está en la página,
+          inclúyelo en la tabla con "n/d" y anótalo en "Qué vigilar".
+        temperature: 0.3
+        max_tokens: 3000
+
+    # 3) Guarda el brief en reports/.
+    - id: save
+      tool_type: filesystem/write_file
+
+    # 4) Confirma y termina.
+    - id: done
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: scrape
+      data_map:
+        url: "start.payload.source_url"
+
+    - source: scrape
+      target: analyze
+      data_map:
+        pagina_mercado: "scrape.text"
+        tickers_foco: "start.payload.tickers"
+        fuente_url: "start.payload.source_url"
+
+    - source: analyze
+      target: save
+      data_map:
+        content: "analyze.response"
+        path: "start.payload.output_path"
+
+    - source: save
+      target: done
+      data_map:
+        brief_guardado_en: "save.path"

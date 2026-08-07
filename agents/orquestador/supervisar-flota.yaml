@@ -1,0 +1,160 @@
+# Orquestador Mirai — Supervisar flota (vigila sesiones, detecta quien necesita atencion, escala)
+#
+#   heartbeat -> listar (mcp/call -> orquestador: GET /sessions) -> triage_flota (LLM: quien
+#     esta atascado / bloqueado / callado) -> hay_escalacion? (logic/condition)
+#       si -> escalar (logic/human_input: sube la duda/bloqueo a Gabriel  == canal ascendente)
+#       no -> respond directo (todo ok)
+#
+# HONESTIDAD: listar modela GET /sessions (real). El canal ASCENDENTE (escalar a Gabriel)
+# se modela con logic/human_input — el motor lo intercepta como un interrupt que espera
+# respuesta humana. HOY ese "avisar a Gabriel" lo hace la sesion-centro por chat/voz a mano;
+# que el motor dispare el interrupt y lo enrute a la app es la integracion profunda (deck).
+# El disparador es trigger/heartbeat (loop de vigilancia); correrlo periodico requiere el
+# scheduler del motor prendido.
+#
+# Run (one-shot, simulando un tick):
+#   mirai run agents/orquestador/supervisar-flota.yaml --provider gemini --api-key $KEY --input '{}'
+# Validar:
+#   mirai validate agents/orquestador/supervisar-flota.yaml
+
+name: orquestador-supervisar-flota
+version: v1
+description: "Vigila la flota de sesiones: lista los agentes vivos, detecta quien esta bloqueado/callado/en error y escala a Gabriel (canal ascendente) solo lo que lo necesita."
+
+inputs:
+  umbral_min:
+    type: number
+    required: false
+    default: 20
+    description: "Minutos de silencio de una sesion tras los que se considera 'callada' (candidata a revisar)"
+
+outputs:
+  reporte_flota:
+    type: json
+    description: "Estado de la flota: [{agente, estado, necesita_atencion}] + a_escalar"
+  escalado_a_gabriel:
+    type: text
+    description: "Lo que se subio a Gabriel (o 'nada que escalar')"
+
+graph:
+  nodes:
+    # trigger/heartbeat: pensado para correr en loop (cada tick revisa la flota).
+    - id: start
+      tool_type: trigger/heartbeat
+
+    # PASO 1 — LISTAR. Modela GET /api/v1/orchestrator/sessions.
+    - id: listar
+      tool_type: mcp/call
+      config:
+        server_name: mirai-orchestrator
+        tool_name: list_sessions
+
+    # PASO 2 — Triage de la flota: quien necesita atencion.
+    - id: triage_flota
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-pro
+        temperature: 0.2
+        max_tokens: 900
+        system_prompt: |
+          Eres el nodo SUPERVISOR del orquestador Mirai, el que vigila la oficina agentica
+          24/7. Espanol, honesto, sin alarmar de mas. Tu trabajo: mirar la flota y decir
+          quien esta OK y quien necesita atencion humana (bloqueo, duda, error, o callado).
+        prompt: |
+          En el contexto recibes `flota` -> la lista cruda de sesiones vivas (id, estado,
+          ultima actividad) y `umbral_min` -> minutos de silencio para marcar "callada".
+          Para cada sesion decide su `estado` y si `necesita_atencion`. Ademas produce
+          `a_escalar`: el resumen (1-3 bullets) de lo que hay que subir a Gabriel AHORA;
+          si nada lo necesita, pon a_escalar = "" y hay_escalacion = false.
+          Devuelve SOLO el JSON del esquema.
+        output_schema: |
+          {
+            "type": "object",
+            "properties": {
+              "sesiones": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "agente": {"type": "string"},
+                    "estado": {"type": "string"},
+                    "necesita_atencion": {"type": "boolean"}
+                  },
+                  "required": ["agente", "estado", "necesita_atencion"]
+                }
+              },
+              "hay_escalacion": {"type": "boolean"},
+              "a_escalar": {"type": "string"}
+            },
+            "required": ["sesiones", "hay_escalacion", "a_escalar"]
+          }
+        schema_retries: 2
+
+    # PASO 3 — Hay algo que escalar? (condicion sobre hay_escalacion)
+    - id: check_escalacion
+      tool_type: logic/condition
+      config:
+        operator: equals
+        value: true
+
+    # Rama SI — CANAL ASCENDENTE: sube la duda/bloqueo a Gabriel y espera su decision.
+    - id: escalar
+      tool_type: logic/human_input
+      config:
+        prompt: "El orquestador Mirai detecto sesiones que necesitan tu atencion. Revisa y decide."
+        timeout_minutes: 120
+
+    # Rama NO — todo en orden, no molestar a Gabriel.
+    - id: sin_novedad
+      tool_type: ai/llm_call
+      config:
+        model: gemini-2.5-flash-lite
+        temperature: 0.0
+        max_tokens: 120
+        prompt: |
+          La flota esta OK, no hay nada que escalar. Devuelve UNA linea de estado
+          ("Flota estable: N sesiones, nada que escalar") usando el contexto.
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: listar
+
+    - source: listar
+      target: triage_flota
+      data_map:
+        flota: "listar.result"
+        umbral_min: "start.payload.umbral_min"
+
+    - source: triage_flota
+      target: check_escalacion
+      data_map:
+        field: "triage_flota.response.hay_escalacion"
+
+    - source: check_escalacion
+      target: escalar
+      condition:
+        field: result
+        op: equals
+        value: true
+
+    - source: check_escalacion
+      target: sin_novedad
+      condition:
+        field: result
+        op: equals
+        value: false
+
+    - source: escalar
+      target: respond
+      data_map:
+        reporte_flota: "triage_flota.structured_output"
+        escalado_a_gabriel: "escalar.response"
+
+    - source: sin_novedad
+      target: respond
+      data_map:
+        reporte_flota: "triage_flota.structured_output"
+        escalado_a_gabriel: "sin_novedad.response"

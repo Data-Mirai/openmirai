@@ -11,9 +11,10 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
-use crate::db::AgentStore;
+use crate::db::{AgentStore, Repository, SessionRecord, SessionStatus, SqliteSessionRepo};
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
+use crate::sessions::{SessionManager, TmuxBackend};
 use crate::tools::registry::{RegistryExecutor, ToolRegistry};
 /// Shared application state passed to all handlers via axum's `State`.
 ///
@@ -50,39 +51,37 @@ pub struct AppState {
     pub memory_store: AgentMemoryStore,
     /// Background scheduler for live agent cycles (PRD-008).
     pub scheduler: Arc<Scheduler>,
-    /// Durable mirror of the agent registry. `None` keeps the server fully
-    /// in-memory, which is the historical behaviour: agents are lost on restart.
-    pub store: Option<AgentStore>,
+    /// Orchestrated Claude sessions over tmux (PRD-013).
+    ///
+    /// Created with the real [`TmuxBackend`] by default; `serve()` loads and
+    /// reconciles the persistent registry and starts polling. Tests replace
+    /// this field with a manager over a fake backend before building the
+    /// router.
+    pub orchestrator: Arc<SessionManager>,
+    /// Directory served as the static web UI under `/ui` (PRD-013 M6).
+    /// `None` → `/ui` answers 404 with a clear message.
+    pub ui_dir: Option<std::path::PathBuf>,
+    /// Roots scanned for first-level project directories (PRD-013 M7,
+    /// `--projects-dirs a:b:c` or MIRAI_PROJECTS_DIRS). Empty → /projects
+    /// lists session dirs only.
+    pub projects_dirs: Vec<std::path::PathBuf>,
+    /// Native host folder picker (PRD-013 M9). One dialog at a time.
+    pub folder_picker: Arc<crate::sessions::picker::FolderPicker>,
+    /// Persistencia de runs en SQLite (0.7.0). `None` → solo memoria
+    /// (tests / factories sin `serve()`); `serve()` la cablea siempre.
+    pub session_repo: Option<Arc<SqliteSessionRepo>>,
+    /// Registro durable de agentes, sobre la MISMA base que `session_repo`.
+    /// `None` → el registro vive solo en memoria y se pierde al reiniciar,
+    /// dejando además a los agentes live apagados sin quién los relance.
+    pub agent_store: Option<AgentStore>,
 }
 
 impl AppState {
     /// Create app state with a real LLM factory. NO MOCKS.
-    ///
-    /// The agent registry lives only in memory. Use [`AppState::with_store`] to
-    /// mirror it to disk so agents survive a restart.
     pub fn new(
         tool_registry: ToolRegistry,
         llm_factory: LLMFactory,
         api_key: Option<String>,
-    ) -> Self {
-        Self::build(tool_registry, llm_factory, api_key, None)
-    }
-
-    /// Create app state backed by a durable agent registry.
-    pub fn with_store(
-        tool_registry: ToolRegistry,
-        llm_factory: LLMFactory,
-        api_key: Option<String>,
-        store: AgentStore,
-    ) -> Self {
-        Self::build(tool_registry, llm_factory, api_key, Some(store))
-    }
-
-    fn build(
-        tool_registry: ToolRegistry,
-        llm_factory: LLMFactory,
-        api_key: Option<String>,
-        store: Option<AgentStore>,
     ) -> Self {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
@@ -101,30 +100,69 @@ impl AppState {
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             memory_store: AgentMemoryStore::new(),
             scheduler: Arc::new(Scheduler::new()),
-            store,
+            orchestrator: Arc::new(SessionManager::new(
+                Arc::new(TmuxBackend::new()),
+                SessionManager::default_registry_path(),
+            )),
+            ui_dir: None,
+            projects_dirs: Vec::new(),
+            folder_picker: Arc::new(crate::sessions::picker::FolderPicker::new()),
+            session_repo: None,
+            agent_store: None,
         }
     }
 
-    /// Mirror an agent into the durable registry, if there is one.
+    /// Espeja un agente en el registro durable, si está cableado.
     ///
-    /// A storage failure is logged and swallowed on purpose: losing durability
-    /// must not turn a working request into a 500. The agent still lives in the
-    /// in-memory map and the request succeeds.
+    /// Un fallo de escritura se loguea y se traga a propósito: perder
+    /// durabilidad no puede convertir un request que funcionó en un 500. El
+    /// agente sigue vivo en el mapa en memoria y la respuesta sale igual.
     pub async fn persist_agent(&self, id: &str, spec: &AgentSpec) {
-        if let Some(store) = &self.store {
+        if let Some(store) = &self.agent_store {
             if let Err(e) = store.upsert(id, spec).await {
                 tracing::error!(agent_id = %id, error = %e, "cannot persist agent — it will be lost on restart");
             }
         }
     }
 
-    /// Record whether an agent is cycling, so it can be rescheduled on startup.
+    /// Anota si un agente quedó ciclando, para relanzarlo al arrancar.
     pub async fn persist_playing(&self, id: &str, playing: bool) {
-        if let Some(store) = &self.store {
+        if let Some(store) = &self.agent_store {
             if let Err(e) = store.set_playing(id, playing).await {
                 tracing::error!(agent_id = %id, error = %e, "cannot persist playing state");
             }
         }
+    }
+
+    /// Registra una ejecución terminada: cache en memoria (para lecturas
+    /// calientes) + persistencia en SQLite si está cableada. Un fallo de
+    /// persistencia NO tumba el request — se loguea y la respuesta sigue.
+    pub async fn record_session(
+        &self,
+        id: String,
+        agent_id: &str,
+        agent_name: &str,
+        started_at: f64,
+        result: ExecutionResult,
+    ) {
+        if let Some(repo) = &self.session_repo {
+            let finished_at = crate::utils::now_epoch();
+            let rec = SessionRecord {
+                id: id.clone(),
+                agent_id: agent_id.to_string(),
+                agent_name: agent_name.to_string(),
+                graph_id: String::new(),
+                result: result.clone(),
+                created_at: started_at,
+                finished_at: Some(finished_at),
+                duration_ms: Some((finished_at - started_at) * 1000.0),
+                status: SessionStatus::from_execution(&result.status),
+            };
+            if let Err(e) = repo.save(&rec).await {
+                tracing::warn!(session_id = %id, error = %e, "no se pudo persistir el run");
+            }
+        }
+        self.insert_session(id, result).await;
     }
 
     /// Insert a session with FIFO eviction when max_sessions is exceeded.

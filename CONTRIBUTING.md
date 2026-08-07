@@ -5,10 +5,12 @@ Thanks for helping build OpenMirai — the open-source engine for **decentralize
 ## TL;DR
 
 ```bash
-git clone https://github.com/Gabo-TheCreator/openmirai
+# Requires Rust 1.80+ via rustup (https://rustup.rs). Ubuntu's `apt install cargo`
+# is too old — `rustup update stable` then build (the repo pins its toolchain).
+git clone https://github.com/Data-Mirai/openmirai
 cd openmirai
 cargo build --release          # builds engine + cli (binary: ./target/release/mirai)
-cargo test --workspace         # run the full suite (727 tests)
+cargo test --workspace         # run the full suite (895 tests)
 ./target/release/mirai run examples/hello-world.yaml
 ```
 
@@ -41,7 +43,7 @@ docs/          Technical documentation
 - **Docs** — clarity fixes, missing explanations, typos.
 - **Bugs** — repro + fix + a regression test.
 
-Browse [`good first issue`](https://github.com/Gabo-TheCreator/openmirai/labels/good%20first%20issue) and [`help wanted`](https://github.com/Gabo-TheCreator/openmirai/labels/help%20wanted) to find scoped work.
+Browse [`good first issue`](https://github.com/Data-Mirai/openmirai/labels/good%20first%20issue) and [`help wanted`](https://github.com/Data-Mirai/openmirai/labels/help%20wanted) to find scoped work.
 
 ## Workflow
 
@@ -76,4 +78,4 @@ By participating you agree to our [Code of Conduct](CODE_OF_CONDUCT.md). Be resp
 
 ## License
 
-By contributing, you agree your contributions are licensed under the [MIT License](LICENSE).
+By contributing, you agree your contributions are licensed under the [Apache License 2.0](LICENSE).

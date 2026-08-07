@@ -1,69 +1,15 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use regex::Regex;
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{field, FieldType, ToolSpec};
-use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
-
-// ---------------------------------------------------------------------------
-// Macro: simplify boilerplate for struct + factory + spec
-// ---------------------------------------------------------------------------
-
-macro_rules! ai_tool {
-    (
-        struct $tool:ident, factory $factory:ident;
-        tool_type = $tool_type:expr,
-        name = $name:expr,
-        description = $desc:expr,
-        inputs = [ $($input:expr),* $(,)? ],
-        outputs = [ $($output:expr),* $(,)? ],
-        config_fields = [ $($cfg:expr),* $(,)? ]
-    ) => {
-        pub struct $tool;
-
-        pub struct $factory {
-            spec: ToolSpec,
-        }
-
-        impl $factory {
-            pub fn new() -> Self {
-                Self {
-                    spec: ToolSpec {
-                        tool_type: $tool_type.into(),
-                        name: $name.into(),
-                        description: $desc.into(),
-                        version: "1.0.0".into(),
-                        category: "ai".into(),
-                        inputs: vec![$($input),*],
-                        outputs: vec![$($output),*],
-                        config_fields: vec![$($cfg),*],
-                    },
-                }
-            }
-        }
-
-        impl Default for $factory {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl ToolFactory for $factory {
-            fn create(&self) -> Arc<dyn Tool> {
-                Arc::new($tool)
-            }
-            fn spec(&self) -> &ToolSpec {
-                &self.spec
-            }
-        }
-    };
-}
+use crate::tools::base::{field, FieldType};
+use crate::tools::registry::{Tool, ToolRegistry};
 
 // ===========================================================================
 // LlmCallTool
@@ -240,7 +186,7 @@ impl Tool for LlmCallTool {
         let max_tokens = config
             .get("max_tokens")
             .and_then(|v| v.as_u64())
-            .unwrap_or(1024) as u32;
+            .map(|v| v as u32);
 
         // Build context as proper message objects for the LLM adapter.
         let mut context_messages = Vec::new();
@@ -638,7 +584,7 @@ fn validate_response(response: &str, schema: &Value) -> (Option<Value>, Vec<Stri
                 // Check type
                 if let Some(expected_type) = field_schema.get("type").and_then(|t| t.as_str()) {
                     if !check_json_type(value, expected_type) {
-                        let actual_type = json_type_name(value);
+                        let actual_type = value_type_label(value);
                         errors.push(format!(
                             "Field '{}' expected type '{}', got '{}'",
                             field_name, expected_type, actual_type
@@ -676,8 +622,7 @@ fn check_json_type(value: &Value, expected: &str) -> bool {
     }
 }
 
-// json_type_name: use canonical source
-use crate::core::value_type::value_type_label as json_type_name;
+use crate::core::value_type::value_type_label;
 
 /// Build a retry prompt with error feedback.
 fn build_retry_prompt(original_prompt: &str, bad_response: &str, errors: &[String]) -> String {
@@ -710,17 +655,80 @@ ai_tool! {
     struct TranscribeTool, factory TranscribeFactory;
     tool_type = "ai/transcribe",
     name = "Transcribe Audio",
-    description = "Transcribes audio content using an LLM to describe/transcribe the file",
+    description = "Transcribes audio to text. Routes by provider: 'elevenlabs' calls the Scribe STT API; any other value uses the CLI's configured LLM provider (e.g. Gemini) as multimodal transcriber.",
     inputs = [
         field("file_path", FieldType::String, true, "Path to the audio file"),
     ],
     outputs = [
         field("text", FieldType::String, true, "Transcription text"),
-        field("duration_seconds", FieldType::Number, true, "Audio duration in seconds"),
+        field("duration_seconds", FieldType::Number, true, "Audio duration in seconds (0 when unknown)"),
+        field("provider", FieldType::String, true, "Provider used (elevenlabs | LLM provider name)"),
     ],
     config_fields = [
-        field("model", FieldType::String, false, "Model to use for transcription"),
+        field("provider", FieldType::String, false, "STT provider: 'elevenlabs' (Scribe API) or anything else for the LLM multimodal route (default)"),
+        field("model", FieldType::String, false, "Model id (LLM route: LLM model; elevenlabs route: default scribe_v1)"),
+        field("api_key", FieldType::String, false, "ElevenLabs API key (falls back to ELEVENLABS_API_KEY env var)"),
+        field("language", FieldType::String, false, "ISO language code hint, e.g. es (elevenlabs language_code; omit for auto-detect)"),
+        field("base_url", FieldType::String, false, "Override API base URL (elevenlabs route)"),
+        field("timeout", FieldType::Number, false, "Request timeout in seconds for the elevenlabs route (default: 120, max: 3600). Long audio against a local STT server needs more than the default."),
     ]
+}
+
+const SCRIBE_DEFAULT_MODEL: &str = "scribe_v1";
+const SCRIBE_DEFAULT_TIMEOUT_SECS: u64 = 120;
+const SCRIBE_MAX_TIMEOUT_SECS: u64 = 3600;
+
+/// Timeout for the Scribe/HTTP STT route: config/input `timeout` in seconds,
+/// accepting numbers or numeric strings; 0/negative/garbage fall back to the default.
+fn scribe_timeout_secs(value: Option<&Value>) -> u64 {
+    value
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_f64().map(|f| f.max(0.0) as u64))
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+        .filter(|&t| t > 0)
+        .map(|t| t.min(SCRIBE_MAX_TIMEOUT_SECS))
+        .unwrap_or(SCRIBE_DEFAULT_TIMEOUT_SECS)
+}
+
+// --- Pure request builders for the ElevenLabs Scribe route (unit-tested without network) ---
+fn eleven_stt_url(base_url: &str) -> String {
+    format!("{base_url}/v1/speech-to-text")
+}
+fn eleven_stt_text_fields(model: &str, language: Option<&str>) -> Vec<(String, String)> {
+    // tag_audio_events off: conversational STT, no "(laughter)"-style markers in the text.
+    let mut fields = vec![
+        ("model_id".to_string(), model.to_string()),
+        ("tag_audio_events".to_string(), "false".to_string()),
+    ];
+    if let Some(lang) = language {
+        if !lang.is_empty() {
+            fields.push(("language_code".to_string(), lang.to_string()));
+        }
+    }
+    fields
+}
+fn audio_mime_for_path(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "mp3" => "audio/mpeg",
+        "m4a" | "mp4" | "aac" => "audio/mp4",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "webm" => "audio/webm",
+        "flac" => "audio/flac",
+        _ => "application/octet-stream",
+    }
+}
+/// Scribe returns word-level timestamps by default; duration = end of the last word.
+fn scribe_duration_seconds(resp: &Value) -> f64 {
+    resp.get("words")
+        .and_then(|w| w.as_array())
+        .and_then(|a| a.last())
+        .and_then(|w| w.get("end"))
+        .and_then(|e| e.as_f64())
+        .unwrap_or(0.0)
 }
 
 #[async_trait]
@@ -747,10 +755,165 @@ impl Tool for TranscribeTool {
             });
         }
 
-        let model = config
-            .get("model")
+        // Route by provider (input > config): "elevenlabs" -> Scribe STT API;
+        // anything else -> multimodal transcription via the CLI's LLM provider.
+        let get = |k: &str| inputs.get(k).or_else(|| config.get(k));
+        let stt_provider = get("provider")
             .and_then(|v| v.as_str())
-            .unwrap_or("default");
+            .unwrap_or("llm")
+            .to_lowercase();
+
+        if stt_provider == "elevenlabs" {
+            let api_key = get("api_key")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| std::env::var("ELEVENLABS_API_KEY").ok())
+                .ok_or_else(|| ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: "ElevenLabs API key not found. Set config.api_key or ELEVENLABS_API_KEY env var".into(),
+                })?;
+            let base = get("base_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://api.elevenlabs.io")
+                .to_string();
+            let model = get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or(SCRIBE_DEFAULT_MODEL)
+                .to_string();
+            let language = get("language").and_then(|v| v.as_str()).map(String::from);
+            let timeout_secs = scribe_timeout_secs(get("timeout"));
+
+            let bytes =
+                tokio::fs::read(&file_path)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "ai/transcribe".into(),
+                        message: format!("failed to read audio file '{file_path}': {e}"),
+                    })?;
+            if bytes.is_empty() {
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: format!("audio file '{file_path}' is empty"),
+                });
+            }
+            let file_name = std::path::Path::new(&file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("audio")
+                .to_string();
+            let mime = audio_mime_for_path(&file_path);
+            let url = eleven_stt_url(&base);
+            let text_fields = eleven_stt_text_fields(&model, language.as_deref());
+
+            info!(
+                file_path = %file_path,
+                model = %model,
+                bytes = bytes.len(),
+                "ai/transcribe: sending audio to ElevenLabs Scribe"
+            );
+
+            let client = reqwest::Client::new();
+            let max_retries: u32 = 3;
+            let mut last_error = String::new();
+
+            for attempt in 0..=max_retries {
+                // multipart::Form is consumed by the request -> rebuild per attempt.
+                let part = reqwest::multipart::Part::bytes(bytes.clone())
+                    .file_name(file_name.clone())
+                    .mime_str(mime)
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "ai/transcribe".into(),
+                        message: format!("invalid mime type '{mime}': {e}"),
+                    })?;
+                let mut form = reqwest::multipart::Form::new().part("file", part);
+                for (k, v) in &text_fields {
+                    form = form.text(k.clone(), v.clone());
+                }
+
+                let resp = client
+                    .post(&url)
+                    .header("xi-api-key", &api_key)
+                    .timeout(std::time::Duration::from_secs(timeout_secs))
+                    .multipart(form)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        if e.is_timeout() {
+                            ToolError::ExecutionFailed {
+                                tool_type: "ai/transcribe".into(),
+                                message: format!(
+                                    "elevenlabs STT request timed out after {timeout_secs}s"
+                                ),
+                            }
+                        } else {
+                            ToolError::ExecutionFailed {
+                                tool_type: "ai/transcribe".into(),
+                                message: format!("HTTP request failed: {e}"),
+                            }
+                        }
+                    })?;
+
+                let status = resp.status().as_u16();
+
+                if (200..300).contains(&status) {
+                    let body: Value =
+                        resp.json().await.map_err(|e| ToolError::ExecutionFailed {
+                            tool_type: "ai/transcribe".into(),
+                            message: format!("failed to parse Scribe response JSON: {e}"),
+                        })?;
+                    let text = body
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let duration = scribe_duration_seconds(&body);
+
+                    info!(
+                        chars = text.chars().count(),
+                        duration, "ai/transcribe: Scribe transcription ok"
+                    );
+
+                    let mut out = HashMap::new();
+                    out.insert("text".to_string(), json!(text));
+                    out.insert("duration_seconds".to_string(), json!(duration));
+                    out.insert("provider".to_string(), json!("elevenlabs"));
+                    return Ok(out);
+                }
+
+                if matches!(status, 429 | 500 | 502 | 503 | 504) && attempt < max_retries {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    last_error = format!("HTTP {status}: {body_text}");
+                    let delay = 2u64.pow(attempt + 1);
+                    warn!(
+                        status,
+                        attempt = attempt + 1,
+                        delay_secs = delay,
+                        "ai/transcribe: retriable error, backing off"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    continue;
+                }
+
+                let body_text = resp.text().await.unwrap_or_default();
+                let msg = match status {
+                    401 | 403 => {
+                        format!("elevenlabs API key is invalid or unauthorized (HTTP {status})")
+                    }
+                    _ => format!("elevenlabs STT error (HTTP {status}): {body_text}"),
+                };
+                return Err(ToolError::ExecutionFailed {
+                    tool_type: "ai/transcribe".into(),
+                    message: msg,
+                });
+            }
+
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/transcribe".into(),
+                message: format!("elevenlabs STT failed after {max_retries} retries: {last_error}"),
+            });
+        }
+
+        let model = get("model").and_then(|v| v.as_str()).unwrap_or("default");
 
         // PRD-009: Read the audio file and send as multimodal content.
         let provider_name = context.llm().provider_name();
@@ -768,7 +931,7 @@ impl Tool for TranscribeTool {
             "transcribe: read media file, sending as multimodal"
         );
 
-        let prompt = "Transcribe this audio literally and faithfully. Include every word exactly as spoken, including filler words (um, uh, like, etc.), false starts, and repetitions. Do not clean up, correct, or interpret anything. Output only the raw transcription text, no timestamps, no speaker labels, no formatting.";
+        let prompt = "Transcribe this audio faithfully. Include every word exactly as spoken, including filler words (um, uh, like, eh, este, etc.), false starts, and repetitions. Add proper punctuation (periods, commas, question marks, exclamation marks, parentheses, dashes) to reflect the speaker's natural pauses and intonation. Use paragraph breaks for topic changes or long pauses. Do not remove, rephrase, or add any words. Output only the transcription.";
 
         // Pass media via __user_media carrier (bridge attaches it to user prompt).
         let media_json = serde_json::to_value(vec![&media]).unwrap_or(json!([]));
@@ -776,7 +939,7 @@ impl Tool for TranscribeTool {
 
         let result = context
             .llm()
-            .call(model, prompt, &context_messages, 0.0, 4096)
+            .call(model, prompt, &context_messages, 0.0, None)
             .await
             .map_err(|e| ToolError::ExecutionFailed {
                 tool_type: "ai/transcribe".into(),
@@ -786,6 +949,7 @@ impl Tool for TranscribeTool {
         let mut out = HashMap::new();
         out.insert("text".to_string(), json!(result.response));
         out.insert("duration_seconds".to_string(), json!(0.0));
+        out.insert("provider".to_string(), json!(provider_name));
         Ok(out)
     }
 }
@@ -1012,6 +1176,581 @@ fn detect_claude_cli() -> Result<String, String> {
     )
 }
 
+// ===========================================================================
+// ImageEditTool — PRD-017
+// ===========================================================================
+
+ai_tool! {
+    struct ImageEditTool, factory ImageEditFactory;
+    tool_type = "ai/image_edit",
+    name = "Image Edit",
+    description = "Edit an image using AI inpainting via OpenAI GPT-Image-1. Send an image, an optional mask marking the area to edit (PNG with alpha channel), and a text prompt describing the desired change.",
+    inputs = [
+        field("image_path", FieldType::String, false, "Path or FileRef of the base image (PNG)"),
+        field("mask_path", FieldType::String, false, "Path or FileRef of the mask (PNG with alpha: transparent = area to edit)"),
+        field("prompt", FieldType::String, false, "Description of the desired edit"),
+    ],
+    outputs = [
+        field("result_path", FieldType::Object, true, "FileRef of the edited image (PNG in scratch dir)"),
+        field("revised_prompt", FieldType::String, false, "Prompt as revised by OpenAI, if different"),
+        field("model", FieldType::String, true, "Model used for generation"),
+        field("size", FieldType::String, true, "Size of the generated image"),
+        field("created", FieldType::Number, true, "Unix timestamp of creation"),
+    ],
+    config_fields = [
+        field("image_path", FieldType::String, false, "Image path (fallback if not in inputs)"),
+        field("mask_path", FieldType::String, false, "Mask path (fallback if not in inputs)"),
+        field("prompt", FieldType::String, false, "Prompt (fallback if not in inputs)"),
+        field("model", FieldType::String, false, "OpenAI model: gpt-image-1 (default) or dall-e-2"),
+        field("size", FieldType::String, false, "Output size: 1024x1024, 1536x1024, 1024x1536, auto (default)"),
+        field("quality", FieldType::String, false, "Quality (gpt-image-1 only): low, medium, high (default)"),
+        field("n", FieldType::Number, false, "Number of images to generate (default 1)"),
+        field("api_key", FieldType::String, false, "OpenAI API key (falls back to OPENAI_API_KEY env var)"),
+        field("base_url", FieldType::String, false, "API base URL (default https://api.openai.com)"),
+    ]
+}
+
+#[async_trait]
+impl Tool for ImageEditTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        // --- 1. Resolve inputs (input > config) ---
+        let image_raw = inputs
+            .get("image_path")
+            .or_else(|| config.get("image_path"))
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "input 'image_path' is required (via input or config)".into(),
+            })?;
+        let image_path = crate::llm::media::resolve_file_input(image_raw);
+        if image_path.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "input 'image_path' is required (via input or config)".into(),
+            });
+        }
+
+        let mask_raw = inputs.get("mask_path").or_else(|| config.get("mask_path"));
+        let mask_path = mask_raw.map(crate::llm::media::resolve_file_input);
+
+        let prompt = inputs
+            .get("prompt")
+            .or_else(|| config.get("prompt"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if prompt.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "input 'prompt' is required (via input or config)".into(),
+            });
+        }
+
+        // --- 2. Resolve config ---
+        let api_key = config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: "OpenAI API key not found. Set config.api_key or OPENAI_API_KEY env var"
+                    .into(),
+            })?;
+
+        let model = config
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("gpt-image-1");
+        let size = config
+            .get("size")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto");
+        let quality = config
+            .get("quality")
+            .and_then(|v| v.as_str())
+            .unwrap_or("high");
+        let n = config.get("n").and_then(|v| v.as_u64()).unwrap_or(1);
+        let base_url = config
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("https://api.openai.com");
+
+        // --- 3. Read files ---
+        let image_bytes =
+            tokio::fs::read(&image_path)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/image_edit".into(),
+                    message: format!("failed to read image file: {image_path}: {e}"),
+                })?;
+
+        let mask_bytes = match &mask_path {
+            Some(p) if !p.is_empty() => {
+                Some(
+                    tokio::fs::read(p)
+                        .await
+                        .map_err(|e| ToolError::ExecutionFailed {
+                            tool_type: "ai/image_edit".into(),
+                            message: format!("failed to read mask file: {p}: {e}"),
+                        })?,
+                )
+            }
+            _ => None,
+        };
+
+        // --- 4. Build multipart form ---
+        let url = format!("{base_url}/v1/images/edits");
+        let client = reqwest::Client::new();
+        let max_retries: u32 = 3;
+        let mut last_error = String::new();
+
+        for attempt in 0..=max_retries {
+            let image_part = reqwest::multipart::Part::bytes(image_bytes.clone())
+                .file_name("image.png")
+                .mime_str("image/png")
+                .unwrap();
+
+            let mut form = reqwest::multipart::Form::new()
+                .part("image", image_part)
+                .text("prompt", prompt.clone())
+                .text("model", model.to_string())
+                .text("n", n.to_string());
+
+            if let Some(ref mb) = mask_bytes {
+                let mask_part = reqwest::multipart::Part::bytes(mb.clone())
+                    .file_name("mask.png")
+                    .mime_str("image/png")
+                    .unwrap();
+                form = form.part("mask", mask_part);
+            }
+
+            if model == "gpt-image-1" {
+                form = form.text("size", size.to_string());
+                form = form.text("quality", quality.to_string());
+            }
+
+            // --- 5. POST to OpenAI ---
+            let resp = client
+                .post(&url)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .multipart(form)
+                .timeout(std::time::Duration::from_secs(120))
+                .send()
+                .await
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        ToolError::ExecutionFailed {
+                            tool_type: "ai/image_edit".into(),
+                            message: "OpenAI request timed out after 120s".into(),
+                        }
+                    } else {
+                        ToolError::ExecutionFailed {
+                            tool_type: "ai/image_edit".into(),
+                            message: format!("HTTP request failed: {e}"),
+                        }
+                    }
+                })?;
+
+            let status = resp.status().as_u16();
+
+            // --- 6. Handle response ---
+            if status == 200 {
+                let body: Value = resp.json().await.map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/image_edit".into(),
+                    message: format!("failed to parse OpenAI response: {e}"),
+                })?;
+
+                let b64 = body
+                    .pointer("/data/0/b64_json")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ToolError::ExecutionFailed {
+                        tool_type: "ai/image_edit".into(),
+                        message: "unexpected OpenAI response format: missing data[0].b64_json"
+                            .into(),
+                    })?;
+
+                let revised = body
+                    .pointer("/data/0/revised_prompt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let created_ts = body.get("created").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                let decoded = STANDARD
+                    .decode(b64)
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        tool_type: "ai/image_edit".into(),
+                        message: format!("failed to decode base64 image: {e}"),
+                    })?;
+
+                // --- 7. Save to scratch dir (fallback to /tmp) ---
+                let scratch = context.scratch_dir().unwrap_or("/tmp");
+
+                let file_id = uuid::Uuid::new_v4();
+                let out_path = format!("{scratch}/image_edit_{file_id}.png");
+                tokio::fs::write(&out_path, &decoded).await.map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/image_edit".into(),
+                        message: format!("failed to save generated image: {e}"),
+                    }
+                })?;
+
+                info!(
+                    path = %out_path,
+                    model = %model,
+                    size = %size,
+                    revised_prompt_len = revised.len(),
+                    "ai/image_edit: saved result"
+                );
+
+                // --- 8. Build output ---
+                let file_ref = crate::llm::media::create_file_ref(&out_path, None)
+                    .unwrap_or_else(|| json!(out_path));
+
+                let mut out = HashMap::new();
+                out.insert("result_path".to_string(), file_ref);
+                out.insert("revised_prompt".to_string(), json!(revised));
+                out.insert("model".to_string(), json!(model));
+                out.insert("size".to_string(), json!(size));
+                out.insert("created".to_string(), json!(created_ts));
+                return Ok(out);
+            }
+
+            // --- Retriable errors ---
+            if matches!(status, 429 | 500 | 502 | 503 | 504) && attempt < max_retries {
+                let body_text = resp.text().await.unwrap_or_default();
+                last_error = format!("HTTP {status}: {body_text}");
+                let delay = 2u64.pow(attempt + 1);
+                warn!(
+                    status,
+                    attempt = attempt + 1,
+                    delay_secs = delay,
+                    "ai/image_edit: retriable error, backing off"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
+            }
+
+            // --- Non-retriable errors ---
+            let body_text = resp.text().await.unwrap_or_default();
+            let error_msg = serde_json::from_str::<Value>(&body_text)
+                .ok()
+                .and_then(|v| {
+                    v.pointer("/error/message")
+                        .and_then(|m| m.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or(body_text.clone());
+
+            let msg = match status {
+                400 if error_msg.contains("safety") || error_msg.contains("policy") => {
+                    format!("OpenAI content policy violation: {error_msg}")
+                }
+                400 => format!("OpenAI rejected the request: {error_msg}"),
+                401 => "OpenAI API key is invalid or expired".into(),
+                _ => format!("OpenAI error (HTTP {status}): {error_msg}"),
+            };
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/image_edit".into(),
+                message: msg,
+            });
+        }
+
+        // All retries exhausted
+        Err(ToolError::ExecutionFailed {
+            tool_type: "ai/image_edit".into(),
+            message: format!("OpenAI error after {max_retries} retries: {last_error}"),
+        })
+    }
+}
+
+// ===========================================================================
+// TtsTool — text-to-speech via ElevenLabs or Cartesia (returns MP3 path)
+// ===========================================================================
+
+ai_tool! {
+    struct TtsTool, factory TtsFactory;
+    tool_type = "ai/tts",
+    name = "Text to Speech",
+    description = "Synthesize natural speech (MP3) from text via ElevenLabs or Cartesia Sonic. Returns the path to the generated audio file. Provider is selected by config.provider.",
+    inputs = [
+        field("text", FieldType::String, true, "Text to synthesize into speech"),
+    ],
+    outputs = [
+        field("audio_path", FieldType::Object, true, "FileRef of the generated MP3 in the scratch dir"),
+        field("provider", FieldType::String, true, "TTS provider used (elevenlabs | cartesia)"),
+        field("format", FieldType::String, true, "Audio format (mp3)"),
+        field("characters", FieldType::Number, true, "Number of characters synthesized"),
+    ],
+    config_fields = [
+        field("provider", FieldType::String, false, "TTS provider: elevenlabs (default) or cartesia"),
+        field("voice_id", FieldType::String, false, "Voice id. ElevenLabs: goes in URL path. Cartesia: goes in body. Falls back to a provider default."),
+        field("model", FieldType::String, false, "Model id (default: eleven_flash_v2_5 / sonic-3.5)"),
+        field("api_key", FieldType::String, false, "API key (falls back to ELEVENLABS_API_KEY / CARTESIA_API_KEY env var)"),
+        field("language", FieldType::String, false, "ISO language code, e.g. es (Cartesia; optional)"),
+        field("stability", FieldType::Number, false, "ElevenLabs voice stability 0-1 (default 0.5)"),
+        field("similarity_boost", FieldType::Number, false, "ElevenLabs similarity 0-1 (default 0.75)"),
+        field("style", FieldType::Number, false, "ElevenLabs style exaggeration 0-1 (default 0.0)"),
+        field("speed", FieldType::Number, false, "Speaking speed (Cartesia generation_config.speed, 0.6-1.5)"),
+        field("base_url", FieldType::String, false, "Override API base URL"),
+    ]
+}
+
+const ELEVEN_DEFAULT_VOICE: &str = "21m00Tcm4TlvDq8ikWAM"; // Rachel (ElevenLabs default library voice)
+const CARTESIA_DEFAULT_VOICE: &str = "a0e99841-438c-4a64-b679-ae501e7d6091";
+const CARTESIA_VERSION: &str = "2026-03-01";
+
+// --- Pure request builders (unit-tested without network) ---
+fn eleven_tts_url(base_url: &str, voice_id: &str) -> String {
+    format!("{base_url}/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128")
+}
+fn eleven_tts_body(
+    text: &str,
+    model: &str,
+    stability: f64,
+    similarity: f64,
+    style: f64,
+    language: Option<&str>,
+) -> Value {
+    let mut body = json!({
+        "text": text,
+        "model_id": model,
+        "voice_settings": {
+            "stability": stability,
+            "similarity_boost": similarity,
+            "style": style,
+            "use_speaker_boost": true
+        }
+    });
+    // language_code fuerza el idioma para pronunciacion correcta (soportado en flash/turbo v2.5).
+    if let Some(lang) = language {
+        if !lang.is_empty() {
+            body["language_code"] = json!(lang);
+        }
+    }
+    body
+}
+fn cartesia_tts_body(
+    text: &str,
+    model: &str,
+    voice_id: &str,
+    language: Option<&str>,
+    speed: Option<f64>,
+) -> Value {
+    let mut body = json!({
+        "model_id": model,
+        "transcript": text,
+        "voice": { "mode": "id", "id": voice_id },
+        "output_format": { "container": "mp3", "sample_rate": 44100, "bit_rate": 128000 }
+    });
+    if let Some(lang) = language {
+        body["language"] = json!(lang);
+    }
+    if let Some(sp) = speed {
+        body["generation_config"] = json!({ "speed": sp });
+    }
+    body
+}
+
+#[async_trait]
+impl Tool for TtsTool {
+    async fn execute(
+        &self,
+        inputs: HashMap<String, Value>,
+        config: &HashMap<String, Value>,
+        context: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        // --- Resolve text (input > config) ---
+        let text = inputs
+            .get("text")
+            .or_else(|| config.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/tts".into(),
+                message: "input 'text' is required (via input or config)".into(),
+            });
+        }
+
+        // Resolve runtime params from inputs first, then node config (input > config),
+        // so the client can parameterize the call via --input.
+        let get = |k: &str| inputs.get(k).or_else(|| config.get(k));
+
+        // Provider from input (or node config) — the client picks elevenlabs | cartesia per call.
+        let provider = get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("elevenlabs")
+            .to_lowercase();
+
+        // --- Build the provider-specific request (url, headers, json body) ---
+        let (url, headers, body): (String, Vec<(String, String)>, Value) = match provider.as_str() {
+            "cartesia" => {
+                let api_key = get("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| std::env::var("CARTESIA_API_KEY").ok())
+                    .ok_or_else(|| ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: "Cartesia API key not found. Set config.api_key or CARTESIA_API_KEY env var".into(),
+                    })?;
+                let base = get("base_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("https://api.cartesia.ai");
+                let voice = get("voice_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(CARTESIA_DEFAULT_VOICE);
+                let model = get("model").and_then(|v| v.as_str()).unwrap_or("sonic-3.5");
+                let language = get("language").and_then(|v| v.as_str());
+                let speed = get("speed").and_then(|v| v.as_f64());
+                let body = cartesia_tts_body(&text, model, voice, language, speed);
+                let headers = vec![
+                    ("X-API-Key".to_string(), api_key),
+                    ("Cartesia-Version".to_string(), CARTESIA_VERSION.to_string()),
+                ];
+                (format!("{base}/tts/bytes"), headers, body)
+            }
+            // elevenlabs (default for anything not explicitly "cartesia")
+            _ => {
+                let api_key = get("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| std::env::var("ELEVENLABS_API_KEY").ok())
+                    .ok_or_else(|| ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: "ElevenLabs API key not found. Set config.api_key or ELEVENLABS_API_KEY env var".into(),
+                    })?;
+                let base = get("base_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("https://api.elevenlabs.io");
+                let voice = get("voice_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(ELEVEN_DEFAULT_VOICE);
+                let model = get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("eleven_flash_v2_5");
+                let stability = get("stability").and_then(|v| v.as_f64()).unwrap_or(0.5);
+                let similarity = get("similarity_boost")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.75);
+                let style = get("style").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let language = get("language").and_then(|v| v.as_str());
+                let body = eleven_tts_body(&text, model, stability, similarity, style, language);
+                let headers = vec![
+                    ("xi-api-key".to_string(), api_key),
+                    ("Accept".to_string(), "audio/mpeg".to_string()),
+                ];
+                (eleven_tts_url(base, voice), headers, body)
+            }
+        };
+
+        let scratch = context.scratch_dir().unwrap_or("/tmp");
+        let out_path = format!("{scratch}/tts_{}.mp3", uuid::Uuid::new_v4());
+
+        let client = reqwest::Client::new();
+        let max_retries: u32 = 3;
+        let mut last_error = String::new();
+
+        for attempt in 0..=max_retries {
+            let mut req = client
+                .post(&url)
+                .timeout(std::time::Duration::from_secs(120))
+                .json(&body);
+            for (k, v) in &headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
+
+            let resp = req.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("{provider} TTS request timed out after 120s"),
+                    }
+                } else {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("HTTP request failed: {e}"),
+                    }
+                }
+            })?;
+
+            let status = resp.status().as_u16();
+
+            if (200..300).contains(&status) {
+                let bytes = resp.bytes().await.map_err(|e| ToolError::ExecutionFailed {
+                    tool_type: "ai/tts".into(),
+                    message: format!("failed to read audio bytes: {e}"),
+                })?;
+                if bytes.is_empty() {
+                    return Err(ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("{provider} returned empty audio"),
+                    });
+                }
+                tokio::fs::write(&out_path, &bytes).await.map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        tool_type: "ai/tts".into(),
+                        message: format!("failed to save audio: {e}"),
+                    }
+                })?;
+
+                info!(path = %out_path, provider = %provider, bytes = bytes.len(), "ai/tts: saved audio");
+
+                let file_ref = crate::llm::media::create_file_ref(&out_path, None)
+                    .unwrap_or_else(|| json!(out_path));
+
+                let mut out = HashMap::new();
+                out.insert("audio_path".to_string(), file_ref);
+                out.insert("provider".to_string(), json!(provider));
+                out.insert("format".to_string(), json!("mp3"));
+                out.insert("characters".to_string(), json!(text.chars().count()));
+                return Ok(out);
+            }
+
+            // Retriable errors
+            if matches!(status, 429 | 500 | 502 | 503 | 504) && attempt < max_retries {
+                let body_text = resp.text().await.unwrap_or_default();
+                last_error = format!("HTTP {status}: {body_text}");
+                let delay = 2u64.pow(attempt + 1);
+                warn!(
+                    status,
+                    attempt = attempt + 1,
+                    delay_secs = delay,
+                    "ai/tts: retriable error, backing off"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
+            }
+
+            // Non-retriable
+            let body_text = resp.text().await.unwrap_or_default();
+            let msg = match status {
+                401 | 403 => {
+                    format!("{provider} API key is invalid or unauthorized (HTTP {status})")
+                }
+                _ => format!("{provider} TTS error (HTTP {status}): {body_text}"),
+            };
+            return Err(ToolError::ExecutionFailed {
+                tool_type: "ai/tts".into(),
+                message: msg,
+            });
+        }
+
+        Err(ToolError::ExecutionFailed {
+            tool_type: "ai/tts".into(),
+            message: format!("{provider} TTS failed after {max_retries} retries: {last_error}"),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -1022,6 +1761,8 @@ pub fn register_ai_tools(registry: &mut ToolRegistry) {
     registry.register("ai/embeddings", Box::new(EmbeddingsFactory::new()));
     registry.register("ai/transcribe", Box::new(TranscribeFactory::new()));
     registry.register("ai/claude_code", Box::new(ClaudeCodeFactory::new()));
+    registry.register("ai/image_edit", Box::new(ImageEditFactory::new()));
+    registry.register("ai/tts", Box::new(TtsFactory::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,13 +1994,150 @@ mod tests {
     // -- Registration ---------------------------------------------------------
 
     #[test]
-    fn register_ai_tools_adds_four() {
+    fn register_ai_tools_adds_six() {
         let mut reg = ToolRegistry::new();
         register_ai_tools(&mut reg);
         assert!(reg.get("ai/llm_call").is_some());
         assert!(reg.get("ai/embeddings").is_some());
         assert!(reg.get("ai/transcribe").is_some());
         assert!(reg.get("ai/claude_code").is_some());
-        assert_eq!(reg.list_tools().len(), 4);
+        assert!(reg.get("ai/image_edit").is_some());
+        assert!(reg.get("ai/tts").is_some());
+        assert_eq!(reg.list_tools().len(), 6);
+    }
+
+    // -- ai/tts request builders ----------------------------------------------
+
+    #[test]
+    fn eleven_url_has_voice_and_mp3() {
+        let u = eleven_tts_url("https://api.elevenlabs.io", "abc123");
+        assert!(u.contains("/v1/text-to-speech/abc123"));
+        assert!(u.contains("output_format=mp3_44100_128"));
+    }
+
+    #[test]
+    fn eleven_body_shape() {
+        let b = eleven_tts_body("hola", "eleven_flash_v2_5", 0.5, 0.75, 0.1, None);
+        assert_eq!(b["text"], "hola");
+        assert_eq!(b["model_id"], "eleven_flash_v2_5");
+        assert_eq!(b["voice_settings"]["stability"], 0.5);
+        assert_eq!(b["voice_settings"]["similarity_boost"], 0.75);
+        assert_eq!(b["voice_settings"]["use_speaker_boost"], true);
+        assert!(b.get("language_code").is_none());
+    }
+
+    #[test]
+    fn eleven_body_includes_language() {
+        let b = eleven_tts_body("hello", "eleven_flash_v2_5", 0.5, 0.75, 0.0, Some("en"));
+        assert_eq!(b["language_code"], "en");
+        let b2 = eleven_tts_body("hi", "eleven_flash_v2_5", 0.5, 0.75, 0.0, Some(""));
+        assert!(b2.get("language_code").is_none());
+    }
+
+    #[test]
+    fn cartesia_body_shape() {
+        let b = cartesia_tts_body("hola", "sonic-3.5", "voice-xyz", Some("es"), Some(1.0));
+        assert_eq!(b["model_id"], "sonic-3.5");
+        assert_eq!(b["transcript"], "hola");
+        assert_eq!(b["voice"]["mode"], "id");
+        assert_eq!(b["voice"]["id"], "voice-xyz");
+        assert_eq!(b["output_format"]["container"], "mp3");
+        assert_eq!(b["output_format"]["sample_rate"], 44100);
+        assert_eq!(b["language"], "es");
+        assert_eq!(b["generation_config"]["speed"], 1.0);
+    }
+
+    #[test]
+    fn cartesia_body_omits_optional() {
+        let b = cartesia_tts_body("hi", "sonic-3.5", "v", None, None);
+        assert!(b.get("language").is_none());
+        assert!(b.get("generation_config").is_none());
+    }
+
+    // -- ai/transcribe (ElevenLabs Scribe route) --------------------------------
+
+    #[test]
+    fn scribe_url_format() {
+        assert_eq!(
+            eleven_stt_url("https://api.elevenlabs.io"),
+            "https://api.elevenlabs.io/v1/speech-to-text"
+        );
+    }
+
+    #[test]
+    fn scribe_fields_default_and_language() {
+        let f = eleven_stt_text_fields(SCRIBE_DEFAULT_MODEL, None);
+        assert!(f.contains(&("model_id".to_string(), "scribe_v1".to_string())));
+        assert!(f.contains(&("tag_audio_events".to_string(), "false".to_string())));
+        assert!(!f.iter().any(|(k, _)| k == "language_code"));
+
+        let f = eleven_stt_text_fields("scribe_v2", Some("es"));
+        assert!(f.contains(&("model_id".to_string(), "scribe_v2".to_string())));
+        assert!(f.contains(&("language_code".to_string(), "es".to_string())));
+
+        let f = eleven_stt_text_fields("scribe_v1", Some(""));
+        assert!(!f.iter().any(|(k, _)| k == "language_code"));
+    }
+
+    #[test]
+    fn scribe_audio_mime_mapping() {
+        assert_eq!(audio_mime_for_path("/tmp/a.m4a"), "audio/mp4");
+        assert_eq!(audio_mime_for_path("/tmp/a.WAV"), "audio/wav");
+        assert_eq!(audio_mime_for_path("/tmp/a.mp3"), "audio/mpeg");
+        assert_eq!(audio_mime_for_path("/tmp/a.webm"), "audio/webm");
+        assert_eq!(
+            audio_mime_for_path("/tmp/noext"),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn scribe_duration_from_last_word() {
+        let body = json!({
+            "text": "hola mundo",
+            "words": [
+                { "text": "hola", "start": 0.1, "end": 0.5, "type": "word" },
+                { "text": " ", "start": 0.5, "end": 0.6, "type": "spacing" },
+                { "text": "mundo", "start": 0.6, "end": 1.2, "type": "word" }
+            ]
+        });
+        assert!((scribe_duration_seconds(&body) - 1.2).abs() < 1e-9);
+        assert_eq!(scribe_duration_seconds(&json!({ "text": "x" })), 0.0);
+        assert_eq!(
+            scribe_duration_seconds(&json!({ "text": "x", "words": [] })),
+            0.0
+        );
+    }
+
+    #[test]
+    fn scribe_timeout_default_and_overrides() {
+        // Sin valor -> default 120s (comportamiento previo intacto).
+        assert_eq!(scribe_timeout_secs(None), SCRIBE_DEFAULT_TIMEOUT_SECS);
+        // Numero y string numerico (YAML puede traer ambos).
+        assert_eq!(scribe_timeout_secs(Some(&json!(900))), 900);
+        assert_eq!(scribe_timeout_secs(Some(&json!(900.0))), 900);
+        assert_eq!(scribe_timeout_secs(Some(&json!("900"))), 900);
+        // Cap superior.
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(999_999))),
+            SCRIBE_MAX_TIMEOUT_SECS
+        );
+        // Basura / cero / negativo -> default, nunca panic.
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(0))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
+        );
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(-5))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
+        );
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!("abc"))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
+        );
+        assert_eq!(
+            scribe_timeout_secs(Some(&json!(null))),
+            SCRIBE_DEFAULT_TIMEOUT_SECS
+        );
     }
 }

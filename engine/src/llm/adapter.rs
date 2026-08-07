@@ -97,6 +97,12 @@ pub enum LLMError {
 
     #[error("Parse error: {0}")]
     ParseError(String),
+
+    /// PRD-018: the provider stopped generating because the output hit the
+    /// token limit (`finishReason == MAX_TOKENS`). Partial text is NEVER
+    /// returned as success — a silent cut is the worst product failure.
+    #[error("Generation truncated by token limit: {0}")]
+    Truncated(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +152,7 @@ pub trait LLMAdapter: Send + Sync {
         prompt: &str,
         context: Option<&str>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError>;
 
     /// Send a full conversation with optional tool definitions.
@@ -161,7 +167,7 @@ pub trait LLMAdapter: Send + Sync {
         messages: Vec<Message>,
         tools: Option<Vec<Value>>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError>;
 
     /// Send a full conversation via streaming, calling `on_token` for each
@@ -175,7 +181,7 @@ pub trait LLMAdapter: Send + Sync {
         messages: Vec<Message>,
         tools: Option<Vec<Value>>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
         on_token: Option<&OnTokenFn>,
     ) -> Result<NormalizedResponse, LLMError> {
         // Suppress unused-variable warning for providers that don't stream.
@@ -212,7 +218,7 @@ mod tests {
             _prompt: &str,
             _context: Option<&str>,
             _temperature: f32,
-            _max_tokens: u32,
+            _max_tokens: Option<u32>,
         ) -> Result<NormalizedResponse, LLMError> {
             unimplemented!("not needed for this test")
         }
@@ -223,7 +229,7 @@ mod tests {
             _messages: Vec<Message>,
             _tools: Option<Vec<Value>>,
             _temperature: f32,
-            _max_tokens: u32,
+            _max_tokens: Option<u32>,
         ) -> Result<NormalizedResponse, LLMError> {
             Ok(NormalizedResponse {
                 response: "fallback_response".to_string(),
@@ -254,7 +260,7 @@ mod tests {
         }];
 
         let result = adapter
-            .stream_with_messages("test-model", messages, None, 0.7, 100, None)
+            .stream_with_messages("test-model", messages, None, 0.7, Some(100), None)
             .await
             .unwrap();
 

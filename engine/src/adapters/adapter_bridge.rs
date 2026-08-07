@@ -52,7 +52,7 @@ impl LLMResource for AdapterBridgeLLMResource {
         prompt: &str,
         context: &[Value],
         temperature: f64,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<LLMResponse, ResourceError> {
         let model = if model.is_empty() {
             &self.default_model
@@ -229,7 +229,7 @@ mod tests {
             _prompt: &str,
             _context: Option<&str>,
             _temperature: f32,
-            _max_tokens: u32,
+            _max_tokens: Option<u32>,
         ) -> Result<NormalizedResponse, LLMError> {
             unimplemented!()
         }
@@ -240,7 +240,7 @@ mod tests {
             messages: Vec<Message>,
             _tools: Option<Vec<Value>>,
             _temperature: f32,
-            _max_tokens: u32,
+            _max_tokens: Option<u32>,
         ) -> Result<NormalizedResponse, LLMError> {
             let last_msg = messages
                 .last()
@@ -268,7 +268,7 @@ mod tests {
         let bridge = AdapterBridgeLLMResource::new(Box::new(FakeAdapter), "test-model");
         let context = vec![json!({"role": "system", "content": "You are helpful."})];
         let result = bridge
-            .call("test-model", "hello", &context, 0.7, 100)
+            .call("test-model", "hello", &context, 0.7, Some(100))
             .await
             .unwrap();
         assert_eq!(result.response, "echo: hello");
@@ -279,7 +279,7 @@ mod tests {
     #[tokio::test]
     async fn bridge_uses_default_model_when_empty() {
         let bridge = AdapterBridgeLLMResource::new(Box::new(FakeAdapter), "my-default");
-        let result = bridge.call("", "test", &[], 0.5, 50).await.unwrap();
+        let result = bridge.call("", "test", &[], 0.5, Some(50)).await.unwrap();
         assert_eq!(result.model, "my-default");
     }
 

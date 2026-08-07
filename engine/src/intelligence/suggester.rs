@@ -58,7 +58,7 @@ impl Suggester {
 
         let prompt = Self::build_prompt(graph, trace);
 
-        let response = llm.call("default", &prompt, &[], 0.4, 2048).await?;
+        let response = llm.call("default", &prompt, &[], 0.4, Some(2048)).await?;
 
         Ok(Self::parse_suggestions(&response.response))
     }

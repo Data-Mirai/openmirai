@@ -193,7 +193,7 @@ impl LLMAdapter for OllamaAdapter {
         prompt: &str,
         context: Option<&str>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let mut messages: Vec<Value> = Vec::new();
         if let Some(ctx) = context {
@@ -201,15 +201,17 @@ impl LLMAdapter for OllamaAdapter {
         }
         messages.push(json!({ "role": "user", "content": prompt }));
 
-        let payload = json!({
+        let mut payload = json!({
             "model": model,
             "messages": messages,
             "stream": false,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
             },
         });
+        if let Some(max) = max_tokens {
+            payload["options"]["num_predict"] = json!(max);
+        }
 
         let url = format!("{}/api/chat", self.base_url);
         let resp = self
@@ -268,7 +270,7 @@ impl LLMAdapter for OllamaAdapter {
         messages: Vec<Message>,
         tools: Option<Vec<Value>>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let ollama_messages = Self::convert_messages_for_ollama(&messages);
 
@@ -278,9 +280,11 @@ impl LLMAdapter for OllamaAdapter {
             "stream": false,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
             },
         });
+        if let Some(max) = max_tokens {
+            payload["options"]["num_predict"] = json!(max);
+        }
 
         if let Some(tool_defs) = tools {
             payload["tools"] = Value::Array(tool_defs);
@@ -368,7 +372,7 @@ impl LLMAdapter for OllamaAdapter {
         messages: Vec<Message>,
         tools: Option<Vec<Value>>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
         on_token: Option<&OnTokenFn>,
     ) -> Result<NormalizedResponse, LLMError> {
         let ollama_messages = Self::convert_messages_for_ollama(&messages);
@@ -379,9 +383,11 @@ impl LLMAdapter for OllamaAdapter {
             "stream": true,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
             },
         });
+        if let Some(max) = max_tokens {
+            payload["options"]["num_predict"] = json!(max);
+        }
 
         if let Some(tool_defs) = tools {
             payload["tools"] = Value::Array(tool_defs);

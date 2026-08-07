@@ -1,0 +1,9 @@
+# OpenMirai pins its toolchain so a plain `cargo build` provisions the correct
+# Rust automatically via rustup — the repo is self-describing and standalone.
+#
+# Note: Ubuntu's `apt install cargo` ships an old cargo that cannot parse this
+# repo's Cargo.lock (v4) and lacks features the engine uses. Install Rust with
+# rustup instead: https://rustup.rs
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

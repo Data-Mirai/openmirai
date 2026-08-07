@@ -4,9 +4,19 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.7.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+env:
+  # Tag being released: the pushed tag, or the one given to the manual run.
+  TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -18,21 +28,37 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
-            asset: mirai-darwin-arm64
-          - os: macos-13
+            platform: darwin-arm64
+          # Cross-compilado desde el runner arm64: la imagen macos-13 fue retirada por GitHub
+          # (macOS 13 fuera de soporte) y el job se quedaba encolado indefinidamente, bloqueando
+          # el release entero. El SDK de macOS trae ambas arquitecturas, así que basta el target.
+          - os: macos-latest
             target: x86_64-apple-darwin
-            asset: mirai-darwin-x86_64
+            platform: darwin-x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset: mirai-linux-x86_64
+            platform: linux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            asset: mirai-linux-arm64
+            platform: linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset: mirai-windows-x86_64.exe
+            platform: windows-x86_64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG_NAME }}
+
+      # Guard temprano: el nombre del asset sale de VERSION, no del tag.
+      # Si difieren publicaríamos un binario con versión distinta al tag → fallar aquí.
+      - name: Verify tag matches VERSION file
+        shell: bash
+        run: |
+          VER="v$(tr -d '[:space:]' < VERSION)"
+          if [[ "$VER" != "$TAG_NAME" ]]; then
+            echo "::error::VERSION file says '$VER' but the tag being released is '$TAG_NAME'. Update VERSION (or re-tag) so they match before releasing."
+            exit 1
+          fi
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,27 +68,41 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Build metadata (timestamp)
+        shell: bash
+        run: echo "MIRAI_BUILD_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
       - name: Build release binary
+        env:
+          MIRAI_BUILD_NUMBER: ${{ github.run_number }}
         run: cargo build --release --target ${{ matrix.target }} --bin mirai
 
       - name: Prepare artifact (unix)
         if: matrix.os != 'windows-latest'
+        shell: bash
         run: |
+          VER="$(tr -d '[:space:]' < VERSION)"   # fuente única de la versión
+          # Separador '-' (no '+'): GitHub Releases reescribe '+' en nombres de asset
+          # (lo normaliza a '.'), lo que desincronizaría los nombres frente a SHA256SUMS.
+          NAME="mirai-v${VER}-build.${{ github.run_number }}-${{ matrix.platform }}"
           mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/mirai artifacts/${{ matrix.asset }}
-          chmod +x artifacts/${{ matrix.asset }}
+          cp "target/${{ matrix.target }}/release/mirai" "artifacts/${NAME}"
+          chmod +x "artifacts/${NAME}"
 
       - name: Prepare artifact (windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
+          VER="$(tr -d '[:space:]' < VERSION)"
+          # Mismo separador '-' que el step unix (ver comentario arriba: '+' es riesgoso en assets).
+          NAME="mirai-v${VER}-build.${{ github.run_number }}-${{ matrix.platform }}.exe"
           mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/mirai.exe artifacts/${{ matrix.asset }}
+          cp "target/${{ matrix.target }}/release/mirai.exe" "artifacts/${NAME}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: artifacts/${{ matrix.asset }}
+          name: ${{ matrix.platform }}
+          path: artifacts/*
 
   release:
     name: publish release
@@ -70,6 +110,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG_NAME }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -84,6 +126,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG_NAME }}
           files: artifacts/*
           generate_release_notes: true
           body: |
@@ -91,4 +134,4 @@ jobs:
 
             Verify integrity with `SHA256SUMS`.
 
-            See [CHANGELOG.md](https://github.com/Gabo-TheCreator/openmirai/blob/main/CHANGELOG.md) for release notes.
+            See [CHANGELOG.md](https://github.com/Data-Mirai/openmirai/blob/main/CHANGELOG.md) for release notes.

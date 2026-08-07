@@ -1,0 +1,107 @@
+# Support Router — Triage automatico de tickets de soporte
+#
+# Clasifica el mensaje entrante en billing | technical | general y lo enruta:
+# si es "billing" lo atiende un especialista de facturacion; cualquier otra
+# categoria (technical/general) cae en el handler general. Demuestra routing
+# condicional exclusivo con logic/condition (una sola rama se ejecuta).
+#
+# Run:
+#   mirai run agents/support-router.yaml --input '{"message": "Me cobraron dos veces la suscripcion de este mes"}'
+#   mirai run agents/support-router.yaml --input '{"message": "La app se cierra sola cuando abro el dashboard"}'
+
+name: support-router
+version: v1
+description: "Triage automatico de tickets de soporte con routing condicional por categoria"
+
+inputs:
+  message:
+    type: text
+    required: true
+    description: "El mensaje/ticket del cliente a clasificar y atender"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/webhook
+
+    - id: classify
+      tool_type: ai/llm_call
+      config:
+        prompt: |
+          Eres el sistema de triage de un equipo de soporte. Clasifica el mensaje
+          del cliente en EXACTAMENTE una de estas categorias:
+            - billing    -> cobros, facturas, reembolsos, pagos, planes, precios
+            - technical  -> errores, bugs, caidas, fallos de login, problemas de la app
+            - general    -> dudas de uso, informacion, cualquier otra cosa
+          Responde con UNA sola palabra en minusculas: billing, technical o general.
+          No agregues explicaciones, puntuacion ni texto adicional.
+        temperature: 0.0
+        max_tokens: 10
+
+    # `field` (el valor a evaluar) llega por data_map desde classify;
+    # operator + value son config estatica del nodo.
+    - id: check
+      tool_type: logic/condition
+      config:
+        operator: equals
+        value: billing
+
+    - id: billing_handler
+      tool_type: ai/llm_call
+      config:
+        prompt: |
+          Eres un especialista de facturacion. El cliente tiene un problema de
+          cobros o pagos. Responde con empatia y de forma resolutiva:
+          1) reconoce el problema, 2) explica los pasos concretos para resolverlo
+          (verificar el cargo, plazos de reembolso, ajuste de plan segun aplique),
+          3) indica que datos necesitas del cliente para avanzar.
+          Se claro y breve. Responde en espanol.
+        temperature: 0.5
+        max_tokens: 512
+
+    - id: general_handler
+      tool_type: ai/llm_call
+      config:
+        prompt: |
+          Eres un agente de soporte general (atiende dudas tecnicas y consultas
+          generales). Responde de forma util y accionable:
+          1) si es un problema tecnico, da pasos de diagnostico y solucion
+          (reinicio, version de la app, limpiar cache, reportar el error);
+          2) si es una duda general, respondela con claridad.
+          Se cercano y concreto. Responde en espanol.
+        temperature: 0.6
+        max_tokens: 512
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: classify
+      data_map:
+        context: "start.payload.message"
+
+    - source: classify
+      target: check
+      data_map:
+        field: "classify.response"
+
+    - source: check
+      target: billing_handler
+      condition:
+        field: result
+        op: equals
+        value: true
+
+    - source: check
+      target: general_handler
+      condition:
+        field: result
+        op: equals
+        value: false
+
+    - source: billing_handler
+      target: respond
+
+    - source: general_handler
+      target: respond

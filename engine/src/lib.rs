@@ -1,5 +1,7 @@
 pub mod adapters;
 pub mod benchmark;
+pub mod catalog;
+pub mod config;
 pub mod core;
 pub mod db;
 pub mod energy;
@@ -9,6 +11,7 @@ pub mod llm;
 pub mod mcp;
 pub mod memory;
 pub mod observability;
+pub mod preflight;
 pub mod rag;
 pub mod render;
 pub mod runtime;
@@ -17,9 +20,11 @@ pub mod search;
 pub mod security;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod sessions;
 pub mod soul;
 pub mod streaming;
 pub mod templates;
+#[macro_use]
 pub mod tools;
 pub mod triggers;
 pub mod universe;

@@ -98,6 +98,8 @@ pub enum SessionStatus {
     Running,
     Completed,
     Failed,
+    Timeout,
+    Interrupted,
 }
 
 impl std::fmt::Display for SessionStatus {
@@ -106,6 +108,44 @@ impl std::fmt::Display for SessionStatus {
             SessionStatus::Running => write!(f, "running"),
             SessionStatus::Completed => write!(f, "completed"),
             SessionStatus::Failed => write!(f, "failed"),
+            SessionStatus::Timeout => write!(f, "timeout"),
+            SessionStatus::Interrupted => write!(f, "interrupted"),
+        }
+    }
+}
+
+impl SessionStatus {
+    /// Mapeo 1:1 con el estado final de una ejecución del runner.
+    pub fn from_execution(status: &crate::core::runner::ExecutionStatus) -> Self {
+        use crate::core::runner::ExecutionStatus as ES;
+        match status {
+            ES::Completed => Self::Completed,
+            ES::Failed => Self::Failed,
+            ES::Timeout => Self::Timeout,
+            ES::Interrupted => Self::Interrupted,
+        }
+    }
+
+    /// Inversa de [`from_execution`]. `Running` (sin resultado final real)
+    /// reconstruye como `Interrupted`.
+    pub fn to_execution(&self) -> crate::core::runner::ExecutionStatus {
+        use crate::core::runner::ExecutionStatus as ES;
+        match self {
+            Self::Completed => ES::Completed,
+            Self::Failed => ES::Failed,
+            Self::Timeout => ES::Timeout,
+            Self::Interrupted | Self::Running => ES::Interrupted,
+        }
+    }
+
+    /// Parseo desde la columna TEXT de la DB.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "timeout" => Self::Timeout,
+            "interrupted" => Self::Interrupted,
+            _ => Self::Running,
         }
     }
 }
@@ -115,8 +155,18 @@ impl std::fmt::Display for SessionStatus {
 pub struct SessionRecord {
     pub id: String,
     pub agent_id: String,
+    /// Nombre del agente al momento de la ejecución (para listados).
+    #[serde(default)]
+    pub agent_name: String,
+    #[serde(default)]
+    pub graph_id: String,
     pub result: ExecutionResult,
+    /// Unix epoch (secs) de inicio de la ejecución.
     pub created_at: f64,
+    #[serde(default)]
+    pub finished_at: Option<f64>,
+    #[serde(default)]
+    pub duration_ms: Option<f64>,
     pub status: SessionStatus,
 }
 
@@ -380,6 +430,8 @@ mod tests {
         SessionRecord {
             id: id.to_string(),
             agent_id: agent_id.to_string(),
+            agent_name: format!("agent-{agent_id}"),
+            graph_id: format!("graph-{agent_id}"),
             result: ExecutionResult {
                 status: ExecutionStatus::Completed,
                 state: SharedState::new(),
@@ -390,6 +442,8 @@ mod tests {
                 interrupt_info: None,
             },
             created_at: now_epoch(),
+            finished_at: None,
+            duration_ms: None,
             status: SessionStatus::Completed,
         }
     }

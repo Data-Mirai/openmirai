@@ -5,22 +5,14 @@
 # ejecuta dos veces con entradas distintas y verifica que la traza contiene una
 # rama y no la otra.
 #
-# Por qué NO usa el nodo logic/condition:
-#   El nodo declara su input `value` como Object y su operador se llama
-#   `operator` (no `op`). Con un comparando string —el caso más común— el
-#   validador lo rechaza antes de ejecutar:
-#     "missing required input 'operator'; input 'value' expected object, got string"
-#   Es reproducible con el propio test del repo:
-#     mirai run test/test_02_conditional_equals.yaml --provider mock  → Failed
-#   Ver "Brechas para producción" en docker/README.md.
+# Contra v0.6.0 este flujo ruteaba con un nodo bash porque `logic/condition`
+# era inusable: declaraba su comparando como objeto y rechazaba cualquier
+# string. En 0.7.0 quedó arreglado —`value` es FieldType::Any y el operador
+# acepta tanto `equals` como `eq`—, así que vuelve a usar el nodo real.
 #
-# Las condiciones de ARISTA, en cambio, están bien implementadas
-# (GraphRunner::evaluate_condition) y son las que se usan acá: comparan un
-# campo plano del output del nodo fuente. Por eso el grafo primero produce un
-# campo plano (stdout) y rutea sobre él.
-#
-# Con un LLM real el patrón es idéntico, cambiando el nodo `clasificar` por un
-# ai/llm_call y ruteando sobre `response`.
+# La semántica del nodo, que no es obvia: el input `field` NO es el nombre de
+# un campo sino el VALOR a evaluar, y llega por data_map. El operador y el
+# comparando son config estática del nodo.
 
 name: 02-ruteo-condicional
 version: v1
@@ -37,13 +29,11 @@ graph:
     - id: trigger
       tool_type: trigger/manual
 
-    # Normaliza la entrada a un campo plano (stdout) que las aristas puedan
-    # evaluar. Las comillas evitan que un input arbitrario se interprete
-    # como comando.
-    - id: clasificar
-      tool_type: system/bash
+    - id: evaluar
+      tool_type: logic/condition
       config:
-        timeout: 10
+        operator: equals
+        value: "alta"
 
     - id: rama_urgente
       tool_type: output/response
@@ -57,18 +47,18 @@ graph:
 
   edges:
     - source: trigger
-      target: clasificar
+      target: evaluar
       data_map:
-        command: 'echo "${trigger.payload.prioridad}"'
+        field: "trigger.payload.prioridad"
 
     # Primera arista cuya condición matchea gana (ruteo exclusivo).
-    - source: clasificar
+    - source: evaluar
       target: rama_urgente
       condition:
-        field: stdout
-        op: contains
-        value: "alta"
+        field: result
+        op: equals
+        value: true
 
     # Arista sin condición: fallback cuando ninguna condición matchea.
-    - source: clasificar
+    - source: evaluar
       target: rama_normal

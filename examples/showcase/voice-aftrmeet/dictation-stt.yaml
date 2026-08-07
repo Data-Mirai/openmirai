@@ -1,0 +1,43 @@
+# Dictation STT Agent
+#
+# Audio (single speaker, short) → FAITHFUL verbatim transcription.
+# Dedicated to dictation + prompt-flow audio (PRD-001: never normalize/rewrite/omit).
+#
+# NOTE: ai/transcribe is engine-hardcoded to faithful verbatim (the instruction lives
+# in the mirai binary; YAML config takes only `model`). This agent exists as a dedicated
+# name so dictation transcription can evolve independently of meeting transcription.
+#
+# Result in state.transcribe.text (read by host via response(from:"transcribe")).
+# Requires: datamirai-engine >= v0.5.0
+
+name: dictation-stt
+version: v1
+description: "Faithful verbatim transcription of single-speaker dictation"
+
+inputs:
+  audio_path:
+    type: file
+    required: true
+    description: "Audio file to transcribe (.m4a, .mp3, .wav, .ogg, .flac)"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: transcribe
+      tool_type: ai/transcribe
+      config:
+        model: "gemini-2.5-flash"
+
+    - id: respond
+      tool_type: output/response
+
+  edges:
+    - source: start
+      target: transcribe
+      data_map:
+        file_path: "start.payload.audio_path"
+
+    - source: transcribe
+      target: respond

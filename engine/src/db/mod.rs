@@ -1,6 +1,7 @@
 pub mod agent_store;
 pub mod migrations;
 pub mod repositories;
+pub mod sqlite;
 
 pub use agent_store::AgentStore;
 pub use migrations::{
@@ -10,3 +11,4 @@ pub use repositories::{
     AgentRecord, DbError, InMemoryAgentRepo, InMemoryGraphRepo, InMemorySessionRepo, Repository,
     SessionRecord, SessionStatus,
 };
+pub use sqlite::SqliteSessionRepo;

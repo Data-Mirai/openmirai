@@ -1,6 +1,6 @@
 # openmirai
 
-TypeScript SDK for [OpenMirai](https://github.com/Gabo-TheCreator/openmirai) — agentic graph execution.
+TypeScript SDK for [OpenMirai](https://github.com/Data-Mirai/openmirai) — agentic graph execution.
 
 ## Install
 
@@ -36,4 +36,4 @@ Then point the SDK at it (defaults to `http://localhost:3000`, override via `ser
 
 ## License
 
-MIT
+Apache-2.0

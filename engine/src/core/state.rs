@@ -110,6 +110,40 @@ impl ExecutionState {
     pub fn is_empty(&self) -> bool {
         self.inner.read().map(|m| m.is_empty()).unwrap_or(true)
     }
+
+    /// Create a deep clone (fork) of this execution state.
+    /// Modifying the fork will not affect the parent/other forks.
+    pub fn fork(&self) -> Self {
+        let map = self.snapshot();
+        Self {
+            inner: Arc::new(RwLock::new(map)),
+        }
+    }
+
+    /// Merges another ExecutionState into this one.
+    /// In case of overlapping keys, the conflict resolution strategy is applied.
+    pub fn merge(&self, other: &Self) -> Result<(), StateError> {
+        let mut this_map = self
+            .inner
+            .write()
+            .map_err(|e| StateError::LockPoisoned(e.to_string()))?;
+        let other_map = other
+            .inner
+            .read()
+            .map_err(|e| StateError::LockPoisoned(e.to_string()))?;
+
+        for (node_id, other_output) in other_map.iter() {
+            if let Some(this_output) = this_map.get_mut(node_id) {
+                // Merge nested maps
+                for (k, v) in other_output {
+                    this_output.insert(k.clone(), v.clone());
+                }
+            } else {
+                this_map.insert(node_id.clone(), other_output.clone());
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for ExecutionState {
@@ -330,5 +364,51 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
+    }
+
+    #[test]
+    fn test_fork_isolated() {
+        let parent = ExecutionState::new();
+        parent
+            .set("n1", output(&[("v", json!(10))]), false)
+            .unwrap();
+
+        let child = parent.fork();
+        // Child should have parent's values
+        assert_eq!(child.get_field("n1", "v"), Some(json!(10)));
+
+        // Modifying child should not affect parent
+        child.set("n2", output(&[("v", json!(20))]), false).unwrap();
+        assert_eq!(child.get_field("n2", "v"), Some(json!(20)));
+        assert_eq!(parent.get_field("n2", "v"), None);
+
+        // Modifying parent should not affect child
+        parent.set("n1", output(&[("v", json!(15))]), true).unwrap();
+        assert_eq!(parent.get_field("n1", "v"), Some(json!(15)));
+        assert_eq!(child.get_field("n1", "v"), Some(json!(10)));
+    }
+
+    #[test]
+    fn test_merge_states() {
+        let state_a = ExecutionState::new();
+        state_a
+            .set("n1", output(&[("x", json!(1))]), false)
+            .unwrap();
+
+        let state_b = ExecutionState::new();
+        state_b
+            .set("n2", output(&[("y", json!(2))]), false)
+            .unwrap();
+        // Overlap on n1, different keys
+        state_b
+            .set("n1", output(&[("z", json!(3))]), false)
+            .unwrap();
+
+        state_a.merge(&state_b).unwrap();
+
+        // Check merged keys
+        assert_eq!(state_a.get_field("n2", "y"), Some(json!(2)));
+        assert_eq!(state_a.get_field("n1", "x"), Some(json!(1)));
+        assert_eq!(state_a.get_field("n1", "z"), Some(json!(3)));
     }
 }

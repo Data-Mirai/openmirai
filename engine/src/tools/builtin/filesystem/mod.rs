@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
@@ -10,63 +9,8 @@ use serde_json::{json, Value};
 
 use crate::core::context::ExecutionContext;
 use crate::core::runner::ToolError;
-use crate::tools::base::{field, FieldType, ToolSpec};
-use crate::tools::registry::{Tool, ToolFactory, ToolRegistry};
-
-// ---------------------------------------------------------------------------
-// Macro: same pattern as logic_tool! but with category = "filesystem"
-// ---------------------------------------------------------------------------
-
-macro_rules! fs_tool {
-    (
-        struct $tool:ident, factory $factory:ident;
-        tool_type = $tool_type:expr,
-        name = $name:expr,
-        description = $desc:expr,
-        category = $cat:expr,
-        inputs = [ $($input:expr),* $(,)? ],
-        outputs = [ $($output:expr),* $(,)? ],
-        config_fields = [ $($cfg:expr),* $(,)? ]
-    ) => {
-        pub struct $tool;
-
-        pub struct $factory {
-            spec: ToolSpec,
-        }
-
-        impl $factory {
-            pub fn new() -> Self {
-                Self {
-                    spec: ToolSpec {
-                        tool_type: $tool_type.into(),
-                        name: $name.into(),
-                        description: $desc.into(),
-                        version: "1.0.0".into(),
-                        category: $cat.into(),
-                        inputs: vec![$($input),*],
-                        outputs: vec![$($output),*],
-                        config_fields: vec![$($cfg),*],
-                    },
-                }
-            }
-        }
-
-        impl Default for $factory {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl ToolFactory for $factory {
-            fn create(&self) -> Arc<dyn Tool> {
-                Arc::new($tool)
-            }
-            fn spec(&self) -> &ToolSpec {
-                &self.spec
-            }
-        }
-    };
-}
+use crate::tools::base::{field, FieldType};
+use crate::tools::registry::{Tool, ToolRegistry};
 
 pub mod copy;
 pub mod delete;

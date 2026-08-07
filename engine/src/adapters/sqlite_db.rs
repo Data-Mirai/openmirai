@@ -99,6 +99,8 @@ impl DBResource for SqliteDBResource {
         let query = query.to_string();
         let params: Vec<Value> = params.to_vec();
 
+        tracing::debug!(query = %query, params_len = params.len(), "SQLite: executing update query");
+
         tokio::task::spawn_blocking(move || {
             let conn = conn
                 .lock()
@@ -111,8 +113,12 @@ impl DBResource for SqliteDBResource {
 
             let rows_affected = conn
                 .execute(&query, param_slice.as_slice())
-                .map_err(|e| ResourceError::Database(format!("execute failed: {e}")))?;
+                .map_err(|e| {
+                    tracing::error!(query = %query, error = %e, "SQLite update execution failed");
+                    ResourceError::Database(format!("execute failed: {e}"))
+                })?;
 
+            tracing::debug!(query = %query, rows_affected = rows_affected, "SQLite update executed successfully");
             Ok(json!({ "rows_affected": rows_affected }))
         })
         .await
@@ -128,6 +134,8 @@ impl DBResource for SqliteDBResource {
         let query = query.to_string();
         let params: Vec<Value> = params.to_vec();
 
+        tracing::debug!(query = %query, params_len = params.len(), "SQLite: fetching one row");
+
         tokio::task::spawn_blocking(move || {
             let conn = conn
                 .lock()
@@ -140,7 +148,10 @@ impl DBResource for SqliteDBResource {
 
             let mut stmt = conn
                 .prepare(&query)
-                .map_err(|e| ResourceError::Database(format!("prepare failed: {e}")))?;
+                .map_err(|e| {
+                    tracing::error!(query = %query, error = %e, "SQLite prepare statement failed in fetch_one");
+                    ResourceError::Database(format!("prepare failed: {e}"))
+                })?;
 
             let col_count = stmt.column_count();
             let col_names: Vec<String> = (0..col_count)
@@ -149,7 +160,10 @@ impl DBResource for SqliteDBResource {
 
             let mut rows = stmt
                 .query(param_slice.as_slice())
-                .map_err(|e| ResourceError::Database(format!("query failed: {e}")))?;
+                .map_err(|e| {
+                    tracing::error!(query = %query, error = %e, "SQLite query failed in fetch_one");
+                    ResourceError::Database(format!("query failed: {e}"))
+                })?;
 
             match rows
                 .next()
@@ -168,6 +182,8 @@ impl DBResource for SqliteDBResource {
         let query = query.to_string();
         let params: Vec<Value> = params.to_vec();
 
+        tracing::debug!(query = %query, params_len = params.len(), "SQLite: fetching all rows");
+
         tokio::task::spawn_blocking(move || {
             let conn = conn
                 .lock()
@@ -180,7 +196,10 @@ impl DBResource for SqliteDBResource {
 
             let mut stmt = conn
                 .prepare(&query)
-                .map_err(|e| ResourceError::Database(format!("prepare failed: {e}")))?;
+                .map_err(|e| {
+                    tracing::error!(query = %query, error = %e, "SQLite prepare statement failed in fetch_all");
+                    ResourceError::Database(format!("prepare failed: {e}"))
+                })?;
 
             let col_count = stmt.column_count();
             let col_names: Vec<String> = (0..col_count)
@@ -189,7 +208,10 @@ impl DBResource for SqliteDBResource {
 
             let mut rows = stmt
                 .query(param_slice.as_slice())
-                .map_err(|e| ResourceError::Database(format!("query failed: {e}")))?;
+                .map_err(|e| {
+                    tracing::error!(query = %query, error = %e, "SQLite query failed in fetch_all");
+                    ResourceError::Database(format!("query failed: {e}"))
+                })?;
 
             let mut results = Vec::new();
             while let Some(row) = rows

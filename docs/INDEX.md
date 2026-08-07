@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 50 built-in tools, 7 LLM providers, 727 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.6.0.
+Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 52 built-in tools, 7 LLM providers, 895 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.7.0.
 
 ## 2. Stack
 
@@ -13,10 +13,16 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | Document | Description | Path |
 |---|---|---|
 | ARCHITECTURE.md | Stack, modules, conventions | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| CLI.md | `mirai` command reference, interactive mode, sessions | [CLI.md](CLI.md) |
+| CLI.es.md | Spanish translation of CLI.md | [CLI.es.md](CLI.es.md) |
 | DOMINIO.md | Domain glossary, roles, capabilities | [producto/DOMINIO.md](producto/DOMINIO.md) |
 | FLUJOS.md | Execution flows, state machines, business rules | [producto/FLUJOS.md](producto/FLUJOS.md) |
 | API.md | HTTP API endpoints and contracts | [backend/API.md](backend/API.md) |
+| MEMORY.md | Memory subsystem (short/long-term, agent KV, CLI sessions) | [backend/MEMORY.md](backend/MEMORY.md) |
+| MEMORY.es.md | MEMORY.md — Spanish translation | [backend/MEMORY.es.md](backend/MEMORY.es.md) |
 | PRIMITIVES.md | Reusable engine code patterns | [backend/PRIMITIVES.md](backend/PRIMITIVES.md) |
+| RAG.md | RAG/search subsystem (providers, hybrid, embeddings) | [backend/RAG.md](backend/RAG.md) |
+| RAG.es.md | RAG.md — Spanish translation | [backend/RAG.es.md](backend/RAG.es.md) |
 | SCHEMA.md | SQLite schema (tables, stores) | [database/SCHEMA.md](database/SCHEMA.md) |
 | STORAGE.md | Storage backends, vault, FileRef | [database/STORAGE.md](database/STORAGE.md) |
 | INFRA.md | Build, CI/CD, release, deploy, env vars | [infra/INFRA.md](infra/INFRA.md) |

@@ -56,7 +56,15 @@ if [ "$1" = "serve" ]; then
     if [ -n "${MIRAI_API_KEY:-}" ]; then
         echo " auth      : X-API-Key activa"
     else
-        echo " auth      : SIN AUTENTICACIÓN — no exponer fuera de la red local"
+        echo " auth      : SIN CLAVE"
+        case "${MIRAI_HOST:-0.0.0.0}" in
+            127.*|localhost|::1)
+                echo "             (bind local: el motor arranca igual)" ;;
+            *)
+                echo "             El motor se va a NEGAR a arrancar: desde 0.7.0"
+                echo "             no bindea fuera de loopback sin MIRAI_API_KEY."
+                echo "             Definila en .env o usá MIRAI_HOST=127.0.0.1." ;;
+        esac
     fi
     if [ -n "${MIRAI_DB_PATH:-}" ]; then
         echo " registro  : ${MIRAI_DB_PATH}"

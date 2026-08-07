@@ -17,22 +17,26 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: runtime
-    image: openmirai/engine:0.6.0-proto
+    image: openmirai/engine:0.7.0-proto
     container_name: openmirai-engine
 
     # Lista, no mapa: la forma `- VAR` (sin `=`) pasa la variable solo si
     # existe en el entorno o en .env. Con `VAR: ${VAR:-}` se definiría vacía y
     # el motor la tomaría como valor real — un modelo vacío, por ejemplo.
     environment:
-      # Autenticación de la API (header X-API-Key). Vacío = API abierta.
+      # Autenticación de la API (header X-API-Key). OBLIGATORIA acá: el
+      # contenedor bindea 0.0.0.0 y desde 0.7.0 el motor se niega a arrancar
+      # fuera de loopback sin clave — /agents/*/execute y /orchestrator/*
+      # equivalen a ejecución remota de comandos.
       - MIRAI_API_KEY=${MIRAI_API_KEY:-openmirai-dev}
       # Proveedor de LLM. `mock` = respuestas deterministas sin red ni API key.
       - MIRAI_LLM_PROVIDER=${MIRAI_LLM_PROVIDER:-mock}
       - MIRAI_PORT=3000
       - MIRAI_HOST=0.0.0.0
-      # Registro de agentes en el volumen: sin esto, todo lo registrado por
-      # HTTP se pierde al reiniciar el contenedor y los agentes live dejan de
-      # ciclar sin que nadie los relance.
+      # Base única en el volumen: guarda los runs (0.7.0) y el registro de
+      # agentes. Sin esto, el default es ~/.openmirai/engine.db dentro del
+      # contenedor, que muere con él: se pierden las ejecuciones y los agentes
+      # registrados, y los live dejan de ciclar sin que nadie los relance.
       - MIRAI_DB_PATH=${MIRAI_DB_PATH:-/data/openmirai.db}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - MIRAI_LLM_MODEL

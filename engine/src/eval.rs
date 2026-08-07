@@ -249,7 +249,7 @@ pub async fn execute_eval(
                 }
 
                 // Call REAL LLM for evaluation.
-                match llm.call(judge_model, &prompt, &[], 0.1, 256).await {
+                match llm.call(judge_model, &prompt, &[], 0.1, Some(256)).await {
                     Ok(response) => {
                         if let Some(mut eval_result) = parse_judge_response(&response.response) {
                             eval_result.eval_type = eval_type.clone();

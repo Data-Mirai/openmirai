@@ -1,9 +1,10 @@
 [package]
 name = "openmirai-cli"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
+rust-version = "1.80"
 description = "Interactive CLI for OpenMirai"
-license = "MIT"
+license = "Apache-2.0"
 
 [[bin]]
 name = "mirai"
@@ -15,5 +16,6 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+chrono = "0.4"
 crossterm = "0.28"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

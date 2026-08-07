@@ -267,11 +267,11 @@ impl LLMAdapter for ClaudeAdapter {
         prompt: &str,
         context: Option<&str>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let mut payload = json!({
             "model": model,
-            "max_tokens": max_tokens,
+            "max_tokens": max_tokens.unwrap_or(8192),
             "temperature": temperature,
             "messages": [{ "role": "user", "content": prompt }],
         });
@@ -342,13 +342,13 @@ impl LLMAdapter for ClaudeAdapter {
         messages: Vec<Message>,
         tools: Option<Vec<Value>>,
         temperature: f32,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<NormalizedResponse, LLMError> {
         let (system, claude_messages) = Self::convert_messages(&messages);
 
         let mut payload = json!({
             "model": model,
-            "max_tokens": max_tokens,
+            "max_tokens": max_tokens.unwrap_or(8192),
             "temperature": temperature,
             "messages": claude_messages,
         });
@@ -609,6 +609,8 @@ mod tests {
                 mime_type: "image/png".into(),
                 data: "dGVzdA==".into(),
                 source_path: None,
+                file_uri: None,
+                pending_upload: false,
             }]),
         }];
 

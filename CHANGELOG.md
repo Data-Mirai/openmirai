@@ -7,18 +7,98 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 ## Unreleased
 
 ### Added
-- **Durable agent registry (`--db-path` / `MIRAI_DB_PATH`).** The HTTP server kept agents in a `HashMap` that died with the process: everything registered through `POST /agents/from-spec` was lost on restart, and live agents stopped cycling with nobody to relaunch them — which also made running more than one replica impossible. Point the server at a SQLite file and the registry is mirrored to disk on every write, restored on startup, and **agents that were cycling are rescheduled automatically**, so continuous execution survives a restart. Agent ids are stable across restarts, so clients holding an id keep working.
+- **The agent registry is persisted too, on the same database as runs.** 0.7.0 made *runs* durable, but the registry itself still died with the process: everything registered through `POST /agents/from-spec` was lost on restart, and live agents stopped cycling with nobody to relaunch them. The registry now lives in the same SQLite file (`--db-path` / `MIRAI_DB_PATH`, default `~/.openmirai/engine.db`), mirrored on every write and restored on startup — and **agents that were cycling are rescheduled automatically**, so continuous execution survives a restart. Agent ids are stable across restarts, so clients holding an id keep working.
 
-  Without the flag nothing changes: the registry stays in memory, as before.
-
-  Notes: specs are stored whole, as JSON, in a new `agent_specs` table (schema v2) — the v1 `agents` table models an agent as a reference to a row in `graphs`, which would drop inputs, outputs, schedule and memory declarations. Writes are mirrored on the blocking pool, since `rusqlite` is a blocking API. A storage failure is logged but never fails the request. A live agent with `max_cycles` that already exhausted them is still rescheduled after a restart, starting a fresh cycle count.
+  Notes: specs are stored whole, as JSON, in a new `agent_specs` table (schema v2) — the v1 `agents` table models an agent as a reference to a row in `graphs`, which would drop inputs, outputs, schedule and memory declarations. Writes go through the blocking pool, since `rusqlite` is a blocking API. A storage failure is logged but never fails the request. A live agent whose `max_cycles` were already exhausted is still rescheduled after a restart, starting a fresh cycle count.
 
 ### Fixed
 - **Live agents never ran a single cycle.** `Scheduler` started with its `running` flag set to `false` and only turned it on via `start()`, which nothing outside the module's own unit tests ever called — the HTTP server included. `POST /api/v1/agents/{id}/play` returned `{"status":"playing"}` while the background task exited immediately, leaving `total_cycles` at `0` forever. Scheduling an agent now activates the scheduler itself, so the invariant lives in `Scheduler` instead of being spread across its callers. `start()` stays available to resume after an explicit `stop()`.
 - **Agents that finished their cycles stayed registered.** After exhausting `max_cycles` (or stopping on `on_cycle_error: stop`), the entry remained in the scheduler: `is_scheduled` kept reporting the agent as active and a second `play` was rejected with `409 Conflict`. The background task now removes its own entry when its loop ends, guarded by a per-session id so a finishing task can never evict the entry of a newer `play` on the same agent.
 
-Five regression tests cover cycle execution, `max_cycles`, self-deregistration, re-scheduling, `stop()`, and `on_cycle_error: stop`. The suite goes from 712 to 717 tests.
+Fifteen regression tests cover cycle execution, `max_cycles`, self-deregistration, re-scheduling, `stop()`, `on_cycle_error: stop`, and the agent store (including surviving a close/reopen of the database).
 
+---
+
+# v0.7.0 (2026-08-06)
+
+Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. **The agent YAML spec and the HTTP API stay backward-compatible; the Rust crate API does not** — see Breaking below before upgrading a custom adapter.
+
+### Breaking
+- **Rust API — `LLMAdapter::max_tokens` is now `Option<u32>`** across its three methods. Custom adapters must update their signatures.
+- **Rust API — `LLMError` gained a `Truncated(String)` variant** and the enum is not `#[non_exhaustive]`: exhaustive `match`es on it stop compiling.
+- **Truncated LLM responses now fail** instead of returning partial text as success. Correct, but observable: code that "worked" on a cut-off answer now sees an error.
+- **CORS is loopback-only** and cross-site POSTs are rejected (see Security). A browser client served from a non-loopback origin can no longer call the engine API; requests without an `Origin` header (curl, the SDKs, server-to-server) are unaffected.
+- **`mirai serve` binds `127.0.0.1` by default** (was `0.0.0.0`). Pass `--host 0.0.0.0` — with `--api-key` — to expose it.
+- **Release binaries are named `mirai-v<version>+build.<N>-<target>`** (was `mirai-<target>`). Install scripts pinned to the old names need updating.
+- **MSRV is Rust 1.80** and the toolchain is pinned via `rust-toolchain.toml`; distro-packaged cargo can no longer build this repo.
+- **`mirai edit` rejects `--provider mock`** (since 0.6.2, never published) — it is a debugging surface against a real model.
+- **The repo moved to the [Data-Mirai](https://github.com/Data-Mirai) org**; update any automation that hardcodes the old owner.
+
+### Added
+- **Persistent runs — executions survive restarts.** Every agent execution (`/execute` and `/stream`) is now recorded to SQLite (WAL) at `~/.openmirai/engine.db` (`--db-path` / `MIRAI_DB_PATH` to override): status, error, per-node timeline, transcript, and final state. `GET /api/v1/sessions` reads DB-first (the `?agent_id=` filter is now real, via SQL) and `GET /sessions/{id}` + `/sessions/{id}/otel-trace` fall back to the DB after a restart or memory eviction — the observability base for goals/agents tracing. In-memory stays as the hot cache; a persistence failure never fails the request.
+- **Real per-node timestamps.** `TraceEntry` now carries `started_at`/`finished_at` (unix epoch) captured by the runner — including inside parallel fan-out branches, so concurrent spans genuinely overlap. The OTel export (`/otel-trace`) uses the real times instead of fabricating serialized spans from t=0 (the previously documented limitation is fixed); old traces without timestamps keep the fallback.
+- **Session Orchestrator (PRD-013).** Run and coordinate multiple live Claude Code sessions over `tmux` from one engine: HTTP API + SSE streaming, CLI subcommands `mirai sessions list|spawn|send|output|stop`, and a live terminal dashboard `mirai sessions watch` (terminal↔web-UI parity). Includes session hierarchy (`parent_id`), real resource-activity reported by session hooks, a static `/ui`, project listing/creation (`GET /orchestrator/projects`, native folder picker `POST /orchestrator/pick-folder`), and a "Network" service node on the canvas reflecting WebFetch/WebSearch.
+- **Media over 20MB now works (Gemini): Files API by-reference delivery (PRD-018).** `ai/transcribe` and `ai/llm_call` media above the 20MB inline limit is uploaded via resumable upload, referenced with `file_data{file_uri}`, polled until `ACTIVE`, and **deleted from the remote after the request** (best-effort; the API's 48h auto-expiry is the safety net). Hard cap is now the provider's real limit: **2GB per file** (~9.5h of audio). Providers without upload support keep the explicit 20MB error. Real-world driver: a 2-hour meeting recording (~100-200MB audio) from the Aftrmeet host.
+- **Truncation is now fail-loud (PRD-018).** `finishReason == MAX_TOKENS` returns a new explicit error (`LLMError::Truncated`, with emitted-token count) instead of silently surfacing partial text as success. A transcript that covers only the first 25 minutes of a 2h meeting must be an error, not an "answer".
+- **Voice — TTS and STT.** New `ai/tts` tool (ElevenLabs + Cartesia) with language selection for correct pronunciation and a `voice-synthesis` agent; ElevenLabs Scribe transcription route (`provider=elevenlabs`) with a `voice-transcription` agent. Transcriptions keep punctuation and drop the output-token cap. Plus a `mirai-voice-note` agent: a voice note becomes a routed message for the orchestrator.
+- **Session permission mode + restart.** Spawn accepts `permission_mode: "bypass"` (runs the session with `--dangerously-skip-permissions`; surfaced in the UI as a badge) and `POST /api/v1/orchestrator/sessions/{id}/restart` restarts a session preserving its mode.
+- **External-node registration (bridge).** `POST /api/v1/orchestrator/sessions/register` and `POST /sessions/{id}/status` let external processes (e.g. a FleetView bridge) appear and report as nodes on the canvas alongside tmux sessions.
+- **MCP wiring for worker sessions.** Spawned sessions can carry `--mcp-config <file> --strict-mcp-config`, and the visualizer reflects MCP activity.
+- **OpenMirai Studio.** Local agent visualizer, consolidated as a local app with three views (Workflows · Agents · Observability): agent view shows its workflows and model config, workflow view shows step-by-step node configs, plus a model-source selector on `ai/llm_call` nodes and support for extra local sources (`sources.local.json`). Ships 5 default agents and 6 orchestration workflows with an orchestrator agent. Studio talks to any OpenAI-compatible endpoint you point it at via `sources.local.json`, so you can run against a local gateway of your own.
+- **Real-world showcase examples.** `examples/showcase/` with donated agents: tunevision, voice-aftrmeet, langgraph-comparison.
+- **`ai/image_edit` tool — OpenAI GPT-Image-1 inpainting (PRD-017).**
+- **Centralized tool macros, execution-state fork/join, field validation, and OpenTelemetry tracing (community PR #7, @alinedmooner).** Reusable `define_tool!` macros collapse per-tool boilerplate across the 11 builtin tool modules; execution-state fork/merge on parallel fan-out; field-level input validation (min/max value, length, regex); and an end-to-end OTel trace endpoint with server E2E tests and CI.
+- **Configurable STT timeout.** The `ai/transcribe` HTTP route accepts a `timeout_seconds` (default 120s, max 3600s) so long recordings are not cut short by a fixed ceiling.
+- **Binary version traceability.** Every binary reports name, version, and build from a single source of truth (the `VERSION` file): `mirai --version` → `mirai v0.7.0+build.<N> (<git-sha>, <ts>)`, and `/health` / `/version` expose the same — so you always know which build produced a run.
+
+### Changed
+- **License: MIT → Apache-2.0.** OpenMirai is now licensed under the Apache License 2.0 (explicit patent grant + defensive-termination clause that MIT lacks), with a `NOTICE` file ("Copyright 2026 Data Mirai Inc."). First release published under the [Data-Mirai](https://github.com/Data-Mirai) organization.
+- **`max_tokens` is now optional across all LLM adapters.**
+- **Gemini client timeout: 60s → 600s.** A 2h transcription generates 25-40k output tokens (~2-4 min) — the old timeout killed any long generation mid-flight. Upload/poll calls share the same generous ceiling (ACTIVE poll capped at 5 min).
+- **Visual editor `mirai edit` restyle** — premium flat black-and-white canvas with OpenMirai branding.
+
+### Fixed
+- **Voice transcription defaults to `gemini-2.5-flash`** — the LLM route returned `404 models/default` when the client sent no model (macOS ClaudeOrchestrator case).
+- **CORS accepts the Tauri webview origin** (`tauri://localhost`) so a desktop shell can talk to a local engine without reopening the loopback-only policy to the web.
+
+### Security
+- **Command injection (RCE) closed in session spawn.** `model` and `effort` from the spawn request were interpolated into the shell command tmux runs via `/bin/sh -c`; they are now strictly allowlisted (`[A-Za-z0-9._-]`) before the command is built, rejecting shell metacharacters. This was unauthenticated when the server runs open (`0.0.0.0` without `--api-key`) — upgrading is recommended, and running with `--api-key` is advised.
+- **Drive-by RCE closed: CORS is now loopback-only.** `CorsLayer::permissive()` allowed any website open in your browser to POST cross-origin to the local engine (e.g. agent execute or session spawn). Allowed origins are now restricted to loopback via predicate, with a cross-origin guard covering no-preflight "simple" requests too.
+- **`mirai serve` is safe by default.** The bind host default changed from `0.0.0.0` to `127.0.0.1`: the previous default exposed `/api/v1/agents/*/execute` and `/api/v1/orchestrator/*` — which amount to remote command execution — to anyone on the network. Use `--host 0.0.0.0` explicitly when you mean it.
+- **Auth hardening.** API-key comparison is constant-time (SHA-256 digests on both sides), and binding a non-loopback host without `--api-key` now genuinely aborts startup (it previously only logged an error and kept serving).
+- **Path traversal in `/ui` fixed for Windows** — `Component::Prefix`/`RootDir` are rejected when resolving static paths.
+- **AppleScript injection escaped in the native folder picker** (`POST /orchestrator/pick-folder`).
+
+### Docs
+- New bilingual (EN + ES) references — CLI, builtin tools, memory subsystem, and RAG/search subsystem (community PRs by @lualducor) — plus Rust installation instructions (@lfarizav).
+
+---
+
+## v0.6.2 (2026-06-01)
+
+The visual editor (`mirai edit`) becomes a real local sandbox — design, run and debug agents before production. No breaking changes.
+
+### Added
+- **Clean canvas layout (PRD-016).** Nodes are laid out left→right by longest-path level, each column centered vertically, and the whole graph is centered and scaled to fit the viewport on load. Edges are smooth horizontal curves; a **Fit** button re-centers after dragging or resize.
+- **Typed run inputs (PRD-016).** The Run dialog is now a form generated from the agent's declared `inputs` (label · type · required · placeholder) with required-field validation and per-type coercion (number / boolean / object|array→JSON). Agents with no declared inputs still get a free JSON field. No more guessing what to send.
+
+### Changed
+- **The editor runs agents for real — zero mock (PRD-016).** `mirai edit` resolves a real provider (Ollama / your configured default) and **rejects `--provider mock`**. The sandbox executes the agent against a real LLM so you debug against real output, not fake responses. (MockLLM stays confined to unit tests.)
+
+---
+
+## v0.6.1 (2026-05-31)
+
+No breaking changes. The agent YAML spec, runtime, and API are backward-compatible.
+
+### Added
+- **Configurable default model + guided preflight (PRD-014).** Pick your default provider/model from a curated Ollama catalog (merged with your installed models) — persisted to `~/.openmirai/config.toml`. Before any run, a preflight check turns cryptic failures ("HTTP 404: model not found") into actionable guidance: start Ollama, pull the missing model (with consent + streamed progress), or set an API key. New commands: `mirai doctor` (environment check) and `mirai models` (`list` / `pull <name>` / `use <name>`). **API keys are never written to config — env/flag only.**
+- **Visual editor: run, debug, configure (PRD-013/014/015).** `mirai edit <agent.yaml>` gained: step-by-step run visualization on the canvas (nodes light up running → completed/error); a **pre-run gate** that surfaces missing config with a one-click model download; a **Settings** panel to browse the catalog and set the default model; and a **Run result drawer** (PRD-015) that coexists with the graph and shows the final result plus per-node outputs (collapsible JSON) and errors.
+- **Run output in the stream (PRD-015).** SSE `node.completed` now carries the node's real output map and `graph.completed` carries the final state snapshot, so clients can show what the agent actually produced. The replay path (`trace_to_events`) populates the same outputs from final state.
+
+### Changed
+- **MSRV is now Rust 1.80** (declared via `rust-version`), and the repo pins a toolchain so `cargo build` from source guides you to the right compiler instead of failing on a lockfile-version mismatch. Added the `toml` dependency for user config.
+- **Internal cleanup (PRD-011 + DRY pass).** Unified duplicated helpers (`field()`, `value_type_label`, Ollama URL/client/status, the editor's SSE parser and LLM factory) and collapsed boilerplate — net negative lines, zero behavior change, all tests green.
 ---
 
 ## v0.6.0 (2026-05-31)
@@ -36,7 +116,7 @@ Identifiers were renamed. The agent YAML format, the runtime, and the API are **
 | Rust lib import | `datamirai_engine` | `openmirai_engine` |
 | Python package | `datamirai` (`pip install datamirai`) | `openmirai` (`pip install openmirai`) |
 | TypeScript package | `datamirai` | `openmirai` |
-| Repository | `Gabo-TheCreator/data-mirai-engine` | `Gabo-TheCreator/openmirai` |
+| Repository | `Gabo-TheCreator/data-mirai-engine` | `Data-Mirai/openmirai` |
 
 ### Unchanged (no action needed)
 - CLI binary and command: still `mirai`.

@@ -47,8 +47,11 @@ FROM debian:${DEBIAN_RELEASE}-slim AS runtime
 # ca-certificates → TLS hacia las APIs de LLM (Claude, Gemini, OpenAI…)
 # curl           → HEALTHCHECK del contenedor
 # git            → herramientas git/* del catálogo (status, diff, log, commit)
+# tmux           → orquestador de sesiones de 0.7.0 (/api/v1/orchestrator/*).
+#                  Sin tmux el motor arranca igual —initialize() solo avisa—
+#                  pero esos endpoints fallan al spawnear.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git \
+    && apt-get install -y --no-install-recommends ca-certificates curl git tmux \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/mirai /usr/local/bin/mirai

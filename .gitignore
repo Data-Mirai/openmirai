@@ -6,6 +6,8 @@ Cargo.lock.bak
 # Binaries (distributed via GitHub Releases, not git)
 mirai
 mirai.exe
+mirai.bin
+*.bin
 releases/
 
 # Python
@@ -74,6 +76,9 @@ blueprint/
 CLAUDE.md
 .claude/
 
+# graphify (local knowledge-graph analysis output, regenerated on demand)
+graphify-out/
+
 # Legacy
 legacy/
 rust/
@@ -81,3 +86,4 @@ rust/
 # Temp
 tmp/
 *.tmp
+BITACORA.md

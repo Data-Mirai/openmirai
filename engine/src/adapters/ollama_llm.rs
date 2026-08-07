@@ -51,13 +51,21 @@ impl LLMResource for OllamaLLMResource {
         prompt: &str,
         context: &[Value],
         temperature: f64,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<LLMResponse, ResourceError> {
         let model = if model.is_empty() {
             &self.default_model
         } else {
             model
         };
+
+        tracing::debug!(
+            model = %model,
+            prompt_len = prompt.len(),
+            temperature = temperature,
+            max_tokens = max_tokens,
+            "Ollama LLM: sending chat request"
+        );
 
         // Build messages array
         let mut messages: Vec<Value> = context.to_vec();
@@ -66,35 +74,49 @@ impl LLMResource for OllamaLLMResource {
             "content": prompt,
         }));
 
-        let body = json!({
+        let mut body = json!({
             "model": model,
             "messages": messages,
             "stream": false,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
             }
         });
+        if let Some(max) = max_tokens {
+            body["options"]["num_predict"] = json!(max);
+        }
 
-        let response = self
+        let response = match self
             .client
             .post(format!("{}/api/chat", self.base_url))
             .timeout(Duration::from_secs(300))
             .json(&body)
             .send()
             .await
-            .map_err(|e| Self::ollama_error(&e.to_string()))?;
+        {
+            Ok(res) => res,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!(model = %model, error = %err_msg, "Ollama LLM connection failed");
+                return Err(Self::ollama_error(&err_msg));
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
             let body_text = response.text().await.unwrap_or_default();
+            tracing::error!(model = %model, status = %status, response_body = %body_text, "Ollama LLM returned error status");
             return Err(Self::ollama_error(&format!("HTTP {status}: {body_text}")));
         }
 
-        let resp_json: Value = response
-            .json()
-            .await
-            .map_err(|e| Self::ollama_error(&format!("invalid JSON response: {e}")))?;
+        let resp_json: Value = match response.json().await {
+            Ok(json) => json,
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::error!(model = %model, error = %err_msg, "Ollama LLM invalid JSON response");
+                return Err(Self::ollama_error(&format!("invalid JSON response: {e}")));
+            }
+        };
 
         let response_text = resp_json["message"]["content"]
             .as_str()
@@ -103,6 +125,13 @@ impl LLMResource for OllamaLLMResource {
 
         let input_tokens = resp_json["prompt_eval_count"].as_u64().unwrap_or(0) as u32;
         let output_tokens = resp_json["eval_count"].as_u64().unwrap_or(0) as u32;
+
+        tracing::debug!(
+            model = %model,
+            input_tokens = input_tokens,
+            output_tokens = output_tokens,
+            "Ollama LLM call completed successfully"
+        );
 
         Ok(LLMResponse {
             response: response_text,

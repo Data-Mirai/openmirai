@@ -1,0 +1,60 @@
+name: "Ticket Router"
+version: v1
+agent_type: managed
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/webhook
+      config:
+        payload:
+          description: "El servidor de producción está caído"
+
+    - id: classify
+      tool_type: ticket/classify
+
+    - id: handle_high
+      tool_type: ticket/handle
+      config:
+        handler: high
+
+    - id: handle_medium
+      tool_type: ticket/handle
+      config:
+        handler: medium
+
+    - id: handle_low
+      tool_type: ticket/handle
+      config:
+        handler: low
+
+  edges:
+    - id: e1
+      source: trigger
+      target: classify
+      data_map:
+        description: "trigger.body.description"
+
+    - id: e-high
+      source: classify
+      target: handle_high
+      condition:
+        field: priority
+        op: eq
+        value: "high"
+
+    - id: e-medium
+      source: classify
+      target: handle_medium
+      condition:
+        field: priority
+        op: eq
+        value: "medium"
+
+    - id: e-low
+      source: classify
+      target: handle_low
+      condition:
+        field: priority
+        op: eq
+        value: "low"

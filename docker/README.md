@@ -2,7 +2,7 @@
 
 Empaqueta el motor en una imagen, lo levanta como servicio HTTP y lo somete a
 una suite e2e que ejercita capacidades distintas del runtime. El objetivo no es
-un despliegue productivo: es **medir qué tan lista está la v0.6.0 para correr en
+un despliegue productivo: es **medir qué tan lista está la v0.7.0 para correr en
 la nube** y dejar el diagnóstico por escrito.
 
 Resultado de la corrida de referencia **contra el contenedor** —imagen
@@ -17,14 +17,21 @@ cuando la suite corre contra la imagen. El flujo 07 reporta `usuario: mirai`
 directorio desde donde alguien lanzó el motor. Corriendo contra un binario
 local ambas pasan sin probar nada.
 
+Lo que trajo v0.7.0 y cambia este diagnóstico: los **runs ya se persisten** en
+SQLite, **CORS pasó a loopback-only**, `mirai serve` **bindea 127.0.0.1 por
+defecto** y **se niega a arrancar fuera de loopback sin API key** — el
+contenedor bindea `0.0.0.0`, así que `MIRAI_API_KEY` es obligatoria. También
+quedó arreglado `logic/condition`, que en 0.6.0 no podía comparar strings.
+
 Del diagnóstico salieron además dos cambios en el motor, ambos en el CHANGELOG:
 
 - **Los agentes live no ejecutaban un solo ciclo** (`scheduler.rs`). El flujo 08
   lo verifica de punta a punta: dentro del contenedor el agente cicla solo,
   conserva memoria entre ciclos y vuelve a aceptar `play` al terminar.
-- **El registro de agentes ahora se persiste** (`db/agent_store.rs`). Con
-  `MIRAI_DB_PATH` apuntando al volumen, los agentes sobreviven al reinicio del
-  contenedor con el mismo id, y los que estaban ciclando se relanzan solos.
+- **El registro de agentes ahora se persiste** (`db/agent_store.rs`), sobre la
+  **misma base** que los runs de 0.7.0 — un solo archivo, un solo `--db-path`.
+  Con `MIRAI_DB_PATH` apuntando al volumen, los agentes sobreviven al reinicio
+  del contenedor con el mismo id, y los que estaban ciclando se relanzan solos.
   Se verifica con [`docker/persistencia.sh`](#persistencia-del-registro).
 
 Queda sin probar el apagado limpio (`docker stop`: que el SIGTERM llegue al
@@ -168,7 +175,12 @@ JSON, no YAML. La imagen `tester` ya los trae.
 ## Brechas para producción
 
 Lo que encontró este prototipo. Cada punto está verificado contra el código de
-la v0.6.0, con la reproducción al lado.
+la v0.7.0, con la reproducción al lado.
+
+Dos brechas del diagnóstico original ya no están: `logic/condition` no podía
+comparar strings (0.7.0 le puso `FieldType::Any` al comparando y normaliza
+`equals`→`eq`, así que el flujo 02 volvió a usar el nodo real en vez de un
+rodeo con `bash`), y el CORS `permissive()` pasó a loopback-only.
 
 ### 1. Los sub-agentes no se ejecutan
 
@@ -180,25 +192,21 @@ CLI implementan esa capa.
 El grafo completa con `status: Completed` y el nodo devuelve
 `status: "placeholder"`, `result: {}`. Verde falso si nadie mira el nodo.
 
-### 2. Las sesiones y los datos de ejecución siguen en memoria
+### 2. Queda estado sin persistir
 
-El registro de agentes ya se persiste (ver arriba), pero el resto del estado no:
+Los runs (0.7.0) y el registro de agentes ya sobreviven al reinicio. Lo que no:
 
-- Las **sesiones** viven en un `HashMap` de `AppState`
-  (`engine/src/server/state.rs`) y se desalojan por FIFO a las 10.000. Un
-  reinicio borra el historial de ejecuciones.
+- La **memoria de agentes** (`AgentMemoryStore`) vive en memoria. Un agente
+  live retoma su ciclado tras un reinicio, pero arranca sin recuerdos: lo que
+  declara `graph.memory` vuelve a sus valores iniciales.
 - `data/db_read`, `data/db_write` y `data/storage_*` corren contra
   `InMemoryDBResource` e `InMemoryStorageResource`
   (`engine/src/server/helpers.rs`), así que no persisten entre ejecuciones
   aunque el motor traiga un `SqliteDBResource` en `adapters/`.
-- La **memoria de agentes** (`AgentMemoryStore`) también es en memoria: un
-  agente live retoma su ciclado tras un reinicio, pero arranca sin recuerdos.
-- **Escalar horizontalmente sigue sin funcionar**: dos réplicas comparten el
-  archivo de agentes solo si comparten el volumen, y nada más. Las sesiones y
-  la memoria quedan partidas por réplica.
-
-El volumen `/data` cubre el registro de agentes y lo que escriban las
-herramientas `filesystem/*`.
+- **Escalar horizontalmente sigue sin funcionar.** Dos réplicas sobre el mismo
+  volumen comparten el archivo SQLite, pero cada una levanta su propio
+  scheduler: un agente live marcado como ciclando se relanzaría en **todas**,
+  ejecutando el mismo ciclo N veces. Hoy es una sola instancia.
 
 ### 3. El motor no emite un solo log
 
@@ -211,40 +219,20 @@ En la práctica: el contenedor imprime el banner del entrypoint y después
 silencio. Sin logs de acceso, sin errores, sin trazas. Para diagnosticar en la
 nube hay que agregar un subscriber (una dependencia y una línea en `main`).
 
-### 4. `logic/condition` y `logic/switch` no comparan escalares
-
-Ambos declaran su input de comparación como `FieldType::Object`, y la validación
-es estricta (`value.is_object()`, `engine/src/tools/base.rs:109`). Además el nodo
-lee el operador de un input llamado `operator`, mientras los YAML de ejemplo
-usan `op`. Comparar contra un string —el caso más común— falla antes de
-ejecutar:
-
-```
-missing required input 'operator'; input 'value' expected object, got string
-```
-
-Se reproduce con el test del propio repo:
-
-```bash
-mirai run test/test_02_conditional_equals.yaml --provider mock   # → Failed
-```
-
-Las condiciones de **arista** sí están bien implementadas
-(`GraphRunner::evaluate_condition`), y son las que usa `02-ruteo-condicional`.
-
-### 5. La suite del repo reporta verdes falsos
+### 4. La suite del repo reporta verdes falsos
 
 `test/run_all.sh` decide si un test pasó buscando la palabra `Completed` en
 cualquier parte de la salida. Esa palabra aparece en la traza de cada nodo que
 sí funcionó (`"Completed trigger/manual in 0ms"`), así que una ejecución con
-`status: Failed` se reporta como **PASS**. Es lo que pasa hoy con
-`test_02_conditional_equals` y la brecha 4: `11 passed, 0 failed` con el flujo
-roto.
+`status: Failed` se reporta como **PASS**. En 0.6.0 eso tapaba un flujo roto de
+verdad (`test_02_conditional_equals` fallaba y la suite decía `11 passed, 0
+failed`). En 0.7.0 ese test quedó arreglado, así que hoy el problema no se ve
+—pero el mecanismo sigue igual y volverá a tapar la próxima rotura.
 
 Por eso `docker/smoke.sh` afirma sobre el campo `status` del JSON y sobre
 `state`/`trace`, nunca por `grep` de texto.
 
-### 6. `USAGE.md` está desactualizado en dos puntos
+### 5. `USAGE.md` sigue desactualizado
 
 - Tipos de entrada: documenta `integer`, `array` y `object`; el motor solo
   acepta `text`, `number`, `boolean`, `json`, `file`
@@ -252,9 +240,11 @@ Por eso `docker/smoke.sh` afirma sobre el campo `status` del JSON y sobre
   `type: integer` no valida.
 - Sub-agentes: el ejemplo usa `agent_file`; la herramienta lee `agent_id`.
 
-### 7. Pendientes de endurecimiento
+(0.7.0 ya corrigió la descripción de `logic/condition`, que era el tercer punto
+de esta lista.)
 
-- CORS es `permissive()` (`engine/src/server/mod.rs`): cualquier origen.
+### 6. Pendientes de endurecimiento
+
 - La autenticación es una única clave compartida, sin rotación ni multi-tenant.
 - No hay rate limiting ni cuota por cliente.
 - `read_only: true` en el contenedor quedó comentado en el compose: falta
@@ -273,8 +263,9 @@ En orden de impacto:
 2. **Persistir sesiones y memoria de agentes** (brecha 2): el registro de
    agentes ya sobrevive, pero el historial de ejecuciones y los recuerdos de un
    live no. Es lo que falta para poder correr más de una réplica.
-3. **Arreglar `logic/condition`** (brecha 4) y la suite que lo tapa (brecha 5).
-4. Imagen `-musl` estática para bajar de ~180 MB a decenas, una vez que el
-   catálogo de herramientas que dependen del shell esté acotado.
+3. **Arreglar el criterio de `test/run_all.sh`** (brecha 4): mientras decida por
+   `grep`, la próxima rotura vuelve a pasar inadvertida.
+4. Imagen `-musl` estática para bajar de ~200 MB a decenas, una vez que el
+   catálogo de herramientas que dependen del shell (y de tmux) esté acotado.
 5. Publicar la imagen en un registry y clavar el tag del builder
    (`ARG RUST_VERSION=1.97` en lugar de `1`) para builds reproducibles.

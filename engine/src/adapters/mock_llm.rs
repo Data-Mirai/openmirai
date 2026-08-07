@@ -67,7 +67,7 @@ impl LLMResource for MockLLMResource {
         prompt: &str,
         _context: &[serde_json::Value],
         _temperature: f64,
-        _max_tokens: u32,
+        _max_tokens: Option<u32>,
     ) -> Result<LLMResponse, ResourceError> {
         let response_text = if self.responses.is_empty() {
             let truncated: String = prompt.chars().take(50).collect();
@@ -88,6 +88,13 @@ impl LLMResource for MockLLMResource {
             model: model.to_string(),
             provider: "mock".to_string(),
         })
+    }
+
+    /// Identifies as "mock". Media validation treats the mock as a
+    /// universal-capability provider (see `llm::media`), so multimodal
+    /// examples can run offline with `--provider mock`.
+    fn provider_name(&self) -> &str {
+        "mock"
     }
 
     async fn embed(&self, text: &str, _model: &str) -> Result<Vec<f64>, ResourceError> {
@@ -113,7 +120,7 @@ mod tests {
     async fn call_generic_response() {
         let llm = MockLLMResource::new();
         let resp = llm
-            .call("gpt-4", "hello world", &[], 0.7, 100)
+            .call("gpt-4", "hello world", &[], 0.7, Some(100))
             .await
             .unwrap();
         assert!(resp.response.starts_with("[mock response to:"));
@@ -130,9 +137,9 @@ mod tests {
             "third".to_string(),
         ]);
 
-        let r1 = llm.call("m", "a", &[], 0.0, 10).await.unwrap();
-        let r2 = llm.call("m", "b", &[], 0.0, 10).await.unwrap();
-        let r3 = llm.call("m", "c", &[], 0.0, 10).await.unwrap();
+        let r1 = llm.call("m", "a", &[], 0.0, Some(10)).await.unwrap();
+        let r2 = llm.call("m", "b", &[], 0.0, Some(10)).await.unwrap();
+        let r3 = llm.call("m", "c", &[], 0.0, Some(10)).await.unwrap();
 
         assert_eq!(r1.response, "first");
         assert_eq!(r2.response, "second");
@@ -142,8 +149,8 @@ mod tests {
     #[tokio::test]
     async fn call_cycles_when_exhausted() {
         let llm = MockLLMResource::with_responses(vec!["only".to_string()]);
-        let r1 = llm.call("m", "a", &[], 0.0, 10).await.unwrap();
-        let r2 = llm.call("m", "b", &[], 0.0, 10).await.unwrap();
+        let r1 = llm.call("m", "a", &[], 0.0, Some(10)).await.unwrap();
+        let r2 = llm.call("m", "b", &[], 0.0, Some(10)).await.unwrap();
         assert_eq!(r1.response, "only");
         assert_eq!(r2.response, "only");
     }
@@ -175,6 +182,12 @@ mod tests {
         let llm = MockLLMResource::new().with_embedding_dim(16);
         let vec = llm.embed("test", "m").await.unwrap();
         assert_eq!(vec.len(), 16);
+    }
+
+    #[test]
+    fn provider_name_is_mock() {
+        let llm = MockLLMResource::new();
+        assert_eq!(llm.provider_name(), "mock");
     }
 
     #[test]

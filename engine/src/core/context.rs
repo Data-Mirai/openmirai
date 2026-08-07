@@ -108,7 +108,7 @@ pub trait LLMResource: Send + Sync {
         prompt: &str,
         context: &[serde_json::Value],
         temperature: f64,
-        max_tokens: u32,
+        max_tokens: Option<u32>,
     ) -> Result<LLMResponse, ResourceError>;
 
     /// Produce an embedding vector for the given text.
@@ -228,7 +228,7 @@ impl LLMResource for StubLLM {
         _prompt: &str,
         _context: &[serde_json::Value],
         _temperature: f64,
-        _max_tokens: u32,
+        _max_tokens: Option<u32>,
     ) -> Result<LLMResponse, ResourceError> {
         Ok(LLMResponse {
             response: "stub".into(),

@@ -1,3 +1,6 @@
+#[macro_use]
+pub mod macros;
+
 pub mod base;
 pub mod builtin;
 pub mod registry;

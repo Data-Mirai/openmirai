@@ -17,11 +17,12 @@ graph:
         payload:
           priority: low
 
+    # `field` (the value to evaluate) arrives via data_map; operator + value
+    # are static node config.
     - id: check
       tool_type: logic/condition
       config:
-        field: priority
-        op: equals
+        operator: equals
         value: high
 
     - id: route_a
@@ -38,7 +39,7 @@ graph:
     - source: trigger
       target: check
       data_map:
-        priority: "trigger.payload"
+        field: "trigger.payload.priority"
 
     - source: check
       target: route_a

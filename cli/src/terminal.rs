@@ -158,15 +158,19 @@ const CORE_TOOLS: &[&str] = &[
     "git/commit",
 ];
 
-fn type_map(t: &openmirai_engine::FieldType) -> &'static str {
+/// Map a FieldType to its JSON-Schema `type` string.
+/// Returns `None` for [`FieldType::Any`]: JSON Schema expresses "any value"
+/// by omitting the `type` keyword.
+fn type_map(t: &openmirai_engine::FieldType) -> Option<&'static str> {
     match t {
-        openmirai_engine::FieldType::String => "string",
-        openmirai_engine::FieldType::Number => "number",
-        openmirai_engine::FieldType::Boolean => "boolean",
-        openmirai_engine::FieldType::Object => "object",
-        openmirai_engine::FieldType::Array => "array",
-        openmirai_engine::FieldType::Integer => "integer",
-        openmirai_engine::FieldType::File => "file",
+        openmirai_engine::FieldType::String => Some("string"),
+        openmirai_engine::FieldType::Number => Some("number"),
+        openmirai_engine::FieldType::Boolean => Some("boolean"),
+        openmirai_engine::FieldType::Object => Some("object"),
+        openmirai_engine::FieldType::Array => Some("array"),
+        openmirai_engine::FieldType::Integer => Some("integer"),
+        openmirai_engine::FieldType::File => Some("file"),
+        openmirai_engine::FieldType::Any => None,
     }
 }
 
@@ -176,7 +180,9 @@ fn spec_to_openai_schema(spec: &ToolSpec) -> Value {
 
     for inp in &spec.inputs {
         let mut prop = serde_json::Map::new();
-        prop.insert("type".to_string(), json!(type_map(&inp.field_type)));
+        if let Some(t) = type_map(&inp.field_type) {
+            prop.insert("type".to_string(), json!(t));
+        }
         if let Some(ref desc) = inp.description {
             prop.insert("description".to_string(), json!(desc));
         }
@@ -191,7 +197,9 @@ fn spec_to_openai_schema(spec: &ToolSpec) -> Value {
             continue;
         }
         let mut prop = serde_json::Map::new();
-        prop.insert("type".to_string(), json!(type_map(&cfg.field_type)));
+        if let Some(t) = type_map(&cfg.field_type) {
+            prop.insert("type".to_string(), json!(t));
+        }
         if let Some(ref desc) = cfg.description {
             prop.insert("description".to_string(), json!(desc));
         }
@@ -587,7 +595,7 @@ async fn agentic_loop(
                     engine_messages.clone(),
                     tool_defs.clone(),
                     temperature,
-                    max_tokens,
+                    Some(max_tokens),
                     Some(&on_token_fn),
                 )
                 .await;
@@ -611,7 +619,7 @@ async fn agentic_loop(
                             engine_messages,
                             tool_defs,
                             temperature,
-                            max_tokens,
+                            Some(max_tokens),
                         )
                         .await
                     {
@@ -917,7 +925,8 @@ fn handle_slash(
 const BANNER: &str = concat!(
     "\x1b[1m\x1b[35m\n",
     "  \u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}\n",
-    "  \u{2551}         OpenMirai v", env!("CARGO_PKG_VERSION"), "             \u{2551}\n",
+    // MIRAI_VERSION (archivo VERSION, vía build.rs) — misma fuente que --version.
+    "  \u{2551}         OpenMirai v", env!("MIRAI_VERSION"), "             \u{2551}\n",
     "  \u{2551}   Agentic coding in your terminal    \u{2551}\n",
     "  \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
     "\x1b[0m\n"

@@ -1,6 +1,6 @@
 # openmirai
 
-Python SDK for [OpenMirai](https://github.com/Gabo-TheCreator/openmirai) — agentic graph execution.
+Python SDK for [OpenMirai](https://github.com/Data-Mirai/openmirai) — agentic graph execution.
 
 ## Install
 
@@ -35,4 +35,4 @@ Then point the SDK at it (defaults to `http://localhost:3000`).
 
 ## License
 
-MIT
+Apache-2.0

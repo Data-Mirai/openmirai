@@ -1,0 +1,139 @@
+# Mirai Voice Note — voz/nota de Gabriel -> mensaje listo para el orquestador Mirai central
+#
+# Pipeline (nodos REALES del Engine, espejo de voice-transcription.yaml):
+#   audio -> ai/transcribe (STT) -> ai/llm_call (enrich: diarizacion aprox + estructura)
+#         -> ai/llm_call (wrap: envuelve como mensaje accionable) -> output/response
+#
+# HONESTIDAD (ver diseno Fase 2, hallazgo §0):
+#   - ai/transcribe transcribe VERBATIM (prompt hardcodeado en el binario) y NO diariza.
+#     La "diarizacion" real vive en el nodo `enrich` (post-proceso LLM, confianza MEDIA).
+#     Para dictado corto de UN hablante (hablarle al orquestador), `enrich` es casi no-op.
+#   - ai/transcribe es de un solo tiro (sin segmentacion de 10 min): para notas LARGAS
+#     multi-hablante hay riesgo de truncamiento por el techo de Gemini (65k tok). Ese caso
+#     usa el camino B (shell-out a tools/transcribe_meeting.py) — NO este grafo. Ver V9.
+#
+# Run (la KEY la provee Gabriel al CLI del Engine, NO se lee de .env — archivos sagrados):
+#   # Ruta Gemini (LLM multimodal del CLI hace la transcripcion):
+#   mirai run agents/mirai-voice-note.yaml --provider gemini --api-key $GEMINI_API_KEY \
+#     --input '{"audio_path":"/ruta/dictado.m4a","provider":"gemini","speakers":"Gabriel"}'
+#
+#   # Ruta ElevenLabs Scribe (misma key del TTS):
+#   mirai run agents/mirai-voice-note.yaml --provider claude --api-key dummy \
+#     --input '{"audio_path":"/ruta/dictado.m4a","provider":"elevenlabs","language":"es"}'
+#
+# Ejecucion via HTTP API (lo que hace la app AgentMirai):
+#   POST /api/v1/agents/from-spec   (registra este spec -> {id})
+#   POST /api/v1/agents/{id}/execute  con {"trigger_data": {"audio_path": "...", "provider": "gemini", "speakers": "Gabriel"}}
+#   -> el texto final vive en response.state["respond"]["result"]
+
+name: mirai-voice-note
+version: v1
+description: "Voz/nota de Gabriel: audio -> transcribe -> diariza (aprox) -> envuelve en prompt -> mensaje listo para el orquestador Mirai central"
+
+inputs:
+  audio_path:
+    type: text
+    required: true
+    description: "Ruta al audio (.m4a/.mp3/.wav/.webm) del dictado o nota de Gabriel"
+  provider:
+    type: text
+    required: false
+    default: "gemini"
+    description: "Proveedor STT: elevenlabs (Scribe) o cualquier otro valor para la ruta LLM multimodal (gemini)"
+  model:
+    type: text
+    required: false
+    default: "gemini-2.5-flash"
+    description: "Modelo STT (elevenlabs: scribe_v1 | ruta LLM: modelo del provider, default gemini-2.5-flash)"
+  language:
+    type: text
+    required: false
+    description: "Codigo ISO del idioma para elevenlabs, ej es (omitir = auto-detect)"
+  speakers:
+    type: text
+    required: false
+    description: "Nombres conocidos para el post-proceso de diarizacion (ej 'Ana, Luis')"
+
+graph:
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+
+    - id: stt
+      tool_type: ai/transcribe
+
+    # Diarizacion + estructura. NO vive en ai/transcribe (verbatim hardcodeado).
+    # Para 1 solo hablante es casi no-op. Confianza MEDIA (LLM atribuye hablantes).
+    - id: enrich
+      tool_type: ai/llm_call
+      config:
+        temperature: 0.2
+        max_tokens: 8192
+        system_prompt: |
+          Eres el diarizador de notas de voz de Gabriel. Trabajas SIEMPRE en espanol.
+          Tu unica fuente de verdad es la transcripcion que recibes en el contexto de sesion.
+        prompt: |
+          En el contexto de sesion recibes (via data_map, como datos de sesion):
+            - `transcripcion` -> el texto literal transcrito, SIN etiquetas de hablante.
+            - `speakers`      -> los participantes conocidos (puede venir vacio o ausente).
+
+          Devuelve la MISMA transcripcion, ahora DIARIZADA:
+            - Si hay participantes conocidos en `speakers`, atribuye cada bloque al hablante
+              mas probable con el prefijo "Nombre: ..." y marca los cambios de turno.
+            - Si `speakers` viene vacio/ausente o parece un solo hablante, devuelve el texto
+              tal cual (limpia saltos de linea sueltos) sin inventar nombres ni turnos.
+          Reglas estrictas: NO inventes, NO omitas, NO parafrasees palabras. Solo agregas la
+          etiqueta de hablante donde corresponda y limpias el formato.
+          Devuelve SOLO el texto (diarizado si aplica), sin comentarios tuyos.
+
+    # Envuelve la nota transcrita en UN mensaje accionable para el orquestador central.
+    - id: wrap
+      tool_type: ai/llm_call
+      config:
+        temperature: 0.3
+        max_tokens: 2048
+        system_prompt: |
+          Eres el pre-procesador de voz de Gabriel para el orquestador Mirai central.
+          Trabajas SIEMPRE en espanol, tono senior, directo, sin walls of text. Tu fuente
+          de verdad es EXCLUSIVAMENTE la nota que recibes: no inventes datos, nombres ni fechas.
+        prompt: |
+          En el contexto de sesion recibes `nota` -> la nota de voz de Gabriel ya transcrita
+          (y diarizada si aplica). Conviertela en UN mensaje claro y accionable para el
+          orquestador Mirai central: intencion + contexto minimo + el siguiente paso que pide.
+          Si la nota ya es una instruccion clara y corta, limpiala y devuelvela casi tal cual.
+          Devuelve SOLO el mensaje listo para enviar, sin preambulos, comillas ni etiquetas.
+
+    - id: respond
+      tool_type: output/response
+      config:
+        format: text
+
+  edges:
+    - source: start
+      target: stt
+      data_map:
+        file_path: "start.payload.audio_path"
+        provider: "start.payload.provider"
+        model: "start.payload.model"
+        language: "start.payload.language"
+
+    # El texto literal + los hablantes conocidos van al diarizador (post-proceso).
+    # Ambas aristas hacen fan-in: enrich ve `transcripcion` Y `speakers` como datos de sesion.
+    - source: stt
+      target: enrich
+      data_map:
+        transcripcion: "stt.text"
+    - source: start
+      target: enrich
+      data_map:
+        speakers: "start.payload.speakers"
+
+    - source: enrich
+      target: wrap
+      data_map:
+        nota: "enrich.response"
+
+    - source: wrap
+      target: respond
+      data_map:
+        data: "wrap.response"

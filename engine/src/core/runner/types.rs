@@ -200,6 +200,12 @@ pub struct TraceEntry {
     pub status: TraceStatus,
     pub duration_ms: u64,
     pub retries: u32,
+    /// Unix epoch (secs) real de inicio/fin del nodo. `default` para
+    /// deserializar traces previos a 0.7.0 (quedan en 0.0 = desconocido).
+    #[serde(default)]
+    pub started_at: f64,
+    #[serde(default)]
+    pub finished_at: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

@@ -1,9 +1,10 @@
 [package]
 name = "openmirai-engine"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
+rust-version = "1.80"
 description = "Open-source agentic graph execution engine"
-license = "MIT"
+license = "Apache-2.0"
 
 [lib]
 name = "openmirai_engine"
@@ -22,7 +23,8 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+toml = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }

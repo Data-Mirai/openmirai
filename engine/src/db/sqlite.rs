@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
+use crate::core::agent_spec::AgentSpec;
 use crate::core::runner::ExecutionResult;
 use crate::utils::now_epoch;
 
@@ -318,6 +319,59 @@ impl SqliteSessionRepo {
         .await
     }
 
+    /// Guarda la **definición** de un agente (PRD-021-F).
+    ///
+    /// Es lo que hace reanudable un run después de reiniciar el proceso: el
+    /// checkpoint dice DÓNDE se quedó, pero sin la spec no hay QUÉ grafo
+    /// correr. Se escribe una vez, al dar de alta el agente.
+    ///
+    /// Crea las filas padre si hacen falta (`graphs`, `agents`) y luego escribe
+    /// la columna `spec`. Idempotente: volver a llamarlo con el mismo id
+    /// sobreescribe la spec y refresca `updated_at`.
+    pub async fn save_agent_spec(&self, agent_id: &str, spec: &AgentSpec) -> Result<(), DbError> {
+        let agent_id = agent_id.to_string();
+        let name = spec.name.clone();
+        let spec_json = serde_json::to_string(spec)
+            .map_err(|e| DbError::SerializationError(format!("agent spec: {e}")))?;
+        self.with_conn(move |conn| {
+            let sql =
+                |e: rusqlite::Error| DbError::ConnectionError(format!("save_agent_spec: {e}"));
+            ensure_parent_rows(conn, &agent_id, &name, "")?;
+            conn.execute(
+                "UPDATE agents SET spec = ?2, name = ?3, updated_at = ?4 WHERE id = ?1",
+                params![agent_id, spec_json, name, now_epoch()],
+            )
+            .map_err(sql)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Lee la definición de un agente. `None` si no existe o si la fila viene
+    /// de una DB anterior a la v3 (columna `spec` en NULL) — en ese caso nunca
+    /// se guardó, y decirlo es más honesto que inventar un grafo.
+    pub async fn get_agent_spec(&self, agent_id: &str) -> Result<Option<AgentSpec>, DbError> {
+        let agent_id = agent_id.to_string();
+        self.with_conn(move |conn| {
+            let crudo: Option<String> = conn
+                .query_row(
+                    "SELECT spec FROM agents WHERE id = ?1",
+                    params![agent_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|e| DbError::ConnectionError(format!("get_agent_spec: {e}")))?
+                .flatten();
+            match crudo {
+                Some(txt) => serde_json::from_str(&txt)
+                    .map(Some)
+                    .map_err(|e| DbError::SerializationError(format!("agent spec: {e}"))),
+                None => Ok(None),
+            }
+        })
+        .await
+    }
+
     /// Borra el checkpoint de un run (al completarlo ya no hay qué reanudar).
     pub async fn delete_checkpoint(&self, session_id: &str) -> Result<bool, DbError> {
         let session_id = session_id.to_string();
@@ -528,6 +582,7 @@ mod tests {
         ExecutionResult, ExecutionStatus, TraceEntry, TraceStatus, TranscriptEntry,
     };
     use crate::core::state::SharedState;
+    use crate::db::migrations::SCHEMA_VERSION;
     use std::collections::HashMap;
 
     fn make_result(status: ExecutionStatus, error: Option<&str>) -> ExecutionResult {
@@ -800,7 +855,11 @@ mod tests {
 
         // El binario nuevo la abre.
         let repo = SqliteSessionRepo::open(&path).expect("una DB v1 debe abrir sin romperse");
-        assert_eq!(repo.schema_version().await.unwrap(), 2, "migró a v2");
+        assert_eq!(
+            repo.schema_version().await.unwrap(),
+            SCHEMA_VERSION,
+            "migró al esquema actual"
+        );
 
         // Los datos de la v1 siguen ahí y se leen igual.
         let viejo = repo
@@ -845,7 +904,7 @@ mod tests {
         // una sola: la segunda apertura tiene que ser igual de sana.
         let otra_vez = SqliteSessionRepo::open(&path)
             .expect("una DB ya migrada tiene que volver a abrir sin romperse");
-        assert_eq!(otra_vez.schema_version().await.unwrap(), 2);
+        assert_eq!(otra_vez.schema_version().await.unwrap(), SCHEMA_VERSION);
         assert!(otra_vez.get("run-v1").await.unwrap().is_some());
         assert!(otra_vez
             .get_checkpoint("run-nuevo")
@@ -865,28 +924,141 @@ mod tests {
         crear_db_v1(&path);
 
         let repo = SqliteSessionRepo::open(&path).unwrap();
-        assert_eq!(repo.schema_version().await.unwrap(), 2);
+        assert_eq!(repo.schema_version().await.unwrap(), SCHEMA_VERSION);
         drop(repo);
 
         let otra_vez = SqliteSessionRepo::open(&path).expect("reabrir no puede romper");
-        assert_eq!(otra_vez.schema_version().await.unwrap(), 2);
+        assert_eq!(otra_vez.schema_version().await.unwrap(), SCHEMA_VERSION);
         assert!(otra_vez.get("run-v1").await.unwrap().is_some());
         drop(otra_vez);
 
         // Y una tercera, por si acaso.
         let tercera = SqliteSessionRepo::open(&path).expect("idempotente de verdad");
-        assert_eq!(tercera.schema_version().await.unwrap(), 2);
+        assert_eq!(tercera.schema_version().await.unwrap(), SCHEMA_VERSION);
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Crea una DB en el esquema **v2** (0.7.0 con checkpoints) con un agente
+    /// ya escrito: el punto de partida real de una instalación existente.
+    fn crear_db_v2(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(super::super::migrations::SCHEMA_SQL)
+            .unwrap();
+        conn.execute_batch(super::super::migrations::SCHEMA_SQL_V2)
+            .unwrap();
+        conn.execute(
+            "INSERT INTO graphs (id, name, created_at, updated_at) VALUES ('g2','g2',1.0,1.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, name, graph_id, created_at, updated_at)
+             VALUES ('a-v2','Agente v2','g2',1.0,1.0)",
+            [],
+        )
+        .unwrap();
+
+        // Comprobación de que esto ES la v2: hay checkpoints, no hay spec.
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('agents')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(!cols.iter().any(|c| c == "spec"), "la v2 no tiene spec");
+    }
+
+    #[tokio::test]
+    async fn w3f_db_v2_migra_a_v3_y_sus_datos_siguen_legibles() {
+        // El requisito del PRD-021-F: una DB v2 abre con el binario nuevo sin
+        // romperse. La columna `spec` es aditiva y NULL-able.
+        let path = temp_db("w3f-v2");
+        crear_db_v2(&path);
+
+        let repo = SqliteSessionRepo::open(&path).expect("una DB v2 debe abrir sin romperse");
+        assert_eq!(repo.schema_version().await.unwrap(), SCHEMA_VERSION);
+
+        // El agente viejo sigue ahí, y su spec es None (nunca se guardó) —
+        // no se inventa un grafo.
+        assert!(
+            repo.get_agent_spec("a-v2").await.unwrap().is_none(),
+            "un agente escrito por la v2 no tiene definición guardada"
+        );
+
+        // Y lo nuevo ya funciona sobre esa misma DB.
+        let spec: AgentSpec = serde_json::from_value(serde_json::json!({
+            "name": "nuevo", "version": "v1"
+        }))
+        .unwrap();
+        repo.save_agent_spec("a-v3", &spec).await.unwrap();
+        assert_eq!(
+            repo.get_agent_spec("a-v3").await.unwrap().unwrap().name,
+            "nuevo"
+        );
+        drop(repo);
+
+        // Reabrir (cada arranque del proceso) no reaplica el ALTER TABLE.
+        let otra_vez = SqliteSessionRepo::open(&path).expect("reabrir no puede romper");
+        assert_eq!(otra_vez.schema_version().await.unwrap(), SCHEMA_VERSION);
+        assert!(otra_vez.get_agent_spec("a-v3").await.unwrap().is_some());
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[tokio::test]
-    async fn db_nueva_arranca_directo_en_v2() {
+    async fn la_spec_del_agente_round_tripea_y_sobrevive_a_ensure_parent_rows() {
         let repo = SqliteSessionRepo::open_in_memory().unwrap();
-        assert_eq!(
-            repo.schema_version().await.unwrap(),
-            super::super::migrations::SCHEMA_VERSION
+
+        // Sin agente: None, no error.
+        assert!(repo.get_agent_spec("no-existe").await.unwrap().is_none());
+
+        let spec: AgentSpec = serde_json::from_value(serde_json::json!({
+            "name": "agente-con-grafo",
+            "description": "prueba",
+            "version": "v1",
+            "graph": {
+                "nodes": [
+                    {"id": "n1", "tool_type": "output/response", "config": {"message": "ok"}}
+                ],
+                "edges": []
+            }
+        }))
+        .unwrap();
+        repo.save_agent_spec("a1", &spec).await.unwrap();
+
+        let leida = repo.get_agent_spec("a1").await.unwrap().expect("guardada");
+        assert_eq!(leida.name, "agente-con-grafo");
+        assert_eq!(leida.graph.nodes.len(), 1);
+        assert_eq!(leida.graph.nodes[0].id, "n1");
+
+        // Guardar un run del agente NO puede pisar la spec: `ensure_parent_rows`
+        // usa INSERT OR IGNORE, así que la fila existente se respeta. Si algún
+        // día pasara a OR REPLACE, este test lo caza.
+        let rec = SessionRecord {
+            id: "run-1".into(),
+            agent_id: "a1".into(),
+            agent_name: "agente-con-grafo".into(),
+            graph_id: String::new(),
+            result: make_result(ExecutionStatus::Completed, None),
+            created_at: 1700000000.0,
+            finished_at: Some(1700000001.0),
+            duration_ms: Some(1000.0),
+            status: SessionStatus::Completed,
+            current_node_id: None,
+        };
+        repo.save(&rec).await.unwrap();
+        assert!(
+            repo.get_agent_spec("a1").await.unwrap().is_some(),
+            "persistir un run no puede borrar la definición del agente"
         );
+    }
+
+    #[tokio::test]
+    async fn db_nueva_arranca_directo_en_el_esquema_actual() {
+        let repo = SqliteSessionRepo::open_in_memory().unwrap();
+        assert_eq!(repo.schema_version().await.unwrap(), SCHEMA_VERSION);
     }
 
     // -----------------------------------------------------------------------

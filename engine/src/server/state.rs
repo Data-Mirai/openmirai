@@ -180,6 +180,50 @@ impl AppState {
         runner.with_cancel_flag(flag)
     }
 
+    /// Da de alta un agente: registro en memoria **y** en disco (PRD-021-F).
+    ///
+    /// El `HashMap` en memoria es la lectura caliente; la fila en SQLite es lo
+    /// que hace que un run **se pueda reanudar tras reiniciar el proceso**. Sin
+    /// esta escritura, al arrancar de nuevo el checkpoint decía dónde se quedó
+    /// el run pero nadie sabía qué grafo correr, y `resume` respondía 409.
+    ///
+    /// Persistir es **best-effort**: si la DB falla se loguea y el alta sigue
+    /// —igual que en `record_session`—, porque no poder guardar no puede
+    /// impedir trabajar. Sin DB cableada (tests, factories sin `serve()`) solo
+    /// queda el registro en memoria, que es el comportamiento de siempre.
+    pub async fn register_agent(&self, agent_id: String, spec: AgentSpec) {
+        if let Some(repo) = &self.session_repo {
+            if let Err(e) = repo.save_agent_spec(&agent_id, &spec).await {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    error = %e,
+                    "no se pudo persistir la definición del agente: sus runs no se podrán reanudar tras reiniciar"
+                );
+            }
+        }
+        self.agents.write().await.insert(agent_id, spec);
+    }
+
+    /// La definición de un agente: primero la memoria, y si no está —proceso
+    /// recién reiniciado— la DB (PRD-021-F).
+    ///
+    /// **No** re-siembra el `HashMap` con lo que lee: la lectura es de solo
+    /// lectura a propósito, para que reanudar un run viejo no "resucite" en
+    /// `GET /agents` un agente que este proceso nunca dio de alta.
+    pub async fn agent_spec(&self, agent_id: &str) -> Option<AgentSpec> {
+        if let Some(spec) = self.agents.read().await.get(agent_id).cloned() {
+            return Some(spec);
+        }
+        let repo = self.session_repo.as_ref()?;
+        match repo.get_agent_spec(agent_id).await {
+            Ok(spec) => spec,
+            Err(e) => {
+                tracing::warn!(agent_id = %agent_id, error = %e, "no se pudo leer la definición del agente");
+                None
+            }
+        }
+    }
+
     /// Pide cancelar un run EN VUELO. `false` si no hay ninguno con ese id
     /// corriendo en este proceso.
     pub async fn request_cancel(&self, session_id: &str) -> bool {

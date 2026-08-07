@@ -1,0 +1,32 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.20s
+     Running unittests src/lib.rs (target/debug/deps/openmirai_engine-48d8cb0010332101)
+
+running 2 tests
+test server::tests_reinicio::w3_real_run_pausado_reanuda_despues_de_reiniciar_el_proceso ... FAILED
+test server::tests_reinicio::w3_real_run_fallido_reanuda_despues_de_reiniciar_el_proceso ... FAILED
+
+failures:
+
+---- server::tests_reinicio::w3_real_run_pausado_reanuda_despues_de_reiniciar_el_proceso stdout ----
+
+thread 'server::tests_reinicio::w3_real_run_pausado_reanuda_despues_de_reiniciar_el_proceso' (8413010) panicked at engine/src/server/tests_reinicio.rs:226:5:
+assertion `left == right` failed: un run pausado tiene que reanudar tras reiniciar el proceso: {"error":"el agente '950b340d' del run 'c063c78f' ya no está registrado: no hay grafo que reanudar"}
+  left: 409
+ right: 200
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- server::tests_reinicio::w3_real_run_fallido_reanuda_despues_de_reiniciar_el_proceso stdout ----
+
+thread 'server::tests_reinicio::w3_real_run_fallido_reanuda_despues_de_reiniciar_el_proceso' (8413009) panicked at engine/src/server/tests_reinicio.rs:343:5:
+assertion `left == right` failed: un run fallido tiene que reanudar tras reiniciar el proceso: {"error":"el agente '7b086bf8' del run '90a10ecb' ya no está registrado: no hay grafo que reanudar"}
+  left: 409
+ right: 200
+
+
+failures:
+    server::tests_reinicio::w3_real_run_fallido_reanuda_despues_de_reiniciar_el_proceso
+    server::tests_reinicio::w3_real_run_pausado_reanuda_despues_de_reiniciar_el_proceso
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 908 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p openmirai-engine --lib`

@@ -94,6 +94,14 @@ pub struct AppState {
     /// `mpsc` por-request de `POST /agents/{id}/stream`: otro flujo, otro
     /// contrato. La tabla que compara los dos está en `server/events.rs`.
     pub events: EventEmitter,
+
+    /// Runs EN VUELO en este proceso → su bandera de cancelación (PRD-021-B).
+    ///
+    /// El runner que ejecuta vive dentro de la tarea del run; el endpoint
+    /// `cancel` corre en otra. Este mapa es el puente: se registra al arrancar
+    /// el run y se suelta al registrarlo, así que su tamaño es "runs
+    /// concurrentes", no "runs históricos".
+    pub run_cancels: Arc<RwLock<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 impl AppState {
@@ -136,34 +144,51 @@ impl AppState {
             folder_picker: Arc::new(crate::sessions::picker::FolderPicker::new()),
             session_repo: None,
             events,
+            run_cancels: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Runner cableado con **persistencia de checkpoints** para ESTE run
-    /// (PRD-021-A).
+    /// (PRD-021-A) y con su **bandera de cancelación** registrada (PRD-021-B).
     ///
     /// El callback se ata por run —igual que `with_stream_tx`— porque necesita
     /// la identidad del run: el `Checkpoint` que emite el runner solo trae el
-    /// `session_id`. Sin DB cableada devuelve el runner tal cual: el motor
-    /// corre igual, solo que sin poder reanudar.
-    pub fn runner_with_checkpoints(
+    /// `session_id`. Sin DB cableada devuelve el runner sin checkpoints: el
+    /// motor corre igual, solo que sin poder reanudar (la cancelación sí
+    /// funciona, no depende de la DB).
+    pub async fn runner_with_checkpoints(
         &self,
+        session_id: &str,
         agent_id: &str,
         agent_name: &str,
         started_at: f64,
     ) -> GraphRunner {
-        match &self.session_repo {
-            Some(repo) => {
-                self.runner
-                    .clone()
-                    .with_checkpoint_callback(Box::new(SqliteCheckpointStore::new(
-                        repo.clone(),
-                        agent_id,
-                        agent_name,
-                        started_at,
-                    )))
+        let runner =
+            match &self.session_repo {
+                Some(repo) => self.runner.clone().with_checkpoint_callback(Box::new(
+                    SqliteCheckpointStore::new(repo.clone(), agent_id, agent_name, started_at),
+                )),
+                None => self.runner.clone(),
+            };
+        // Bandera propia por run: `GraphRunner` es Clone y comparte la del
+        // constructor por Arc — sin esto, cancelar un run cancelaría TODOS.
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.run_cancels
+            .write()
+            .await
+            .insert(session_id.to_string(), flag.clone());
+        runner.with_cancel_flag(flag)
+    }
+
+    /// Pide cancelar un run EN VUELO. `false` si no hay ninguno con ese id
+    /// corriendo en este proceso.
+    pub async fn request_cancel(&self, session_id: &str) -> bool {
+        match self.run_cancels.read().await.get(session_id) {
+            Some(flag) => {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                true
             }
-            None => self.runner.clone(),
+            None => false,
         }
     }
 
@@ -178,6 +203,9 @@ impl AppState {
         started_at: f64,
         result: ExecutionResult,
     ) {
+        // El run dejó de estar en vuelo: se suelta su bandera de cancelación.
+        self.run_cancels.write().await.remove(&id);
+
         if let Some(repo) = &self.session_repo {
             let finished_at = crate::utils::now_epoch();
             let status = SessionStatus::from_execution(&result.status);
@@ -192,7 +220,7 @@ impl AppState {
                 duration_ms: Some((finished_at - started_at) * 1000.0),
                 status: status.clone(),
                 // Dónde quedó: solo tiene sentido si NO terminó el grafo.
-                current_node_id: result.interrupt_node_id.clone(),
+                current_node_id: stopped_at_node(&result),
             };
             if let Err(e) = repo.save(&rec).await {
                 tracing::warn!(session_id = %id, error = %e, "no se pudo persistir el run");
@@ -224,6 +252,24 @@ impl AppState {
         sessions.insert(id.clone(), result);
         order.push(id);
     }
+}
+
+/// Nodo en el que se quedó el run, o `None` si llegó al final.
+///
+/// Las pausas y cancelaciones lo traen explícito (`interrupt_node_id`); un
+/// **fallo** no, y hasta 0.7.0 esos runs quedaban registrados sin nodo — o sea,
+/// "falló" sin decir dónde, que es justo el dato que hace falta para reanudar
+/// (PRD-021-B W5/W6). Se recupera del último nodo con error en la traza.
+fn stopped_at_node(result: &ExecutionResult) -> Option<String> {
+    if let Some(node_id) = &result.interrupt_node_id {
+        return Some(node_id.clone());
+    }
+    result
+        .trace
+        .iter()
+        .rev()
+        .find(|t| t.status == crate::core::runner::TraceStatus::Error)
+        .map(|t| t.node_id.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +309,10 @@ pub struct ExecuteRequest {
 pub struct SessionListQuery {
     pub agent_id: Option<String>,
     pub limit: Option<usize>,
+    /// Filtro por estado del run (PRD-021-B): `running`, `paused`,
+    /// `completed`, `failed`, `cancelled`, `timeout`, `interrupted`.
+    /// Es lo que responde "¿qué quedó pausado?" sin traerse todo el histórico.
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

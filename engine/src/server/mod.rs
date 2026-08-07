@@ -12,11 +12,16 @@ pub mod editor;
 pub mod events;
 pub mod handlers;
 pub mod helpers;
+pub mod lifecycle;
 pub mod orchestrator;
 pub mod state;
 
 #[cfg(test)]
 mod tests;
+
+/// Validaciones del ciclo de vida de un run (PRD-021-B/C): W1, W2, W4-W7.
+#[cfg(test)]
+mod tests_ciclo_vida;
 
 // Public API re-exports.
 pub use state::*;
@@ -85,6 +90,15 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/v1/sessions", get(list_sessions))
         .route("/api/v1/sessions/{id}", get(get_session))
+        // Ciclo de vida del run (PRD-021-B): reanudar / cancelar
+        .route(
+            "/api/v1/sessions/{id}/resume",
+            post(self::lifecycle::resume_session),
+        )
+        .route(
+            "/api/v1/sessions/{id}/cancel",
+            post(self::lifecycle::cancel_session),
+        )
         .route(
             "/api/v1/sessions/{id}/otel-trace",
             get(get_session_otel_trace),

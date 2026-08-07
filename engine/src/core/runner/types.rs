@@ -171,12 +171,23 @@ impl Default for RetryPolicy {
 // ExecutionResult / TraceEntry / ExecutionStatus
 // ---------------------------------------------------------------------------
 
+/// Cómo terminó (o dejó de avanzar) una ejecución del grafo.
+///
+/// `Paused` y `Cancelled` se suman en 0.7.1 (PRD-021-B/C). Antes ambos casos
+/// caían en `Interrupted`, que no distinguía "esperando a un humano, reanudable"
+/// de "lo pararon a propósito, terminal" — y sin esa distinción la API no puede
+/// decir en qué va un run. `Interrupted` se conserva para el pause genérico del
+/// runner (`request_pause`) y para deserializar runs de 0.7.0.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExecutionStatus {
     Completed,
     Failed,
     Timeout,
     Interrupted,
+    /// Detenido esperando una respuesta humana. **Reanudable.**
+    Paused,
+    /// Detenido por pedido explícito, en frontera de nodo. **Terminal.**
+    Cancelled,
 }
 
 /// Status of a single node execution within a trace.

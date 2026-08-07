@@ -87,3 +87,4 @@ rust/
 tmp/
 *.tmp
 BITACORA.md
+.evidencia/

@@ -142,18 +142,20 @@ pub(crate) async fn resume_session(
         })?;
 
     // 3. El agente: es el que sabe QUÉ grafo se estaba corriendo.
-    let spec = {
-        let agents = state.agents.read().await;
-        agents.get(&cp.agent_id).cloned().ok_or_else(|| {
-            err(
-                StatusCode::CONFLICT,
-                format!(
-                    "el agente '{}' del run '{id}' ya no está registrado: no hay grafo que reanudar",
-                    cp.agent_id
-                ),
-            )
-        })?
-    };
+    //
+    //    Se busca en memoria y, si no está, en la DB (PRD-021-F): tras
+    //    reiniciar el proceso el `HashMap` arranca vacío, y antes eso mataba el
+    //    reanudar aunque el checkpoint hubiera sobrevivido intacto. Solo queda
+    //    el 409 si la definición nunca se guardó (agente de una DB pre-v3).
+    let spec = state.agent_spec(&cp.agent_id).await.ok_or_else(|| {
+        err(
+            StatusCode::CONFLICT,
+            format!(
+                "el agente '{}' del run '{id}' ya no está registrado: no hay grafo que reanudar",
+                cp.agent_id
+            ),
+        )
+    })?;
     let graph = grafo_del_spec(&spec);
 
     // 4. El estado tal cual quedó.

@@ -116,8 +116,10 @@ fn dir_temporal(nombre: &str) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir =
-        std::env::temp_dir().join(format!("mirai-021f-{nombre}-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "mirai-021f-{nombre}-{}-{nanos}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -184,7 +186,10 @@ async fn w3_real_run_pausado_reanuda_despues_de_reiniciar_el_proceso() {
         let run_id = ejecutar(&app, &agent_id).await;
 
         let (_, run) = get(&app, &format!("/api/v1/sessions/{run_id}")).await;
-        assert_eq!(run["run_status"], "paused", "tiene que quedar pausado: {run}");
+        assert_eq!(
+            run["run_status"], "paused",
+            "tiene que quedar pausado: {run}"
+        );
         assert_eq!(run["current_node_id"], "ask");
         assert_eq!(
             efectos(&log),
@@ -228,8 +233,14 @@ async fn w3_real_run_pausado_reanuda_despues_de_reiniciar_el_proceso() {
         StatusCode::OK,
         "un run pausado tiene que reanudar tras reiniciar el proceso: {body}"
     );
-    assert_eq!(body["status"], "Completed", "el run tiene que terminar: {body}");
-    assert_eq!(body["resumed_from"], "despues", "sigue por el nodo siguiente");
+    assert_eq!(
+        body["status"], "Completed",
+        "el run tiene que terminar: {body}"
+    );
+    assert_eq!(
+        body["resumed_from"], "despues",
+        "sigue por el nodo siguiente"
+    );
 
     // El estado de antes de la pausa se conservó y la respuesta humana entró.
     let estado = &body["state"];
@@ -307,8 +318,14 @@ async fn w3_real_run_fallido_reanuda_despues_de_reiniciar_el_proceso() {
         let run_id = ejecutar(&app, &agent_id).await;
 
         let (_, run) = get(&app, &format!("/api/v1/sessions/{run_id}")).await;
-        assert_eq!(run["run_status"], "failed", "tiene que quedar fallido: {run}");
-        assert_eq!(run["current_node_id"], "n4", "el registro dice dónde se cayó");
+        assert_eq!(
+            run["run_status"], "failed",
+            "tiene que quedar fallido: {run}"
+        );
+        assert_eq!(
+            run["current_node_id"], "n4",
+            "el registro dice dónde se cayó"
+        );
         assert_eq!(
             efectos(&log),
             vec!["n1", "n2", "n3"],
@@ -338,8 +355,14 @@ async fn w3_real_run_fallido_reanuda_despues_de_reiniciar_el_proceso() {
         "el run fallido sobrevive al reinicio"
     );
 
-    // Mismo 409 que el caso pausado: sin la spec no hay grafo que reanudar.
-    let (status, body) = post(&app, &format!("/api/v1/sessions/{run_id}/resume"), json!({})).await;
+    // Con la spec persistida en `agents` (esquema v3) sí hay grafo que reanudar:
+    // el proceso nuevo la lee de la DB aunque su registro en memoria esté vacío.
+    let (status, body) = post(
+        &app,
+        &format!("/api/v1/sessions/{run_id}/resume"),
+        json!({}),
+    )
+    .await;
     assert_eq!(
         status,
         StatusCode::OK,

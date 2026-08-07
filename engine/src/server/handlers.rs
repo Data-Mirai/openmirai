@@ -203,7 +203,9 @@ pub(crate) async fn create_agent(
         "status": "created",
     });
 
-    state.agents.write().await.insert(agent_id, spec);
+    // Alta con persistencia (PRD-021-F): la spec queda en disco para que sus
+    // runs se puedan reanudar aunque el proceso se reinicie.
+    state.register_agent(agent_id, spec).await;
 
     Ok((StatusCode::CREATED, Json(body)))
 }
@@ -464,7 +466,8 @@ pub(crate) async fn create_agent_from_spec(
     let agent_id = short_id();
     let name = spec.name.clone();
 
-    state.agents.write().await.insert(agent_id.clone(), spec);
+    // Alta con persistencia (PRD-021-F): ver `AppState::register_agent`.
+    state.register_agent(agent_id.clone(), spec).await;
 
     Ok((
         StatusCode::CREATED,

@@ -31,7 +31,7 @@ pub struct Migration {
 // ---------------------------------------------------------------------------
 
 /// Current schema version shipped with this build.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Complete DDL for schema v1.  Using `IF NOT EXISTS` makes it idempotent.
 pub const SCHEMA_SQL: &str = r#"
@@ -135,6 +135,42 @@ VALUES (2, 0.0);
 "#;
 
 // ---------------------------------------------------------------------------
+// Schema v3 — la definición del agente (PRD-021-F)
+// ---------------------------------------------------------------------------
+
+/// DDL de la v3: la **spec del agente**, para que un run se pueda reanudar
+/// después de reiniciar el proceso.
+///
+/// El porqué: hasta la v2 el *estado* del run sobrevivía (tabla `checkpoints`)
+/// pero la *definición* no. `AppState.agents` es un `HashMap` en RAM, y la fila
+/// de `agents` la escribía `ensure_parent_rows` solo para satisfacer la FK
+/// (`id`, `name`, `graph_id`), sin nada del grafo. Al reiniciar, `resume`
+/// encontraba el checkpoint pero no tenía QUÉ grafo correr y respondía
+/// `409 Conflict`. Con la spec en la fila del agente, el grafo se rearma.
+///
+/// **Por qué en `agents` y no en `checkpoints`:** una spec puede ser grande y
+/// `agents` guarda **una copia por agente**, no una por run — el tamaño crece
+/// con el número de agentes, no con el de ejecuciones (que es ilimitado). Es
+/// seguro porque un `agent_id` es inmutable: no hay `PUT`/`PATCH` de agentes,
+/// cada alta genera un id nuevo, así que la spec no deriva entre pausa y
+/// reanudación.
+///
+/// **Aditiva y compatible**: columna nueva, NULL-able y sin `DEFAULT`. Una DB
+/// v2 abre con este binario, recibe el `ALTER TABLE` y sus filas siguen
+/// legibles (los agentes viejos quedan con `spec` en NULL — reanudarlos sigue
+/// dando el 409 explicativo de siempre, que es lo honesto: esa definición
+/// nunca se guardó).
+pub const SCHEMA_SQL_V3: &str = r#"
+-- OpenMirai — Schema v3 (PRD-021-F): la definición del agente sobrevive al proceso
+
+-- Spec completa del agente (JSON de `AgentSpec`). NULL para agentes de v1/v2.
+ALTER TABLE agents ADD COLUMN spec TEXT;
+
+INSERT OR IGNORE INTO _schema_version (version, applied_at)
+VALUES (3, 0.0);
+"#;
+
+// ---------------------------------------------------------------------------
 // Migration registry
 // ---------------------------------------------------------------------------
 
@@ -152,6 +188,11 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 2,
         description: "Checkpoints reanudables + nodo actual del run (PRD-021-A)",
         up_sql: SCHEMA_SQL_V2,
+    },
+    Migration {
+        version: 3,
+        description: "Spec del agente persistida: reanudar tras reiniciar (PRD-021-F)",
+        up_sql: SCHEMA_SQL_V3,
     },
 ];
 
@@ -196,6 +237,22 @@ mod tests {
         assert!(!up.contains("RENAME"), "v2 no puede renombrar lo de v1");
         assert!(SCHEMA_SQL_V2.contains("CREATE TABLE IF NOT EXISTS checkpoints"));
         assert!(SCHEMA_SQL_V2.contains("ALTER TABLE sessions ADD COLUMN current_node_id"));
+    }
+
+    #[test]
+    fn v3_is_additive_over_v2() {
+        // Mismo contrato que la v2 sobre la v1: una DB v2 tiene que abrir con
+        // este binario sin perder nada.
+        let up = SCHEMA_SQL_V3.to_uppercase();
+        assert!(!up.contains("DROP TABLE"), "v3 no puede borrar tablas");
+        assert!(!up.contains("DROP COLUMN"), "v3 no puede borrar columnas");
+        assert!(!up.contains("RENAME"), "v3 no puede renombrar lo anterior");
+        assert!(SCHEMA_SQL_V3.contains("ALTER TABLE agents ADD COLUMN spec"));
+        // NULL-able y sin DEFAULT: las filas viejas no se inventan una spec.
+        assert!(
+            !up.contains("NOT NULL") && !up.contains("DEFAULT '"),
+            "la columna spec tiene que aceptar NULL para los agentes ya escritos"
+        );
     }
 
     #[test]

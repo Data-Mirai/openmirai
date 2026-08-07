@@ -11,6 +11,7 @@
 
 mod adapter_factory;
 mod colors;
+mod runs_cmd;
 mod session_storage;
 mod sessions_cmd;
 mod sessions_watch;
@@ -64,6 +65,9 @@ async fn main() {
         Some("rag") => cmd_rag(&args[1..]).await,
         Some("agent") => handle_agent_subcommand(&args[1..]),
         Some("sessions") => sessions_cmd::cmd_sessions(&args[1..]).await,
+        // Runs de agentes (PRD-021-D). Ojo: `sessions` son las sesiones de
+        // Claude en tmux; `runs` son las ejecuciones del motor sobre el grafo.
+        Some("runs") => runs_cmd::cmd_runs(&args[1..]).await,
         Some("help" | "--help" | "-h") => print_help(),
         Some(other) => {
             eprintln!(

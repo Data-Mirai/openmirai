@@ -106,7 +106,13 @@ impl AppState {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
         let events = EventEmitter::new(EVENT_BUS_CAPACITY);
-        let runner = GraphRunner::new(Box::new(executor));
+        // PRD-021-E: EL cableado. `with_event_emitter` no se llamaba en ningún
+        // camino de producción, así que `GraphRunner::emit_event` era un no-op
+        // y TODO lo que el runner emitía (incluido el `checkpoint_created` de
+        // 021-A) se perdía. Se ata aquí, en el runner base, y no por-run: así
+        // cualquier handler que clone `state.runner` —`/execute`, `/stream`, y
+        // el que venga— hereda el bus sin tener que acordarse.
+        let runner = GraphRunner::new(Box::new(executor)).with_event_emitter(events.clone());
         Self {
             graphs: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),

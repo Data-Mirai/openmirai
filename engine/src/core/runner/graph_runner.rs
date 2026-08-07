@@ -47,13 +47,22 @@ enum NodeFailureOutcome {
 #[derive(Clone)]
 pub struct GraphRunner {
     executor: Arc<dyn ToolExecutor>,
+    /// **Bus de observabilidad** (`ExecutionEvent`, `broadcast` de proceso).
+    /// Lo alimenta [`GraphRunner::emit_event`]. Se cablea en `AppState::new` y
+    /// se consume en `GET /api/v1/events`. `None` → `emit_event` es no-op
+    /// (así estuvo hasta PRD-021-E: el bus existía y no lo llenaba nadie).
     event_emitter: Option<EventEmitter>,
     max_iterations: u32,
     default_retry_policy: RetryPolicy,
     hook_handler: Option<Arc<dyn HookHandler>>,
     checkpoint_cb: Option<Arc<dyn CheckpointCallback>>,
     pause_requested: Arc<AtomicBool>,
-    /// Optional channel for real-time streaming events (SSE).
+    /// **Stream del cliente** (`StreamEvent`, `mpsc` por request). Lo alimenta
+    /// [`GraphRunner::stream_event`]. Lo ata `stream_agent` por run y lo lee un
+    /// único consumidor: quien hizo `POST /api/v1/agents/{id}/stream`.
+    ///
+    /// Es OTRO flujo, no una variante del anterior — ver la tabla en
+    /// `server/events.rs`.
     stream_tx: Option<tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>>,
 }
 
@@ -72,7 +81,11 @@ impl GraphRunner {
         }
     }
 
-    /// Attach an event emitter (builder pattern).
+    /// Atar el bus de observabilidad (`ExecutionEvent`). **Obligatorio para
+    /// que `emit_event` haga algo**: sin esto el runner corre igual pero mudo.
+    ///
+    /// Call-site de producción: `AppState::new` (PRD-021-E). Cualquier host
+    /// nuevo del runner que quiera ser observable tiene que llamarlo.
     pub fn with_event_emitter(mut self, emitter: EventEmitter) -> Self {
         self.event_emitter = Some(emitter);
         self
@@ -1407,7 +1420,15 @@ impl GraphRunner {
     // Event helper
     // -----------------------------------------------------------------------
 
-    /// Emit an event if the emitter is attached; no-op otherwise.
+    /// Publica en el **bus de observabilidad** (`ExecutionEvent`, broadcast de
+    /// proceso) — el que ve `GET /api/v1/events`. Sin emisor atado es no-op.
+    ///
+    /// Aquí nacen los eventos que NO tienen equivalente en el stream del
+    /// cliente: `checkpoint_created`, `interrupt_created`,
+    /// `session_interrupted`, `session_started/failed`, `block_*`.
+    ///
+    /// Su gemelo es [`GraphRunner::stream_event`] — otro canal, otro
+    /// consumidor. No los unifiques sin leer `server/events.rs`.
     fn emit_event(
         &self,
         event_type: EventType,
@@ -1425,7 +1446,13 @@ impl GraphRunner {
         }
     }
 
-    /// Send a stream event for real-time SSE. Non-blocking — warns if dropped.
+    /// Publica en el **stream del cliente** (`StreamEvent`, mpsc por request)
+    /// — el que ve `POST /api/v1/agents/{id}/stream`. No bloquea; avisa si se
+    /// cae un evento por canal lleno o cerrado.
+    ///
+    /// Contrato público desde 0.7.0: los nombres y el sobre no se cambian.
+    /// Para observabilidad nueva usa [`GraphRunner::emit_event`], que va al
+    /// otro bus y es aditivo.
     fn stream_event(&self, event: crate::streaming::StreamEvent) {
         if let Some(ref tx) = self.stream_tx {
             if let Err(e) = tx.try_send(event) {

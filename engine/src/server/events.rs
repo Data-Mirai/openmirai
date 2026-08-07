@@ -322,14 +322,31 @@ mod tests {
             "falta interrupt_created; llegaron: {tipos:?}"
         );
 
-        // El checkpoint dice en qué nodo se guardó y con qué id.
-        let cp = recibidos
+        // 021-A guarda checkpoint tras CADA nodo, así que llegan varios: el de
+        // `trigger` (nodo cumplido) y el de `ask` (donde se detuvo el run).
+        let checkpoints: Vec<_> = recibidos
             .iter()
-            .find(|e| e.event_type == EventType::CheckpointCreated)
-            .unwrap();
-        assert_eq!(cp.node_id.as_deref(), Some("ask"));
-        assert!(cp.data.contains_key("checkpoint_id"));
-        assert_eq!(cp.session_id, session_id);
+            .filter(|e| e.event_type == EventType::CheckpointCreated)
+            .collect();
+        let nodos: Vec<&str> = checkpoints
+            .iter()
+            .filter_map(|e| e.node_id.as_deref())
+            .collect();
+        assert!(
+            nodos.contains(&"trigger") && nodos.contains(&"ask"),
+            "el bus debe traer el checkpoint de cada nodo; llegaron: {nodos:?}"
+        );
+        for cp in &checkpoints {
+            // Cada evento se basta solo: dice de qué run es, en qué nodo y
+            // qué fila de checkpoint escribió.
+            assert_eq!(cp.session_id, session_id, "checkpoint sin su run");
+            assert!(
+                cp.data.contains_key("checkpoint_id"),
+                "checkpoint_created sin checkpoint_id: {:?}",
+                cp.data
+            );
+            assert!(cp.data.contains_key("step"));
+        }
     }
 
     #[tokio::test]

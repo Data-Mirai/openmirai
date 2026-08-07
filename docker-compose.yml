@@ -24,11 +24,12 @@ services:
     # existe en el entorno o en .env. Con `VAR: ${VAR:-}` se definiría vacía y
     # el motor la tomaría como valor real — un modelo vacío, por ejemplo.
     environment:
-      # Autenticación de la API (header X-API-Key). OBLIGATORIA acá: el
-      # contenedor bindea 0.0.0.0 y desde 0.7.0 el motor se niega a arrancar
-      # fuera de loopback sin clave — /agents/*/execute y /orchestrator/*
-      # equivalen a ejecución remota de comandos.
-      - MIRAI_API_KEY=${MIRAI_API_KEY:-openmirai-dev}
+      # Autenticación de la API (header X-API-Key). Sin valor por defecto a
+      # propósito: `?` corta el `up` con este mensaje en vez de arrancar con
+      # una clave conocida. /agents/*/execute y /orchestrator/* equivalen a
+      # ejecución remota de comandos, así que una clave de ejemplo publicada
+      # en el repo satisfaría el control de 0.7.0 sin proteger nada.
+      - "MIRAI_API_KEY=${MIRAI_API_KEY:?definí MIRAI_API_KEY en .env (generala con `openssl rand -hex 32`)}"
       # Proveedor de LLM. `mock` = respuestas deterministas sin red ni API key.
       - MIRAI_LLM_PROVIDER=${MIRAI_LLM_PROVIDER:-mock}
       - MIRAI_PORT=3000
@@ -48,9 +49,14 @@ services:
       - OPENROUTER_API_KEY
 
     ports:
-      # 4321 en el host es el puerto que el resto del ecosistema Mirai espera
-      # del motor; adentro el servidor escucha en 3000.
-      - "${MIRAI_PUBLIC_PORT:-4321}:3000"
+      # Solo loopback por defecto. Publicar sin dirección de bind expone el
+      # puerto en TODAS las interfaces, y las reglas DNAT de Docker entran
+      # antes que el filtrado del host, así que un ufw/firewalld del host no
+      # lo tapa. Exponerlo a la red es una decisión explícita:
+      #   MIRAI_BIND_ADDR=0.0.0.0 en .env
+      # 4321 es el puerto que el resto del ecosistema Mirai espera del motor;
+      # adentro el servidor escucha en 3000.
+      - "${MIRAI_BIND_ADDR:-127.0.0.1}:${MIRAI_PUBLIC_PORT:-4321}:3000"
 
     volumes:
       # Specs de agentes. Read-only: el motor los lee, no los escribe.
@@ -95,7 +101,7 @@ services:
         condition: service_healthy
     environment:
       - OPENMIRAI_URL=http://engine:3000
-      - MIRAI_API_KEY=${MIRAI_API_KEY:-openmirai-dev}
+      - MIRAI_API_KEY=${MIRAI_API_KEY:?definí MIRAI_API_KEY en .env}
       # persistencia.sh guarda los ids acá para poder retomarlos después del
       # reinicio: /tmp no sirve porque el contenedor se destruye con --rm.
       - ESTADO_FILE=/data/.persistencia.json
@@ -116,8 +122,11 @@ services:
     profiles: ["llm-local"]
     volumes:
       - ollama-modelos:/root/.ollama
-    ports:
-      - "${OLLAMA_PUBLIC_PORT:-11434}:11434"
+    # Sin `ports`: Ollama no tiene autenticación de ningún tipo y nada del
+    # stack necesita alcanzarlo desde el host — el motor lo resuelve por
+    # nombre de servicio en la red de compose, y los modelos se bajan con
+    # `docker compose exec ollama ollama pull <modelo>`.
+    # Si hiciera falta desde el host: - "127.0.0.1:11434:11434"
     restart: unless-stopped
 
 volumes:

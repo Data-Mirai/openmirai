@@ -68,9 +68,13 @@ preparar() {
     esperar_motor
     printf "Preparando estado en %s\n" "$URL"
 
+    # El live va sin max_cycles a propósito: uno acotado terminaría sus ciclos
+    # antes del reinicio, el motor apagaría su marca de "ciclando" —como debe—
+    # y entonces no correspondería relanzarlo. El caso que interesa probar es
+    # el 24/7: estaba ciclando cuando el proceso murió.
     local id_normal id_live play
     id_normal=$(registrar 01-pipeline-lineal.yaml)
-    id_live=$(registrar 08-agente-live.yaml)
+    id_live=$(registrar 10-agente-live-continuo.yaml)
 
     if [ -z "$id_normal" ] || [ -z "$id_live" ]; then
         printf "%s✗ no se pudieron registrar los agentes%s\n" "$ROJO" "$FIN"

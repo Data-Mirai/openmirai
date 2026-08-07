@@ -1300,6 +1300,12 @@ pub(crate) async fn stop_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Apagar la marca durable ANTES de mirar si está agendado: un `stop` tiene
+    // que garantizar que el agente no vuelva a arrancar solo, incluso si la
+    // marca quedó huérfana (el proceso murió entre el fin del ciclado y su
+    // limpieza). Si no está agendado igual se responde 409, que es la verdad.
+    state.persist_playing(&id, false).await;
+
     if !state.scheduler.is_scheduled(&id).await {
         return Err((
             StatusCode::CONFLICT,
@@ -1311,12 +1317,60 @@ pub(crate) async fn stop_agent(
 
     let cycles_completed = state.scheduler.get_cycle_count(&id).await;
     state.scheduler.unschedule_agent(&id).await;
-    state.persist_playing(&id, false).await;
 
     Ok(Json(json!({
         "agent_id": id,
         "status": "enabled",
         "cycles_completed": cycles_completed,
+    })))
+}
+
+/// DELETE /api/v1/agents/{id} — Remove an agent from the registry.
+///
+/// Without this there is no way to retire an agent once it is registered: the
+/// spec stays in the durable registry for good, and a live one keeps being
+/// rescheduled on every startup. Removing it stops the cycling first, then
+/// drops the spec from memory, from disk and its stored memory.
+pub(crate) async fn delete_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Primero frenarlo: un agente ciclando seguiría ejecutando un spec que ya
+    // no figura en el registro.
+    let estaba_ciclando = state.scheduler.is_scheduled(&id).await;
+    if estaba_ciclando {
+        state.scheduler.unschedule_agent(&id).await;
+    }
+
+    let borrado_memoria = state.agents.write().await.remove(&id).is_some();
+    let borrado_disco = match &state.agent_store {
+        Some(store) => store.delete(&id).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("cannot delete agent from the registry: {e}"),
+                }),
+            )
+        })?,
+        None => false,
+    };
+
+    if !borrado_memoria && !borrado_disco {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Agent not found".to_string(),
+            }),
+        ));
+    }
+
+    // Sin initial_values: se borra, no se reinicia — el agente ya no existe.
+    state.memory_store.clear_all_memory(&id, None).await;
+
+    Ok(Json(json!({
+        "id": id,
+        "status": "deleted",
+        "was_playing": estaba_ciclando,
     })))
 }
 

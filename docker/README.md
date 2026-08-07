@@ -6,7 +6,7 @@ un despliegue productivo: es **medir qué tan lista está la v0.7.0 para correr 
 la nube** y dejar el diagnóstico por escrito.
 
 Resultado de la corrida de referencia **contra el contenedor** —imagen
-`openmirai/engine:0.6.0-proto`, no un `mirai serve` nativo—: **22
+`openmirai/engine:0.7.0-proto`, no un `mirai serve` nativo—: **22
 verificaciones en verde, 1 brecha del motor** (ver
 [Brechas para producción](#brechas-para-producción)).
 
@@ -43,15 +43,34 @@ PID 1 sin cortar ejecuciones en vuelo) y que el volumen sobreviva un
 ## Arranque rápido
 
 ```bash
-cp .env.example .env                 # ajustar MIRAI_API_KEY si se quiere
+cp .env.example .env
+echo "MIRAI_API_KEY=$(openssl rand -hex 32)" >> .env   # obligatorio
 docker compose up -d --build         # construye y levanta el motor
 docker compose run --rm smoke        # corre la suite e2e contra el motor
 ```
 
-El motor queda en `http://localhost:4321` (adentro escucha en 3000).
+La clave no es opcional: el compose corta el arranque si `MIRAI_API_KEY` está
+vacía, y no hay valor por defecto a propósito. Cualquier clave de ejemplo que
+viniera en el repo sería pública, y esta API ejecuta comandos —
+`/agents/*/execute` y `/orchestrator/*` corren `sh -c` y levantan sesiones de
+tmux —, así que una clave conocida equivale a no tener ninguna.
+
+El motor queda en `http://127.0.0.1:4321` (adentro escucha en 3000), **solo
+accesible desde esta máquina**. Para alcanzarlo desde otra —por ejemplo para
+apuntar AgentMirai a este motor— hay que exponerlo a propósito:
 
 ```bash
-curl http://localhost:4321/health
+echo "MIRAI_BIND_ADDR=0.0.0.0" >> .env
+docker compose up -d
+```
+
+Antes de hacerlo, tené en cuenta que las reglas DNAT que instala Docker se
+evalúan **antes** que el filtrado del host, así que un `ufw`/`firewalld` no
+alcanza para tapar el puerto: la clave de API pasa a ser lo único que separa a
+la red local de la ejecución remota de comandos.
+
+```bash
+curl http://127.0.0.1:4321/health
 docker compose logs -f engine
 docker compose down                  # -v para borrar también el volumen
 ```
@@ -87,7 +106,7 @@ docker compose up -d engine
 | `docker/entrypoint.sh` | Traduce `MIRAI_HOST`/`MIRAI_PORT` a flags: `mirai serve` los lee solo por línea de comandos. |
 | `docker/smoke.sh` | Suite e2e contra la API HTTP. |
 | `docker/persistencia.sh` | Verifica que los agentes sobrevivan al reinicio (dos fases, con el reinicio en el medio). |
-| `docker/flows/` | Los nueve flujos de prueba. |
+| `docker/flows/` | Los diez flujos de prueba. |
 | `docker-compose.yml` | Servicios `engine`, `smoke` (perfil `test`) y `ollama` (perfil `llm-local`). |
 | `.dockerignore` | Contexto mínimo de build. |
 
@@ -132,6 +151,7 @@ cliente de la nube.
 | `07-bash-contenedor` | Hay shell en la imagen **y** el proceso no corre como root. |
 | `08-agente-live` | Ciclado autónomo: `play` → cicla solo → memoria persistida entre ciclos → se desregistra al agotar `max_cycles` y vuelve a aceptar `play`. |
 | `09-subagente` | Composición de agentes. **Brecha: devuelve un placeholder.** |
+| `10-agente-live-continuo` | Ciclado sin `max_cycles` — el caso 24/7. Lo usa `persistencia.sh`: un agente acotado terminaría sus ciclos antes del reinicio y ya no correspondería relanzarlo. |
 
 Más SSE (`/stream` emite el ciclo completo de eventos), autenticación
 (401 sin clave, `/health` público) y los endpoints `/sessions` y `/metrics`.

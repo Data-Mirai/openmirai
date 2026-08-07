@@ -814,3 +814,88 @@ async fn stream_event_session_id_matches_persisted_run() {
     });
     assert_eq!(run["id"], event_session_id);
 }
+
+// ---------------------------------------------------------------------------
+// DELETE /api/v1/agents/{id}
+//
+// Sin esta ruta un agente registrado no se podía retirar: quedaba en el
+// registro para siempre y, si era live, se relanzaba en cada arranque.
+// ---------------------------------------------------------------------------
+
+/// Registra un agente mínimo y devuelve su id.
+async fn registrar_agente(app: &Router, nombre: &str) -> String {
+    let spec = json!({
+        "name": nombre,
+        "version": "v1",
+        "graph": {
+            "nodes": [
+                {"id": "trigger", "tool_type": "trigger/manual"},
+                {"id": "out", "tool_type": "output/response"}
+            ],
+            "edges": [{"source": "trigger", "target": "out"}]
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/agents/from-spec")
+                .header("content-type", "application/json")
+                .body(Body::from(spec.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    body_json(resp.into_body()).await["id"]
+        .as_str()
+        .expect("id del agente")
+        .to_string()
+}
+
+#[tokio::test]
+async fn delete_agent_lo_saca_del_registro() {
+    let app = test_app();
+    let id = registrar_agente(&app, "descartable").await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/v1/agents/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["status"], "deleted");
+    assert_eq!(json["was_playing"], false);
+
+    // Ya no se puede consultar ni ejecutar.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/agents/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delete_agent_inexistente_da_404() {
+    let app = test_app();
+    let resp = app
+        .oneshot(
+            Request::delete("/api/v1/agents/no-existe")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

@@ -56,7 +56,7 @@ pub fn create_router(state: AppState) -> Router {
         // Agents CRUD
         .route("/api/v1/agents", post(create_agent).get(list_agents))
         .route("/api/v1/agents/from-spec", post(create_agent_from_spec))
-        .route("/api/v1/agents/{id}", get(get_agent))
+        .route("/api/v1/agents/{id}", get(get_agent).delete(delete_agent))
         .route("/api/v1/agents/{id}/execute", post(execute_agent))
         .route("/api/v1/agents/{id}/stream", post(stream_agent))
         .route("/api/v1/agents/{id}/spec", get(get_agent_spec))
@@ -476,6 +476,25 @@ pub async fn serve(
     match crate::db::AgentStore::open(&resolved_db.to_string_lossy()) {
         Ok(store) => {
             tracing::info!("agent registry persistence: {}", resolved_db.display());
+
+            // Cuando un live agota sus ciclos, el scheduler lo desagenda pero
+            // el disco seguiría diciendo que cicla y lo relanzaría en cada
+            // arranque. El aviso apaga la marca. Captura solo el store, no el
+            // AppState: si capturara el estado, el scheduler quedaría con una
+            // referencia circular hacia sí mismo.
+            let store_para_marca = store.clone();
+            state
+                .scheduler
+                .set_on_agent_finished(std::sync::Arc::new(move |agent_id| {
+                    let s = store_para_marca.clone();
+                    Box::pin(async move {
+                        if let Err(e) = s.set_playing(&agent_id, false).await {
+                            tracing::error!(agent_id = %agent_id, error = %e, "cannot clear playing flag after cycles finished");
+                        }
+                    })
+                }))
+                .await;
+
             state.agent_store = Some(store);
             let (cargados, relanzados) = helpers::restore_from_store(&state).await;
             if cargados > 0 || relanzados > 0 {

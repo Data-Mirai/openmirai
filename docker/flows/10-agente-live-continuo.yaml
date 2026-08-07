@@ -1,0 +1,51 @@
+# Flujo 10 — Agente live sin límite de ciclos
+#
+# El 08 cicla tres veces y se detiene solo: sirve para verificar el ciclado,
+# pero no para probar la persistencia, porque al agotar `max_cycles` el motor
+# apaga su marca de "ciclando" y ya no corresponde relanzarlo.
+#
+# Este es el caso 24/7 de verdad: sin `max_cycles`, solo se detiene si alguien
+# llama a /stop o si se cae el proceso. Es el que usa docker/persistencia.sh
+# para comprobar que un agente que estaba ciclando cuando el contenedor murió
+# vuelve a ciclar solo al arrancar.
+#
+# Ojo: mientras esté en play consume un ciclo por segundo. persistencia.sh lo
+# frena al terminar.
+
+name: 10-agente-live-continuo
+version: v1
+description: "Agente live que cicla indefinidamente hasta que lo frenen"
+
+agent_type: live
+
+schedule:
+  interval_seconds: 1
+  on_cycle_error: continue
+
+graph:
+  memory:
+    persist: cycle
+    keys:
+      ultimo_ciclo: 0
+
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: recordar
+      tool_type: state/memory
+      config: {}
+
+    - id: responder
+      tool_type: output/response
+      config:
+        message: "ciclo-continuo-ok"
+
+  edges:
+    - source: trigger
+      target: recordar
+      data_map:
+        ultimo_ciclo: "trigger.payload.cycle_number"
+
+    - source: recordar
+      target: responder

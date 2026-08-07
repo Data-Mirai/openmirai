@@ -34,6 +34,18 @@ pub type CycleCallback = Arc<
         + Sync,
 >;
 
+/// Callback invocado cuando un agente deja de ciclar **por sí solo** — agotó
+/// `max_cycles` o cortó por `on_cycle_error: stop`.
+///
+/// No se invoca cuando lo frena alguien de afuera (`unschedule_agent`, `stop`):
+/// ahí la tarea se aborta y el que la frenó ya sabe que la frenó. Existe para
+/// que quien guarde estado durable pueda enterarse de que el agente terminó;
+/// sin esto, un agente marcado como "ciclando" en disco se relanzaría en cada
+/// arranque aunque ya hubiera cumplido sus ciclos.
+pub type AgentFinishedCallback = Arc<
+    dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
+>;
+
 // ---------------------------------------------------------------------------
 // ScheduledEntry (internal bookkeeping)
 // ---------------------------------------------------------------------------
@@ -64,6 +76,8 @@ pub struct Scheduler {
     cycle_counters: Arc<RwLock<HashMap<String, u64>>>,
     /// Secuencia monotónica de sesiones de play. Ver [`ScheduledEntry::session_id`].
     session_seq: Arc<AtomicU64>,
+    /// Aviso opcional de "este agente terminó su ciclado solo".
+    on_finished: Arc<RwLock<Option<AgentFinishedCallback>>>,
 }
 
 impl Scheduler {
@@ -74,7 +88,14 @@ impl Scheduler {
             cycle_history: Arc::new(RwLock::new(HashMap::new())),
             cycle_counters: Arc::new(RwLock::new(HashMap::new())),
             session_seq: Arc::new(AtomicU64::new(0)),
+            on_finished: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Registra quién quiere enterarse de que un agente terminó de ciclar solo.
+    /// Ver [`AgentFinishedCallback`].
+    pub async fn set_on_agent_finished(&self, callback: AgentFinishedCallback) {
+        *self.on_finished.write().await = Some(callback);
     }
 
     /// Mark the scheduler as running.
@@ -136,6 +157,7 @@ impl Scheduler {
         let history = Arc::clone(&self.cycle_history);
         let counters = Arc::clone(&self.cycle_counters);
         let entries_para_limpieza = Arc::clone(&self.entries);
+        let on_finished = Arc::clone(&self.on_finished);
 
         // El lock de `entries` se toma ANTES de lanzar la tarea y se suelta
         // recién después de insertarla. Así, si el bucle termina de inmediato
@@ -234,14 +256,27 @@ impl Scheduler {
             // `play` posterior no reciba un 409 por un agente que ya no corre.
             // Si en cambio la tarea fue abortada (unschedule/stop), este await
             // se cancela y es el llamador el que ya removió la entrada.
-            let mut entries = entries_para_limpieza.write().await;
-            match entries.get(&aid) {
-                Some(entry) if entry.session_id == session_id => {
-                    entries.remove(&aid);
-                    info!(agent_id = %aid, "Agent unscheduled (cycles finished)");
+            let era_nuestra = {
+                let mut entries = entries_para_limpieza.write().await;
+                match entries.get(&aid) {
+                    Some(entry) if entry.session_id == session_id => {
+                        entries.remove(&aid);
+                        info!(agent_id = %aid, "Agent unscheduled (cycles finished)");
+                        true
+                    }
+                    // La entrada es de otra sesión de play: no es nuestra.
+                    _ => false,
                 }
-                // La entrada es de otra sesión de play: no es nuestra.
-                _ => {}
+            };
+
+            // Avisar que terminó solo, para que el estado durable deje de
+            // decir que este agente está ciclando. Solo si la entrada era
+            // nuestra: si la pisó un play posterior, el que manda es ese.
+            if era_nuestra {
+                let callback = on_finished.read().await.clone();
+                if let Some(cb) = callback {
+                    cb(aid.clone()).await;
+                }
             }
         });
 
@@ -503,6 +538,72 @@ mod tests {
             "siguió ciclando después del stop"
         );
         assert!(!sched.is_scheduled("live").await);
+    }
+
+    /// Recolecta los agentes que avisaron "terminé de ciclar".
+    fn avisos() -> (AgentFinishedCallback, Arc<RwLock<Vec<String>>>) {
+        let vistos = Arc::new(RwLock::new(Vec::new()));
+        let interno = Arc::clone(&vistos);
+        let cb: AgentFinishedCallback = Arc::new(move |aid| {
+            let v = Arc::clone(&interno);
+            Box::pin(async move {
+                v.write().await.push(aid);
+            })
+        });
+        (cb, vistos)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn avisa_cuando_el_agente_termina_solo() {
+        let sched = Scheduler::new();
+        let (cb, cuenta) = contador();
+        let (aviso, vistos) = avisos();
+        sched.set_on_agent_finished(aviso).await;
+
+        sched
+            .schedule_agent("live", 1, Some(2), "continue", cb)
+            .await;
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+        assert_eq!(cuenta.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            vistos.read().await.as_slice(),
+            ["live".to_string()],
+            "agotó max_cycles y no avisó: el estado durable seguiría diciendo que cicla"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_avisa_cuando_lo_frenan_de_afuera() {
+        let sched = Scheduler::new();
+        let (cb, _) = contador();
+        let (aviso, vistos) = avisos();
+        sched.set_on_agent_finished(aviso).await;
+
+        // Sin max_cycles: solo termina si alguien lo frena.
+        sched.schedule_agent("live", 1, None, "continue", cb).await;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        sched.unschedule_agent("live").await;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        assert!(
+            vistos.read().await.is_empty(),
+            "lo frenaron de afuera: quien lo frenó ya sabe, no hay nada que avisar"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn avisa_cuando_corta_por_error() {
+        let sched = Scheduler::new();
+        let (aviso, vistos) = avisos();
+        sched.set_on_agent_finished(aviso).await;
+
+        let cb: CycleCallback =
+            Arc::new(|_aid, _cycle, _first| Box::pin(async { Err("falla".to_string()) }));
+        sched.schedule_agent("live", 1, None, "stop", cb).await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        assert_eq!(vistos.read().await.as_slice(), ["live".to_string()]);
     }
 
     #[tokio::test(start_paused = true)]

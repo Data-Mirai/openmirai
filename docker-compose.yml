@@ -17,6 +17,10 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: runtime
+      args:
+        # Identifica el build en /health y /version. El sha de git queda en
+        # "unknown": .git no viaja al contexto de build.
+        MIRAI_BUILD_NUMBER: ${MIRAI_BUILD_NUMBER:-docker}
     image: openmirai/engine:0.7.0-proto
     container_name: openmirai-engine
 

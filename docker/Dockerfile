@@ -24,11 +24,25 @@ WORKDIR /src
 # necesita `rusqlite` con feature `bundled` para compilar sqlite3.c.
 # reqwest usa rustls (no OpenSSL), así que tampoco hace falta pkg-config.
 
-COPY Cargo.toml Cargo.lock ./
-COPY engine/Cargo.toml engine/Cargo.toml
-COPY cli/Cargo.toml cli/Cargo.toml
+# VERSION y los build.rs no son opcionales: desde 0.7.0 los scripts de build de
+# ambos crates emiten MIRAI_VERSION / MIRAI_BUILD / MIRAI_GIT_SHA / MIRAI_BUILD_TS,
+# y el código las lee con env!(), que falla en compilación si no están. Sin los
+# build.rs en el contexto, Cargo ni siquiera ejecuta los scripts y el build muere
+# con "environment variable MIRAI_VERSION not defined at compile time".
+# rust-toolchain.toml se copia para respetar el toolchain que fija el repo.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml VERSION ./
+COPY engine/Cargo.toml engine/build.rs engine/
+COPY cli/Cargo.toml cli/build.rs cli/
 COPY engine/src engine/src
 COPY cli/src cli/src
+
+# Identificación del build. El sha queda en "unknown": .git no viaja al contexto
+# —pesa y no hace falta para compilar— y el build.rs lo resuelve ejecutando git.
+# Para trazar una imagen concreta, pasá MIRAI_BUILD_NUMBER.
+ARG MIRAI_BUILD_NUMBER=docker
+ARG MIRAI_BUILD_TS=unknown
+ENV MIRAI_BUILD_NUMBER=${MIRAI_BUILD_NUMBER} \
+    MIRAI_BUILD_TS=${MIRAI_BUILD_TS}
 
 # Cache mounts de BuildKit: el registry y target/ sobreviven entre builds sin
 # quedar en la capa. Por eso el binario se copia a /out DENTRO del mismo RUN

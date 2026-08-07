@@ -1488,6 +1488,8 @@ fn print_help() {
     mirai run <file> [options]               Execute agent from JSON/YAML file
     mirai validate <file>                    Validate agent spec
     mirai serve [--port N] [--ui-dir <dir>] [--db-path <file>]  Start HTTP server (+ web UI at /ui; runs persisted to SQLite, default ~/.openmirai/engine.db)
+    mirai runs <cmd>                         Ver, reanudar y cancelar ejecuciones de agentes
+                                             (list|show|resume|cancel; `mirai runs help`)
     mirai sessions <cmd>                     Orchestrate live coding sessions (needs tmux + a
                                              running `mirai serve`; `mirai sessions help`)
     mirai edit <file>                        Visual editor for an agent in your browser

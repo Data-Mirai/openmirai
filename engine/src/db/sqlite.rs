@@ -817,6 +817,15 @@ mod tests {
         };
         repo.save_checkpoint(&cp, &progress).await.unwrap();
         assert!(repo.get_checkpoint("run-nuevo").await.unwrap().is_some());
+        drop(repo);
+
+        // Y "abrir el binario nuevo" pasa cada vez que arranca el proceso, no
+        // una sola: la segunda apertura tiene que ser igual de sana.
+        let otra_vez = SqliteSessionRepo::open(&path)
+            .expect("una DB ya migrada tiene que volver a abrir sin romperse");
+        assert_eq!(otra_vez.schema_version().await.unwrap(), 2);
+        assert!(otra_vez.get("run-v1").await.unwrap().is_some());
+        assert!(otra_vez.get_checkpoint("run-nuevo").await.unwrap().is_some());
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

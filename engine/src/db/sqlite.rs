@@ -156,21 +156,43 @@ impl SqliteSessionRepo {
         agent_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SessionRecord>, DbError> {
+        self.list_runs(agent_id, None, limit).await
+    }
+
+    /// Lista runs filtrando por agente y/o **estado** (PRD-021-B).
+    ///
+    /// El filtro por estado es el que responde "¿qué hay pausado?" y "¿qué está
+    /// corriendo ahora?" — la base de la observabilidad de una flota. Va en SQL
+    /// (no filtrando en memoria) para que el `LIMIT` cuente sobre lo filtrado.
+    pub async fn list_runs(
+        &self,
+        agent_id: Option<&str>,
+        status: Option<SessionStatus>,
+        limit: usize,
+    ) -> Result<Vec<SessionRecord>, DbError> {
         let agent_id = agent_id.map(str::to_string);
+        let status = status.map(|s| s.to_string());
         self.with_conn(move |conn| {
-            let (sql, args): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match &agent_id {
-                Some(aid) => (
-                    "SELECT * FROM sessions WHERE agent_id = ?1
-                     ORDER BY started_at DESC LIMIT ?2",
-                    vec![Box::new(aid.clone()), Box::new(limit as i64)],
-                ),
-                None => (
-                    "SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?1",
-                    vec![Box::new(limit as i64)],
-                ),
-            };
+            let mut sql = String::from("SELECT * FROM sessions");
+            let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+            let mut wheres: Vec<String> = Vec::new();
+            if let Some(aid) = &agent_id {
+                args.push(Box::new(aid.clone()));
+                wheres.push(format!("agent_id = ?{}", args.len()));
+            }
+            if let Some(st) = &status {
+                args.push(Box::new(st.clone()));
+                wheres.push(format!("status = ?{}", args.len()));
+            }
+            if !wheres.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&wheres.join(" AND "));
+            }
+            args.push(Box::new(limit as i64));
+            sql.push_str(&format!(" ORDER BY started_at DESC LIMIT ?{}", args.len()));
+
             let mut stmt = conn
-                .prepare(sql)
+                .prepare(&sql)
                 .map_err(|e| DbError::ConnectionError(format!("prepare: {e}")))?;
             let arg_refs: Vec<&dyn rusqlite::types::ToSql> =
                 args.iter().map(|b| b.as_ref()).collect();
@@ -890,6 +912,86 @@ mod tests {
             let got = repo.get(&format!("s{i}")).await.unwrap().unwrap();
             assert_eq!(&got.status, estado, "estado {estado} debe persistir");
             assert_eq!(got.current_node_id.as_deref(), Some(&*format!("nodo-{i}")));
+        }
+    }
+
+    #[tokio::test]
+    async fn list_runs_filtra_por_estado_y_por_agente_en_sql() {
+        // PRD-021-B: `GET /sessions?status=paused` se apoya en esto. El filtro
+        // va en SQL (no en memoria) para que el LIMIT cuente sobre lo filtrado
+        // — si no, pedir 50 pausados devuelve los pausados que haya entre los
+        // últimos 50 runs, que no es lo mismo.
+        let repo = SqliteSessionRepo::open_in_memory().unwrap();
+        let estados = [
+            ("s-pausa-1", "a1", SessionStatus::Paused),
+            ("s-pausa-2", "a2", SessionStatus::Paused),
+            ("s-corriendo", "a1", SessionStatus::Running),
+            ("s-ok", "a1", SessionStatus::Completed),
+            ("s-cancel", "a1", SessionStatus::Cancelled),
+        ];
+        for (i, (id, agente, estado)) in estados.iter().enumerate() {
+            let mut rec = make_record(id, agente, i as f64);
+            rec.status = estado.clone();
+            repo.save(&rec).await.unwrap();
+        }
+
+        let pausados = repo
+            .list_runs(None, Some(SessionStatus::Paused), 50)
+            .await
+            .unwrap();
+        assert_eq!(
+            pausados.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["s-pausa-2", "s-pausa-1"],
+            "más nuevo primero"
+        );
+
+        // Estado + agente combinan.
+        let de_a1 = repo
+            .list_runs(Some("a1"), Some(SessionStatus::Paused), 50)
+            .await
+            .unwrap();
+        assert_eq!(de_a1.len(), 1);
+        assert_eq!(de_a1[0].id, "s-pausa-1");
+
+        assert_eq!(
+            repo.list_runs(None, Some(SessionStatus::Cancelled), 50)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // Sin filtro: todos (y `list_by_agent` sigue funcionando igual).
+        assert_eq!(repo.list_runs(None, None, 50).await.unwrap().len(), 5);
+        assert_eq!(repo.list_by_agent(Some("a1"), 50).await.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn un_run_pausado_o_cancelado_round_tripea_su_estado_de_ejecucion() {
+        // PRD-021-C: `Paused` y `Cancelled` son estados nuevos de
+        // `ExecutionStatus`; tienen que sobrevivir el viaje a la DB y volver
+        // como lo que son, no degradados a `Interrupted`.
+        let repo = SqliteSessionRepo::open_in_memory().unwrap();
+        for (id, estado, esperado) in [
+            (
+                "s-pausa",
+                SessionStatus::Paused,
+                crate::core::runner::ExecutionStatus::Paused,
+            ),
+            (
+                "s-cancel",
+                SessionStatus::Cancelled,
+                crate::core::runner::ExecutionStatus::Cancelled,
+            ),
+        ] {
+            let mut rec = make_record(id, "a1", 1.0);
+            rec.status = estado.clone();
+            rec.current_node_id = Some("n3".into());
+            repo.save(&rec).await.unwrap();
+
+            let got = repo.get(id).await.unwrap().unwrap();
+            assert_eq!(got.status, estado);
+            assert_eq!(got.result.status, esperado);
+            assert_eq!(got.current_node_id.as_deref(), Some("n3"));
         }
     }
 

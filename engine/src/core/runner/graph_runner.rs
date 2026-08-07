@@ -53,6 +53,10 @@ pub struct GraphRunner {
     hook_handler: Option<Arc<dyn HookHandler>>,
     checkpoint_cb: Option<Arc<dyn CheckpointCallback>>,
     pause_requested: Arc<AtomicBool>,
+    /// Cancelación **cooperativa** (PRD-021-B): quien quiera parar el run
+    /// levanta esta bandera y el bucle se detiene en la próxima frontera de
+    /// nodo. No es un kill: el nodo en curso termina, nada queda a medias.
+    cancel_requested: Arc<AtomicBool>,
     /// Optional channel for real-time streaming events (SSE).
     stream_tx: Option<tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>>,
 }
@@ -68,6 +72,7 @@ impl GraphRunner {
             hook_handler: None,
             checkpoint_cb: None,
             pause_requested: Arc::new(AtomicBool::new(false)),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
             stream_tx: None,
         }
     }
@@ -122,6 +127,33 @@ impl GraphRunner {
         self.pause_requested.clone()
     }
 
+    /// Pide **cancelar** el run (PRD-021-B).
+    ///
+    /// Cooperativo a propósito: no mata nada. El nodo que esté corriendo
+    /// termina y el bucle se detiene en la siguiente frontera de nodo, deja su
+    /// checkpoint y devuelve [`ExecutionStatus::Cancelled`] con el nodo en el
+    /// que iba. Un kill dejaría recursos a medias (archivos a mitad de
+    /// escritura, requests colgados) y ningún registro de dónde quedó.
+    pub fn request_cancel(&self) {
+        self.cancel_requested.store(true, Ordering::SeqCst);
+    }
+
+    /// Bandera de cancelación, para que el dueño del run (el server) la
+    /// levante desde otra tarea. **Esta es la única forma de cancelar desde
+    /// fuera**: el runner que corre vive dentro de la tarea de ejecución.
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancel_requested.clone()
+    }
+
+    /// Ata una bandera de cancelación creada afuera (builder).
+    ///
+    /// El server registra `session_id → flag` ANTES de arrancar el run, así el
+    /// endpoint `cancel` tiene a quién levantarle la mano.
+    pub fn with_cancel_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel_requested = flag;
+        self
+    }
+
     // -----------------------------------------------------------------------
     // Core execution loop
     // -----------------------------------------------------------------------
@@ -167,8 +199,15 @@ impl GraphRunner {
             .id
             .clone();
 
-        self.run_from(graph, context, state, &entry_node_id, 0)
-            .await
+        self.run_from(
+            graph,
+            context,
+            state,
+            &entry_node_id,
+            0,
+            std::collections::HashSet::new(),
+        )
+        .await
     }
 
     /// Resume execution from a previously saved state.
@@ -181,9 +220,42 @@ impl GraphRunner {
         resume_state: SharedState,
         resume_node_id: &str,
     ) -> Result<ExecutionResult, RunnerError> {
-        graph.validate()?;
-        self.run_from(graph, context, resume_state, resume_node_id, 0)
+        self.resume_skipping(graph, context, resume_state, resume_node_id, &[], 0)
             .await
+    }
+
+    /// Reanuda **sin repetir los efectos** de lo ya ejecutado (PRD-021-C).
+    ///
+    /// `already_executed` son los nodos que el checkpoint registra como
+    /// corridos. La garantía principal es estructural —el cursor arranca en el
+    /// primer nodo NO ejecutado, así que lo anterior queda detrás— pero un
+    /// grafo con ciclos puede volver a pasar por ellos. Por eso cada nodo de
+    /// esa lista se **salta UNA vez**: se avanza con la salida que ya está en
+    /// el estado, sin llamar a la tool. "Una vez" y no "siempre" a propósito:
+    /// si el grafo tiene un bucle legítimo, la segunda vuelta sí ejecuta.
+    ///
+    /// `start_step` continúa la numeración de bloques del run original, para
+    /// que los checkpoints del tramo reanudado no pisen la cuenta anterior.
+    pub async fn resume_skipping(
+        &self,
+        graph: &GraphDef,
+        context: &dyn ExecutionContext,
+        resume_state: SharedState,
+        resume_node_id: &str,
+        already_executed: &[String],
+        start_step: u32,
+    ) -> Result<ExecutionResult, RunnerError> {
+        graph.validate()?;
+        let skip: std::collections::HashSet<String> = already_executed.iter().cloned().collect();
+        self.run_from(
+            graph,
+            context,
+            resume_state,
+            resume_node_id,
+            start_step,
+            skip,
+        )
+        .await
     }
 
     /// Internal: execute the main loop starting from a specific node/state.
@@ -205,6 +277,7 @@ impl GraphRunner {
         state: SharedState,
         entry_node_id: &str,
         start_step: u32,
+        mut skip_once: std::collections::HashSet<String>,
     ) -> Result<ExecutionResult, RunnerError> {
         let mut trace: Vec<TraceEntry> = Vec::new();
         let mut transcript: Vec<TranscriptEntry> = Vec::new();
@@ -235,11 +308,41 @@ impl GraphRunner {
             let node_id = node.id.as_str();
 
             // --- Interrupts ---
+            // Cancelación cooperativa: se mira ANTES de ejecutar nada, o sea
+            // justo en la frontera entre dos nodos (PRD-021-B).
+            if let Some(result) = self
+                .check_cancel_interrupt(node_id, &session_id, step, &state, &trace, &transcript)
+                .await
+            {
+                return Ok(result);
+            }
+
             if let Some(result) = self
                 .check_pause_interrupt(node_id, &session_id, step, &state, &trace, &transcript)
                 .await
             {
                 return Ok(result);
+            }
+
+            // --- Ya corrió antes de la pausa: NO se repite (PRD-021-C) ---
+            if skip_once.remove(node_id) {
+                let output = state.get(node_id).unwrap_or_default();
+                debug!(node_id = %node_id, "nodo ya ejecutado antes de la pausa — se salta, no se re-ejecuta");
+                transcript.push(TranscriptEntry {
+                    entry_type: wk::TRANSCRIPT_DECISION.to_string(),
+                    message: format!(
+                        "Nodo '{node_id}' ya ejecutado antes de la pausa — no se repite"
+                    ),
+                    timestamp: now_ts(),
+                    node_id: Some(node_id.to_string()),
+                    metadata: HashMap::new(),
+                });
+                step += 1;
+                current_idx = self
+                    .resolve_next_node(node_id, &output, graph)
+                    .as_deref()
+                    .and_then(|nid| node_idx.get(nid).copied());
+                continue;
             }
 
             let visits = visit_counts.entry(node.id.clone()).or_insert(0);
@@ -457,6 +560,52 @@ impl GraphRunner {
         None
     }
 
+    /// ¿Alguien pidió cancelar? Si sí, se para AQUÍ (frontera de nodo), se deja
+    /// checkpoint y se devuelve `Cancelled` con el nodo en el que iba.
+    ///
+    /// A diferencia del pause genérico, la bandera **no se limpia**: cancelar
+    /// es terminal, y si el flujo volviera a pasar por acá tendría que parar
+    /// otra vez.
+    async fn check_cancel_interrupt(
+        &self,
+        node_id: &str,
+        session_id: &str,
+        step: u32,
+        state: &SharedState,
+        trace: &[TraceEntry],
+        transcript: &[TranscriptEntry],
+    ) -> Option<ExecutionResult> {
+        if !self.cancel_requested.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.save_checkpoint(session_id, step, node_id, state, Some(node_id), trace)
+            .await;
+        self.emit_event(
+            EventType::SessionInterrupted,
+            session_id,
+            Some(node_id),
+            HashMap::new(),
+        );
+        info!(session_id = %session_id, node_id = %node_id, "run cancelado en frontera de nodo");
+        let mut transcript = transcript.to_vec();
+        transcript.push(TranscriptEntry {
+            entry_type: wk::TRANSCRIPT_ERROR.to_string(),
+            message: format!("Ejecución cancelada antes del nodo '{node_id}'"),
+            timestamp: now_ts(),
+            node_id: Some(node_id.to_string()),
+            metadata: HashMap::new(),
+        });
+        Some(ExecutionResult {
+            status: ExecutionStatus::Cancelled,
+            state: state.clone(),
+            trace: trace.to_vec(),
+            transcript,
+            error: None,
+            interrupt_node_id: Some(node_id.to_string()),
+            interrupt_info: None,
+        })
+    }
+
     async fn check_human_input_interrupt(
         &self,
         node: &NodeDef,
@@ -503,8 +652,11 @@ impl GraphRunner {
             HashMap::new(),
         );
 
+        // PRD-021-C: `Paused`, no `Interrupted`. El run NO murió — está
+        // esperando a un humano y su estado quedó en disco, así que
+        // `POST /sessions/{id}/resume` lo continúa desde el nodo siguiente.
         Some(ExecutionResult {
-            status: ExecutionStatus::Interrupted,
+            status: ExecutionStatus::Paused,
             state: state.clone(),
             trace: trace.to_vec(),
             transcript: transcript.to_vec(),

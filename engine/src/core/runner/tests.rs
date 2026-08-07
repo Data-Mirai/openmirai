@@ -1485,7 +1485,10 @@ async fn human_input_interrupts_execution() {
     let ctx = TestContext::new();
     let result = runner.run(&graph, &ctx).await.unwrap();
 
-    assert_eq!(result.status, ExecutionStatus::Interrupted);
+    // PRD-021-C: `Paused`, no `Interrupted`. Hasta 0.7.0 el run se marcaba
+    // "interrumpido" y ahí moría; ahora está PAUSADO esperando al humano, que
+    // es un estado reanudable (`POST /sessions/{id}/resume`).
+    assert_eq!(result.status, ExecutionStatus::Paused);
     assert_eq!(result.interrupt_node_id, Some("hi".to_string()));
 
     let info = result.interrupt_info.unwrap();
@@ -1755,4 +1758,210 @@ async fn resolve_all_next_nodes_returns_multiple_unconditional() {
     assert_eq!(next.len(), 2);
     assert!(next.contains(&"b".to_string()));
     assert!(next.contains(&"c".to_string()));
+}
+
+// ===================================================================
+// PRD-021-B/C — cancelación cooperativa y reanudar sin repetir efectos
+// ===================================================================
+
+/// Ejecutor que registra **cuántas veces corrió cada nodo**. Es lo único que
+/// demuestra que un nodo no se re-ejecutó: el estado final es idéntico tanto
+/// si corrió una vez como si corrió dos.
+#[derive(Default)]
+struct Bitacora {
+    corridas: std::sync::Mutex<Vec<String>>,
+    /// Levanta esta bandera apenas TERMINA el nodo indicado — simula el
+    /// `POST /cancel` llegando con el run a mitad de camino.
+    cancelar_tras: Option<(String, Arc<AtomicBool>)>,
+}
+
+impl Bitacora {
+    fn corridas(&self) -> Vec<String> {
+        self.corridas.lock().unwrap().clone()
+    }
+}
+
+/// Envoltorio para poder pasar la MISMA `Bitacora` al runner (que la consume
+/// en un `Box`) y seguir leyéndola desde el test.
+struct Contador(Arc<Bitacora>);
+
+#[async_trait]
+impl ToolExecutor for Contador {
+    async fn execute(
+        &self,
+        node: &NodeDef,
+        _inputs: HashMap<String, Value>,
+        _ctx: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        self.0.corridas.lock().unwrap().push(node.id.clone());
+        if let Some((disparador, flag)) = &self.0.cancelar_tras {
+            if *disparador == node.id {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let mut out = HashMap::new();
+        out.insert("_node_id".to_string(), Value::String(node.id.clone()));
+        Ok(out)
+    }
+}
+
+fn grafo_lineal(ids: &[&str]) -> GraphDef {
+    GraphDef {
+        id: "g".into(),
+        name: "lineal".into(),
+        version: "1.0.0".into(),
+        nodes: ids.iter().map(|id| make_node(id, "tool/echo")).collect(),
+        edges: ids
+            .windows(2)
+            .enumerate()
+            .map(|(i, par)| make_edge(&format!("e{i}"), par[0], par[1]))
+            .collect(),
+        metadata: HashMap::new(),
+    }
+}
+
+#[tokio::test]
+async fn cancelar_a_mitad_de_run_para_en_la_frontera_del_siguiente_nodo() {
+    // Cooperativo: el nodo en curso TERMINA (no se lo mata) y el bucle se
+    // detiene antes de arrancar el siguiente, dejando dicho dónde quedó.
+    let flag = Arc::new(AtomicBool::new(false));
+    let bitacora = Arc::new(Bitacora {
+        corridas: Default::default(),
+        cancelar_tras: Some(("b".to_string(), flag.clone())),
+    });
+
+    let graph = grafo_lineal(&["a", "b", "c", "d"]);
+    let runner =
+        GraphRunner::new(Box::new(Contador(bitacora.clone()))).with_cancel_flag(flag.clone());
+    let ctx = TestContext::new();
+    let result = runner.run(&graph, &ctx).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Cancelled);
+    assert_eq!(
+        result.interrupt_node_id,
+        Some("c".to_string()),
+        "queda registrado el nodo en el que iba"
+    );
+    assert_eq!(
+        bitacora.corridas(),
+        vec!["a", "b"],
+        "'b' termina (no se lo mata) y 'c'/'d' nunca arrancan"
+    );
+}
+
+#[tokio::test]
+async fn request_cancel_antes_de_arrancar_no_ejecuta_nada() {
+    let graph = grafo_lineal(&["a", "b"]);
+    let runner = GraphRunner::new(Box::new(FailExecutor));
+    runner.request_cancel();
+    let ctx = TestContext::new();
+    let result = runner.run(&graph, &ctx).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Cancelled);
+    assert_eq!(result.interrupt_node_id, Some("a".to_string()));
+    assert!(result.trace.is_empty(), "no corrió un solo nodo");
+}
+
+#[tokio::test]
+async fn la_bandera_de_cancelacion_es_por_run_no_global() {
+    // `GraphRunner` es Clone y comparte sus campos por `Arc`: si la bandera se
+    // heredara de la plantilla, cancelar UN run cancelaría todos los del
+    // proceso. Por eso el server ata una bandera nueva por run.
+    let plantilla = GraphRunner::new(Box::new(EchoExecutor));
+    let run_a = plantilla
+        .clone()
+        .with_cancel_flag(Arc::new(AtomicBool::new(false)));
+    let run_b = plantilla
+        .clone()
+        .with_cancel_flag(Arc::new(AtomicBool::new(false)));
+    run_a.request_cancel();
+
+    let graph = grafo_lineal(&["a", "b"]);
+    let ctx = TestContext::new();
+    assert_eq!(
+        run_b.run(&graph, &ctx).await.unwrap().status,
+        ExecutionStatus::Completed,
+        "cancelar un run no puede tumbar al de al lado"
+    );
+    assert_eq!(
+        run_a.run(&graph, &ctx).await.unwrap().status,
+        ExecutionStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn resume_skipping_no_vuelve_a_ejecutar_los_nodos_ya_corridos() {
+    // El riesgo del PRD: si 'a' mandó un correo, reanudar no puede mandarlo
+    // otra vez. Se cuenta CUÁNTAS VECES corrió cada nodo.
+    let bitacora = Arc::new(Bitacora::default());
+    let graph = grafo_lineal(&["a", "b", "c"]);
+    let runner = GraphRunner::new(Box::new(Contador(bitacora.clone())));
+    let ctx = TestContext::new();
+
+    // Estado tal como quedó tras correr 'a' y 'b'.
+    let estado = SharedState::new();
+    for id in ["a", "b"] {
+        let mut out = HashMap::new();
+        out.insert("_node_id".to_string(), Value::String(id.to_string()));
+        estado.set(id, out, true).unwrap();
+    }
+
+    // Se apunta a 'a' A PROPÓSITO — el peor caso: un cursor mal calculado o un
+    // grafo que vuelve atrás. El guard tiene que saltarlo igual.
+    let result = runner
+        .resume_skipping(
+            &graph,
+            &ctx,
+            estado,
+            "a",
+            &["a".to_string(), "b".to_string()],
+            2,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Completed);
+    assert_eq!(
+        bitacora.corridas(),
+        vec!["c"],
+        "solo el nodo pendiente corre: 'a' y 'b' no repiten su efecto"
+    );
+}
+
+#[tokio::test]
+async fn el_salto_es_de_una_sola_vez_para_no_romper_los_bucles() {
+    // Saltar SIEMPRE rompería un grafo con ciclo legítimo: la segunda vuelta
+    // por el mismo nodo sí tiene que ejecutarse.
+    let bitacora = Arc::new(Bitacora::default());
+    // a → b, y 'b' vuelve a 'a' (ciclo).
+    let graph = GraphDef {
+        id: "g".into(),
+        name: "ciclo".into(),
+        version: "1.0.0".into(),
+        nodes: vec![make_node("a", "tool/echo"), make_node("b", "tool/echo")],
+        edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "a")],
+        metadata: HashMap::new(),
+    };
+
+    let runner = GraphRunner::new(Box::new(Contador(bitacora.clone()))).with_max_iterations(2);
+    let ctx = TestContext::new();
+    let estado = SharedState::new();
+    let mut out = HashMap::new();
+    out.insert("_node_id".to_string(), Value::String("a".to_string()));
+    estado.set("a", out, true).unwrap();
+
+    let _ = runner
+        .resume_skipping(&graph, &ctx, estado, "a", &["a".to_string()], 1)
+        .await;
+
+    let corridas = bitacora.corridas();
+    assert_eq!(
+        corridas.first().map(String::as_str),
+        Some("b"),
+        "la primera pasada saltó 'a' (ya había corrido): {corridas:?}"
+    );
+    assert!(
+        corridas.iter().any(|n| n == "a"),
+        "en la vuelta del ciclo 'a' SÍ ejecuta — el salto valió una sola vez: {corridas:?}"
+    );
 }

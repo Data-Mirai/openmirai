@@ -132,32 +132,47 @@ impl SessionStatus {
             ES::Failed => Self::Failed,
             ES::Timeout => Self::Timeout,
             ES::Interrupted => Self::Interrupted,
+            ES::Paused => Self::Paused,
+            ES::Cancelled => Self::Cancelled,
         }
     }
 
-    /// Inversa de [`from_execution`]. Los estados sin resultado final real
-    /// (`Running`, `Paused`, `Cancelled`) reconstruyen como `Interrupted`:
-    /// el grafo no llegó al final.
+    /// Inversa de [`from_execution`]. `Running` es el único sin equivalente:
+    /// un run en vuelo todavía no tiene resultado, así que reconstruye como
+    /// `Interrupted` (el grafo no llegó al final). Para saber que está vivo
+    /// está [`is_live`] / el propio `SessionStatus` de la fila.
     pub fn to_execution(&self) -> crate::core::runner::ExecutionStatus {
         use crate::core::runner::ExecutionStatus as ES;
         match self {
             Self::Completed => ES::Completed,
             Self::Failed => ES::Failed,
             Self::Timeout => ES::Timeout,
-            Self::Interrupted | Self::Running | Self::Paused | Self::Cancelled => ES::Interrupted,
+            Self::Paused => ES::Paused,
+            Self::Cancelled => ES::Cancelled,
+            Self::Interrupted | Self::Running => ES::Interrupted,
         }
     }
 
-    /// Parseo desde la columna TEXT de la DB.
+    /// Parseo desde la columna TEXT de la DB. Tolerante a propósito: una fila
+    /// con un estado que este binario no conoce se lee como `Running` en vez
+    /// de tumbar la lectura.
     pub fn parse(s: &str) -> Self {
+        Self::parse_strict(s).unwrap_or(Self::Running)
+    }
+
+    /// Parseo **estricto**, para entrada del usuario (`?status=`): un valor
+    /// desconocido tiene que ser un error visible, no colarse como `Running` y
+    /// devolver una lista que no es la que se pidió.
+    pub fn parse_strict(s: &str) -> Option<Self> {
         match s {
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "timeout" => Self::Timeout,
-            "paused" => Self::Paused,
-            "cancelled" => Self::Cancelled,
-            "interrupted" => Self::Interrupted,
-            _ => Self::Running,
+            "running" => Some(Self::Running),
+            "completed" => Some(Self::Completed),
+            "failed" => Some(Self::Failed),
+            "timeout" => Some(Self::Timeout),
+            "paused" => Some(Self::Paused),
+            "cancelled" => Some(Self::Cancelled),
+            "interrupted" => Some(Self::Interrupted),
+            _ => None,
         }
     }
 
@@ -165,6 +180,19 @@ impl SessionStatus {
     /// cancelar — y el único cuyo checkpoint sigue sirviendo para algo.
     pub fn is_live(&self) -> bool {
         matches!(self, Self::Running | Self::Paused)
+    }
+
+    /// ¿Se puede reanudar? (PRD-021-B)
+    ///
+    /// Sí: el que se detuvo esperando a un humano (`Paused`), el que se cayó a
+    /// mitad (`Failed`/`Timeout`) y el `Interrupted` histórico de 0.7.0.
+    /// No: `Completed` (no queda nada), `Cancelled` (se paró a propósito) ni
+    /// `Running` (sigue en vuelo — reanudarlo lo duplicaría).
+    pub fn is_resumable(&self) -> bool {
+        matches!(
+            self,
+            Self::Paused | Self::Failed | Self::Timeout | Self::Interrupted
+        )
     }
 }
 
@@ -638,6 +666,57 @@ mod tests {
         assert_eq!(json, "\"enabled\"");
         let back: AgentStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(back, AgentStatus::Enabled);
+    }
+
+    #[test]
+    fn que_se_puede_reanudar_y_que_no() {
+        // PRD-021-B: el endpoint `resume` se apoya en esto. Reanudar un run
+        // COMPLETADO sería ejecutarlo dos veces; reanudar uno CANCELADO sería
+        // deshacer una decisión explícita; reanudar uno EN VUELO lo duplica.
+        assert!(
+            SessionStatus::Paused.is_resumable(),
+            "esperando a un humano"
+        );
+        assert!(SessionStatus::Failed.is_resumable(), "se cayó a mitad");
+        assert!(SessionStatus::Timeout.is_resumable());
+        assert!(SessionStatus::Interrupted.is_resumable(), "histórico 0.7.0");
+
+        assert!(!SessionStatus::Completed.is_resumable());
+        assert!(!SessionStatus::Cancelled.is_resumable());
+        assert!(!SessionStatus::Running.is_resumable());
+    }
+
+    #[test]
+    fn parse_estricto_no_deja_pasar_basura_como_running() {
+        // `parse` es tolerante (lee filas de la DB); `parse_strict` es para la
+        // entrada del usuario: un `?status=pausado` mal escrito tiene que ser
+        // un error, no devolver silenciosamente la lista de `running`.
+        assert_eq!(SessionStatus::parse("marciano"), SessionStatus::Running);
+        assert!(SessionStatus::parse_strict("marciano").is_none());
+        assert_eq!(
+            SessionStatus::parse_strict("paused"),
+            Some(SessionStatus::Paused)
+        );
+        assert_eq!(
+            SessionStatus::parse_strict("running"),
+            Some(SessionStatus::Running)
+        );
+    }
+
+    #[test]
+    fn los_estados_nuevos_van_y_vuelven_del_resultado_de_ejecucion() {
+        use crate::core::runner::ExecutionStatus as ES;
+        for (ejecucion, sesion) in [
+            (ES::Paused, SessionStatus::Paused),
+            (ES::Cancelled, SessionStatus::Cancelled),
+            (ES::Completed, SessionStatus::Completed),
+            (ES::Failed, SessionStatus::Failed),
+        ] {
+            assert_eq!(SessionStatus::from_execution(&ejecucion), sesion);
+            assert_eq!(sesion.to_execution(), ejecucion);
+        }
+        // `Running` no tiene resultado todavía: es el único que degrada.
+        assert_eq!(SessionStatus::Running.to_execution(), ES::Interrupted);
     }
 
     #[test]

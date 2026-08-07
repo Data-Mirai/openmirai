@@ -15,6 +15,7 @@ Run state that survives everything (PRD-021). A run can now pause waiting for a 
 - **`GET /api/v1/sessions?status=…`** — filter runs by state.
 - **Human-in-the-loop end to end**: a graph can stop and wait for a human decision, and pick up exactly where it left off.
 - **Runner `EventEmitter` wired** — the event bus existed but nothing was publishing to it, so run progress was unobservable.
+- **`mirai runs list|show|resume|cancel`** — the run lifecycle from the terminal, not just from `curl`. `list` filters by state (`--status paused`) and prints a table; `show` says where a run stopped, *why* (including the question it is waiting on) and its node trace; `resume` takes the human answer as plain text or JSON (`--response "yes"`); every subcommand also speaks `--json`. Engine errors are translated into a cause and a next step instead of being dumped as raw JSON, and resuming a run that then fails exits non-zero.
 
 ### Fixed
 - **Resuming a run after a process restart returned `409 Conflict`.** The checkpoint recorded *where* a run stopped, but nothing recorded *which graph* to run: the `AgentSpec` lived only in an in-memory `HashMap`, and the `agents` row was written solely to satisfy the foreign key. A fresh process started with an empty map and refused to resume. The spec is now persisted (schema v3) and read back from the database. Existing tests missed this because they resumed inside the *same* process, where the map was still populated.
@@ -23,7 +24,7 @@ Run state that survives everything (PRD-021). A run can now pause waiting for a 
 - **Schema migrations v2 and v3**, both additive (`agents.spec TEXT`, nullable). No data loss, no manual step.
 
 ### Upgrade note
-Databases created before v3 have `agents.spec = NULL`. Resuming a run that belongs to one of those agents still returns `409` with an explanatory message rather than guessing a graph — re-register the agent to make its runs resumable.
+Databases created before v3 have `agents.spec = NULL`. Resuming a run that belongs to one of those agents still returns `409` with an explanatory message rather than guessing a graph. Re-registering the agent does **not** rescue those runs — `POST /agents` mints a new id, and the old run points at the old one — so relaunch them instead. Runs created from v3 onwards carry their spec and stay resumable across restarts.
 
 ---
 

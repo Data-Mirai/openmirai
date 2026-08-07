@@ -648,8 +648,11 @@ fn render_detalle(id: &str, run: &Value, pregunta: Option<&(String, Vec<String>)
                 "{nodo}{}",
                 match estado.as_str() {
                     "paused" => "  (acá quedó esperando)",
-                    "failed" => "  (acá falló)",
-                    "cancelled" => "  (acá se detuvo)",
+                    "failed" | "timeout" => "  (acá falló)",
+                    // El runner cancela en FRONTERA de nodo: el que quedó
+                    // apuntado es el que ya no llegó a ejecutarse.
+                    "cancelled" => "  (se detuvo antes de entrar acá)",
+                    "running" => "  (acá va)",
                     _ => "",
                 }
             ),
@@ -689,10 +692,12 @@ fn render_detalle(id: &str, run: &Value, pregunta: Option<&(String, Vec<String>)
         ));
     }
     if let Some(desde) = run.get("since").and_then(|v| v.as_f64()) {
-        let etiqueta = if run.get("finished_at").and_then(|v| v.as_f64()).is_some() {
-            "Fin"
-        } else {
-            "Ahí desde"
+        // La etiqueta sale del ESTADO, no de `finished_at`: un run pausado
+        // también trae `finished_at` (el motor registra el resultado de la
+        // pausa), y llamarle "Fin" a un run que sigue vivo es mentir.
+        let etiqueta = match estado.as_str() {
+            "running" | "paused" => "Ahí desde",
+            _ => "Fin",
         };
         out.push_str(&campo(
             etiqueta,
@@ -1035,7 +1040,7 @@ mod tests {
             "since": 1_754_500_003.0,
             "resumable": true,
             "trace": [
-                {"node_id": "trigger", "tool_type": "trigger/manual", "status": "Ok",
+                {"node_id": "trigger", "tool_type": "trigger/manual", "status": "ok",
                  "duration_ms": 2, "retries": 0, "started_at": 1_754_500_000.0, "finished_at": 1_754_500_000.002}
             ],
             "error": null,
@@ -1044,8 +1049,10 @@ mod tests {
             "transcript": [],
             "state": {},
             "started_at": 1_754_500_000.0,
-            "finished_at": null,
-            "duration_ms": null,
+            // Un run PAUSADO también trae `finished_at`: el motor registra el
+            // resultado de la pausa. Verificado contra un engine real.
+            "finished_at": 1_754_500_003.0,
+            "duration_ms": 3000,
         })
     }
 
@@ -1181,6 +1188,13 @@ mod tests {
         assert!(
             salida.contains("mirai runs resume run-pausado"),
             "siguiente paso: {salida}"
+        );
+        // Un run pausado sigue VIVO: nada de rotularlo "Fin" porque la API le
+        // haya puesto `finished_at` al registrar la pausa.
+        assert!(salida.contains("Ahí desde"), "{salida}");
+        assert!(
+            !salida.contains("Fin  "),
+            "un run vivo no terminó: {salida}"
         );
     }
 

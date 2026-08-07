@@ -171,12 +171,32 @@ docs/          Technical documentation
 - **SSE streaming** — real-time execution events via Server-Sent Events
 - **Security scanner** — prompt injection detection with configurable sensitivity
 - **MCP support** — Model Context Protocol for external tool servers
+- **Run lifecycle** — a run checkpoints as it advances: it can pause for a human, be cancelled in
+  flight, and resume from where it stopped — even across a process restart (see below)
 - **Session orchestration** — run and coordinate several live coding sessions from one engine (see below)
 
-Partially wired, so you know before you build on them: `GraphRunner::resume()` exists and is
-tested at the crate level but is not reachable from the CLI or HTTP yet, and `agent/run_agent`
-validates and guards against cycles but returns a placeholder — nested agent execution is meant
-to happen in the app layer, not inside the engine.
+Partially wired, so you know before you build on it: `agent/run_agent` validates and guards
+against cycles but returns a placeholder — nested agent execution is meant to happen in the app
+layer, not inside the engine.
+
+## Run Lifecycle
+
+Every execution is a **run** with state on disk. It stops when a graph asks a human something,
+resumes from its checkpoint without re-running the nodes that already had effects, and can be
+cancelled mid-flight (cooperatively, at a node boundary).
+
+```bash
+mirai runs list                                # id, agent, state, current node, start time
+mirai runs list --status paused                # the ones waiting on a human
+mirai runs show <run_id>                       # where it stopped, why, and its node trace
+mirai runs resume <run_id> --response "yes"    # answer and continue from the next node
+mirai runs cancel <run_id>                     # stop one in flight
+mirai runs list --json | jq '.[].id'           # every subcommand takes --json
+```
+
+Same over HTTP: `GET /api/v1/sessions?status=paused`, `POST /api/v1/sessions/{id}/resume`,
+`POST /api/v1/sessions/{id}/cancel`. Runs are persisted to SQLite (`--db-path`), so a run that
+was paused before a restart is still there — and still resumable — afterwards.
 
 ## Session Orchestration
 

@@ -424,18 +424,29 @@ curl -H "X-API-Key: tu-api-key" http://localhost:3000/api/v1/agents
 Eventos SSE emitidos en tiempo real:
 
 ```
-event: node_start
-data: {"node_id": "nodo-1", "tool_type": "llm_call"}
+event: run.started
+data: {"event":"run.started","data":{"session_id":"a1b2c3d4","agent_id":"…","agent_name":"mi-agente"}}
 
-event: node_progress
-data: {"node_id": "nodo-1", "progress": 0.5}
+event: graph.started
+data: {"event":"graph.started","data":{"graph_name":"mi-agente","node_count":3}}
 
-event: node_end
-data: {"node_id": "nodo-1", "status": "Ok", "duration_ms": 1234, "output": {...}}
+event: node.started
+data: {"event":"node.started","data":{"node_id":"nodo-1","tool_type":"ai/llm_call"}}
 
-event: graph_end
-data: {"status": "Completed", "session_id": "...", "error": null}
+event: node.completed
+data: {"event":"node.completed","data":{"node_id":"nodo-1","tool_type":"ai/llm_call","duration_ms":1234,"output_keys":["response"],"output":{"response":"…"}}}
+
+event: graph.completed
+data: {"event":"graph.completed","data":{"status":"Completed","total_duration_ms":1234,"nodes_executed":3,"output":{…}}}
 ```
+
+El `data:` lleva el evento completo con su sobre `{"event": …, "data": …}`. Otros
+nombres posibles: `node.token` (streaming de tokens del LLM), `node.error`,
+`fanout.started`, `fanout.completed`, `graph.error`.
+
+**`run.started` es el primer evento del stream** y nombra el run al que pertenece
+todo lo que sigue: sin él no hay forma de correlacionar lo que se ve en vivo con
+`GET /api/v1/sessions/{id}`.
 
 **Errores:**
 

@@ -104,10 +104,8 @@ fn dir_efectos(nombre: &str) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "mirai-021-{nombre}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("mirai-021-{nombre}-{}-{nanos}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -304,7 +302,12 @@ async fn w4_cancelar_un_run_en_vuelo_lo_detiene_y_registra_el_nodo() {
     assert!(!run_id.is_empty(), "el run en vuelo tiene que ser visible");
 
     // Cancelar.
-    let (status, body) = post(&app, &format!("/api/v1/sessions/{run_id}/cancel"), json!({})).await;
+    let (status, body) = post(
+        &app,
+        &format!("/api/v1/sessions/{run_id}/cancel"),
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::ACCEPTED, "cancel: {body}");
 
     // El run se detiene solo (cooperativo: en frontera de nodo, no un kill).
@@ -395,7 +398,12 @@ async fn w5_run_fallido_en_el_nodo_7_reanuda_en_el_7() {
 
     // Se destraba la causa del fallo y se reanuda.
     std::fs::write(&puerta, "abierta").unwrap();
-    let (status, body) = post(&app, &format!("/api/v1/sessions/{run_id}/resume"), json!({})).await;
+    let (status, body) = post(
+        &app,
+        &format!("/api/v1/sessions/{run_id}/resume"),
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "resume: {body}");
     assert_eq!(body["status"], "Completed");
     assert_eq!(
@@ -453,7 +461,10 @@ async fn w6_consultar_un_run_muestra_estado_nodo_actual_y_desde_cuando() {
     let desde = run["since"].as_f64().expect("desde cuándo (epoch)");
     let arranque = run["started_at"].as_f64().expect("cuándo arrancó");
     assert!(arranque > 0.0);
-    assert!(desde >= arranque, "since = desde cuándo está en este estado");
+    assert!(
+        desde >= arranque,
+        "since = desde cuándo está en este estado"
+    );
 
     // (b) Run COMPLETADO.
     let simple = crear_agente(
@@ -570,7 +581,12 @@ async fn reanudar_un_run_completado_es_conflicto_no_una_segunda_ejecucion() {
     .await;
     let run_id = ejecutar(&app, &agent_id).await;
 
-    let (status, _) = post(&app, &format!("/api/v1/sessions/{run_id}/resume"), json!({})).await;
+    let (status, _) = post(
+        &app,
+        &format!("/api/v1/sessions/{run_id}/resume"),
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT);
 }
 
@@ -602,6 +618,11 @@ async fn cancelar_un_run_ya_terminado_es_conflicto() {
     )
     .await;
     let run_id = ejecutar(&app, &agent_id).await;
-    let (status, _) = post(&app, &format!("/api/v1/sessions/{run_id}/cancel"), json!({})).await;
+    let (status, _) = post(
+        &app,
+        &format!("/api/v1/sessions/{run_id}/cancel"),
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT);
 }

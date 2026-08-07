@@ -771,7 +771,7 @@ data: {"status": "Completed", "session_id": "...", "error": null}
 
 ### GET /api/v1/sessions {#GET-sessions}
 
-**Descripción:** Listar todas las sesiones de ejecución (en memoria).
+**Descripción:** Listar runs. Lee de SQLite (0.7.0), con la cache en memoria como fallback.
 
 **Auth:** Requiere `X-API-Key`.
 
@@ -779,6 +779,7 @@ data: {"status": "Completed", "session_id": "...", "error": null}
 | Parámetro | Tipo | Default | Descripción |
 |---|---|---|---|
 | agent_id | string | — | Filtrar por agent_id (opcional) |
+| status | string | — | Filtrar por estado del run: `running`, `paused`, `completed`, `failed`, `timeout`, `cancelled`, `interrupted` (PRD-021-B) |
 | limit | integer | 50 | Número máximo de sesiones a retornar |
 
 **Response:**
@@ -787,16 +788,27 @@ data: {"status": "Completed", "session_id": "...", "error": null}
 [
   {
     "id": "session-abc123",
+    "agent_id": "ag-1",
+    "agent_name": "mi-agente",
     "status": "Completed",
+    "run_status": "completed",
+    "current_node_id": null,
     "trace_len": 3,
-    "error": null
+    "error": null,
+    "started_at": 1786112863.02,
+    "finished_at": 1786112864.11,
+    "duration_ms": 1090.0
   }
 ]
 ```
 
 **Notas:**
-- Sesiones se eviccionan FIFO cuando se alcanza 10K → [FLUJOS.md#regla-06](../producto/FLUJOS.md#regla-06)
-- Solo almacenadas en memoria durante la sesión del servidor
+- `status` es el estado del **grafo** (`Completed` / `Failed` / `Timeout` / `Interrupted` / `Paused` / `Cancelled`);
+  `run_status` es el estado de **ciclo de vida del run** y es el único que puede decir `running` (un run en vuelo
+  todavía no tiene resultado).
+- `?status=paused` es la consulta de "¿qué quedó esperando a un humano?"; `?status=running`, la de "¿qué está corriendo ahora?".
+- Un `status` desconocido responde **400**, no una lista vacía silenciosa.
+- Sesiones se eviccionan FIFO de la **cache en memoria** cuando se alcanza 10K → [FLUJOS.md#regla-06](../producto/FLUJOS.md#regla-06); en SQLite persisten.
 
 ---
 
@@ -816,26 +828,114 @@ data: {"status": "Completed", "session_id": "...", "error": null}
 ```json
 {
   "id": "session-abc123",
-  "status": "Completed",
+  "status": "Paused",
+  "run_status": "paused",
+  "current_node_id": "ask",
+  "since": 1786112863.42,
+  "resumable": true,
+  "started_at": 1786112863.02,
+  "finished_at": null,
+  "duration_ms": null,
+  "agent_id": "ag-1",
+  "agent_name": "mi-agente",
   "trace": [
     {
       "node_id": "nodo-1",
       "tool_type": "llm_call",
-      "status": "Ok",
+      "status": "ok",
       "duration_ms": 1234,
       "retries": 0,
       "error": null
     }
   ],
+  "transcript": [],
+  "state": {},
   "error": null
 }
 ```
+
+**Notas (PRD-021-B):** responde las tres preguntas de "¿en qué va?":
+`run_status` (estado), `current_node_id` (nodo actual) y `since` (desde cuándo está en ese estado —
+`finished_at` si terminó, si no el instante del último checkpoint).
 
 **Errores:**
 
 | Código | Condición | Mensaje |
 |---|---|---|
 | 404 | Sesión no existe | `{"error": "Session not found"}` |
+
+---
+
+### POST /api/v1/sessions/{id}/resume {#POST-sessions-id-resume}
+
+**Descripción:** Reanuda un run detenido **desde donde quedó**, sin re-ejecutar lo ya hecho (PRD-021-B/C).
+
+**Auth:** Requiere `X-API-Key`.
+
+**Body** (todo opcional — un run *fallido* se reanuda sin cuerpo):
+
+```json
+{ "response": "si", "responded_by": "gabriel" }
+```
+
+- `response` / `responded_by` se usan cuando el run quedó pausado en un nodo `logic/human_input`: se
+  guardan como salida de ese nodo y la ejecución sigue por el **nodo siguiente** (nunca se re-pregunta).
+
+**Response:**
+
+```json
+{
+  "session_id": "session-abc123",
+  "agent_id": "ag-1",
+  "agent_name": "mi-agente",
+  "resumed_from": "n7",
+  "skipped_nodes": ["n1", "n2", "n3", "n4", "n5", "n6"],
+  "status": "Completed",
+  "run_status": "completed",
+  "trace": [],
+  "transcript": [],
+  "state": {},
+  "error": null
+}
+```
+
+**Errores:**
+
+| Código | Condición |
+|---|---|
+| 404 | El run no existe |
+| 409 | El run no es reanudable (`completed` / `cancelled` / `running`), no dejó checkpoint, o su agente ya no está registrado |
+| 503 | El server arrancó sin persistencia de runs |
+
+---
+
+### POST /api/v1/sessions/{id}/cancel {#POST-sessions-id-cancel}
+
+**Descripción:** Cancela un run **en vuelo**. La cancelación es **cooperativa**: no mata nada — el nodo
+en curso termina y el run se detiene en la siguiente frontera de nodo, dejando registrado dónde iba
+(PRD-021-B).
+
+**Auth:** Requiere `X-API-Key`.
+
+**Response (202 Accepted):**
+
+```json
+{
+  "session_id": "session-abc123",
+  "status": "cancelling",
+  "detail": "cancelación cooperativa: el run se detiene en la próxima frontera de nodo"
+}
+```
+
+`202` y no `200` a propósito: cuando el cliente lee la respuesta el run todavía está terminando su nodo.
+Al detenerse queda `run_status: "cancelled"` con su `current_node_id`.
+
+**Errores:**
+
+| Código | Condición |
+|---|---|
+| 404 | El run no existe |
+| 409 | El run existe pero no está en vuelo en este proceso (ya terminó, o corre en otro) |
 
 ---
 

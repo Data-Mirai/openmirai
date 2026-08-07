@@ -204,7 +204,15 @@ pub(crate) async fn run_agent_spec_with_memory(
 
     // PRD-021-A: runner con checkpoints. Cada nodo terminado deja el estado en
     // SQLite, así que el run sobrevive a un reinicio del proceso.
-    let runner = state.runner_with_checkpoints(run_agent_id, &spec.name, crate::utils::now_epoch());
+    // PRD-021-B: y con su bandera de cancelación registrada bajo el session_id.
+    let runner = state
+        .runner_with_checkpoints(
+            session_id,
+            run_agent_id,
+            &spec.name,
+            crate::utils::now_epoch(),
+        )
+        .await;
 
     match runner.run_with_state(&graph, &context, initial_state).await {
         Ok(result) => result,
@@ -291,7 +299,13 @@ pub(crate) async fn run_agent_spec_streaming(
     // Runner con el canal de streaming Y con checkpoints (PRD-021-A): un run
     // observado en vivo es igual de reanudable que uno normal.
     let streaming_runner = state
-        .runner_with_checkpoints(run_agent_id, &spec.name, crate::utils::now_epoch())
+        .runner_with_checkpoints(
+            session_id,
+            run_agent_id,
+            &spec.name,
+            crate::utils::now_epoch(),
+        )
+        .await
         .with_stream_tx(event_tx.clone());
 
     match streaming_runner.run(&graph, &context).await {

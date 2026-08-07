@@ -471,7 +471,10 @@ async fn ejecutar_por_la_api_guarda_checkpoint_en_sqlite() {
         .unwrap()
         .expect("run persistido");
     assert_eq!(run.current_node_id.as_deref(), Some("ask"));
-    assert_eq!(run.status, crate::db::SessionStatus::Interrupted);
+    // PRD-021-C: el run queda PAUSADO (reanudable), no `interrupted` (que en
+    // 0.7.0 era el final del camino).
+    assert_eq!(run.status, crate::db::SessionStatus::Paused);
+    assert!(run.status.is_resumable());
 }
 
 #[tokio::test]

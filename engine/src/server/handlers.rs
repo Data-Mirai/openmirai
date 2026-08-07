@@ -899,14 +899,36 @@ pub(crate) async fn get_agent_schema(
 pub(crate) async fn list_sessions(
     State(state): State<AppState>,
     Query(params): Query<SessionListQuery>,
-) -> Json<Value> {
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let limit = params.limit.unwrap_or(50);
+
+    // PRD-021-B: ?status= filtra por estado del run (paused/running/…). Un
+    // valor desconocido es 400, NUNCA una lista silenciosamente equivocada.
+    let status = match params.status.as_deref() {
+        Some(s) => Some(
+            crate::db::SessionStatus::parse_strict(&s.to_lowercase()).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "status '{s}' desconocido \
+                             (running|paused|completed|failed|timeout|cancelled|interrupted)"
+                        ),
+                    }),
+                )
+            })?,
+        ),
+        None => None,
+    };
 
     // DB-first (0.7.0): los runs persistidos incluyen también los que ya no
     // están en la cache de memoria (reinicios, eviction FIFO) y soportan el
     // filtro ?agent_id=. Fallback a memoria si no hay repo cableado.
     if let Some(repo) = &state.session_repo {
-        match repo.list_by_agent(params.agent_id.as_deref(), limit).await {
+        match repo
+            .list_runs(params.agent_id.as_deref(), status.clone(), limit)
+            .await
+        {
             Ok(records) => {
                 let list: Vec<Value> = records
                     .iter()
@@ -916,6 +938,12 @@ pub(crate) async fn list_sessions(
                             "agent_id": r.agent_id,
                             "agent_name": r.agent_name,
                             "status": r.result.status,
+                            // Estado de CICLO DE VIDA del run — el único que
+                            // distingue "corriendo" de "pausado" de
+                            // "cancelado" (`status` es el del grafo y no puede
+                            // expresar "todavía va corriendo").
+                            "run_status": r.status.to_string(),
+                            "current_node_id": r.current_node_id,
                             "trace_len": r.result.trace.len(),
                             "error": r.result.error,
                             "started_at": r.created_at,
@@ -924,7 +952,7 @@ pub(crate) async fn list_sessions(
                         })
                     })
                     .collect();
-                return Json(json!(list));
+                return Ok(Json(json!(list)));
             }
             Err(e) => {
                 tracing::warn!(error = %e, "list_sessions: fallo leyendo la DB, fallback a memoria");
@@ -932,48 +960,61 @@ pub(crate) async fn list_sessions(
         }
     }
 
+    // Fallback en memoria: la cache solo guarda runs TERMINADOS, así que el
+    // filtro por estado se aplica sobre el estado del grafo.
     let sessions = state.sessions.read().await;
     let list: Vec<Value> = sessions
         .iter()
+        .filter(|(_, result)| match &status {
+            Some(s) => *s == crate::db::SessionStatus::from_execution(&result.status),
+            None => true,
+        })
         .take(limit)
         .map(|(id, result)| {
             json!({
                 "id": id,
                 "status": result.status,
+                "run_status": crate::db::SessionStatus::from_execution(&result.status).to_string(),
                 "trace_len": result.trace.len(),
                 "error": result.error,
             })
         })
         .collect();
 
-    Json(json!(list))
+    Ok(Json(json!(list)))
 }
 
 pub(crate) async fn get_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
-    // Cache caliente primero.
-    {
-        let sessions = state.sessions.read().await;
-        if let Some(result) = sessions.get(&id) {
-            return Ok(Json(json!({
-                "id": id,
-                "status": result.status,
-                "trace": result.trace,
-                "error": result.error,
-            })));
-        }
-    }
-
-    // Fallback a SQLite (0.7.0): el run sobrevive reinicios y eviction.
-    // Mismo contrato base + campos adicionales del registro persistido.
+    // DB primero (PRD-021-B W6): es la ÚNICA fuente que sabe el estado de
+    // ciclo de vida (`running`/`paused`/`cancelled`), el nodo actual y desde
+    // cuándo. La cache de memoria solo guarda el `ExecutionResult` de runs YA
+    // terminados — con ella un run en vuelo era invisible hasta acabar.
     if let Some(repo) = &state.session_repo {
         match repo.get(&id).await {
             Ok(Some(rec)) => {
+                // "Desde cuándo": si terminó, cuándo terminó; si sigue vivo,
+                // cuándo se guardó el último checkpoint (= cuándo entró al
+                // nodo en el que está); si no hay nada, cuándo arrancó.
+                let ultimo_cp = if rec.status.is_live() {
+                    repo.get_checkpoint(&id).await.ok().flatten()
+                } else {
+                    None
+                };
+                let since = rec
+                    .finished_at
+                    .or(ultimo_cp.as_ref().map(|c| c.created_at))
+                    .unwrap_or(rec.created_at);
                 return Ok(Json(json!({
                     "id": rec.id,
                     "status": rec.result.status,
+                    // Estado de ciclo de vida — lo que W6 llama "estado".
+                    "run_status": rec.status.to_string(),
+                    "current_node_id": rec.current_node_id,
+                    "since": since,
+                    "resumable": rec.status.is_resumable(),
                     "trace": rec.result.trace,
                     "error": rec.result.error,
                     "agent_id": rec.agent_id,
@@ -989,6 +1030,23 @@ pub(crate) async fn get_session(
             Err(e) => {
                 tracing::warn!(session_id = %id, error = %e, "get_session: fallo leyendo la DB");
             }
+        }
+    }
+
+    // Fallback: cache caliente (server sin DB cableada, o fallo de lectura).
+    {
+        let sessions = state.sessions.read().await;
+        if let Some(result) = sessions.get(&id) {
+            let run_status = crate::db::SessionStatus::from_execution(&result.status);
+            return Ok(Json(json!({
+                "id": id,
+                "status": result.status,
+                "run_status": run_status.to_string(),
+                "current_node_id": result.interrupt_node_id,
+                "resumable": run_status.is_resumable(),
+                "trace": result.trace,
+                "error": result.error,
+            })));
         }
     }
 

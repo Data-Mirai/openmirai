@@ -2,6 +2,22 @@
 //!
 //! Provides types and helpers for streaming graph execution events to clients
 //! via SSE (text/event-stream). Used by the HTTP server's /stream endpoint.
+//!
+//! # OJO: este es UNO de los dos flujos de eventos del motor (PRD-021-E)
+//!
+//! `StreamEvent` (este archivo) nace en `GraphRunner::stream_event()`, viaja
+//! por un `mpsc` **creado por request** en `stream_agent`, lo consume **un
+//! solo** cliente —el que hizo `POST /api/v1/agents/{id}/stream`— y muere con
+//! ese run. Es el **contrato público desde 0.7.0**: sus nombres de evento y su
+//! sobre `{"event": …, "data": …}` no se cambian (un cliente vivo los parsea).
+//!
+//! El otro es `ExecutionEvent` (`core/events.rs`), que nace en
+//! `GraphRunner::emit_event()`, viaja por un `broadcast` **de proceso** y se
+//! consume en `GET /api/v1/events`. Trae lo que este no tiene (`event_id`,
+//! `session_id` por evento, `checkpoint_created`, `interrupt_created`…).
+//!
+//! **No se mezclan a propósito.** La tabla completa y el porqué de la decisión
+//! están en `server/events.rs`.
 
 use serde::{Deserialize, Serialize};
 

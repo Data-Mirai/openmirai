@@ -4,8 +4,12 @@
 //! - [`state`]: AppState, LLMFactory, request/response types
 //! - [`handlers`]: All endpoint implementations
 //! - [`helpers`]: Agent execution helpers shared by handlers
+//! - [`events`]: bus de ejecución (`ExecutionEvent`) sobre SSE — PRD-021-E.
+//!   Ahí está documentado **qué evento nace dónde** y por qué el motor tiene
+//!   dos flujos distintos (`ExecutionEvent` vs `StreamEvent`).
 
 pub mod editor;
+pub mod events;
 pub mod handlers;
 pub mod helpers;
 pub mod orchestrator;
@@ -28,6 +32,7 @@ use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use crate::tools::builtin::register_all_builtin_tools;
 use crate::tools::registry::ToolRegistry;
 
+use self::events::execution_events;
 use self::handlers::*;
 use self::helpers::rag_search;
 use self::orchestrator::{
@@ -73,6 +78,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/tools", get(list_tools))
         // Templates
         .route("/api/v1/templates", get(list_templates_handler))
+        // Bus de ejecución (PRD-021-E): SSE con los ExecutionEvent del runner.
+        // Aditivo — `/agents/{id}/stream` no cambia. Filtros opcionales:
+        // `?session_id=` (un run) y `?types=` (lista separada por comas).
+        .route("/api/v1/events", get(execution_events))
         // Sessions
         .route("/api/v1/sessions", get(list_sessions))
         .route("/api/v1/sessions/{id}", get(get_session))
@@ -342,15 +351,17 @@ async fn auth_middleware(
 
     // PRD-013: EventSource cannot set headers, so the orchestrator SSE
     // endpoint also accepts the key as a `?api_key=` query param.
-    let query_key: Option<String> = if path == "/api/v1/orchestrator/events" {
-        req.uri().query().and_then(|q| {
-            url::form_urlencoded::parse(q.as_bytes())
-                .find(|(k, _)| k == "api_key")
-                .map(|(_, v)| v.into_owned())
-        })
-    } else {
-        None
-    };
+    // PRD-021-E: mismo caso para el bus de ejecución `/api/v1/events`.
+    let query_key: Option<String> =
+        if path == "/api/v1/orchestrator/events" || path == "/api/v1/events" {
+            req.uri().query().and_then(|q| {
+                url::form_urlencoded::parse(q.as_bytes())
+                    .find(|(k, _)| k == "api_key")
+                    .map(|(_, v)| v.into_owned())
+            })
+        } else {
+            None
+        };
     let provided = provided.map(str::to_string).or(query_key);
 
     match provided {

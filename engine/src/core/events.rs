@@ -1,3 +1,25 @@
+//! `ExecutionEvent` — el **bus de observabilidad** del motor.
+//!
+//! # Qué evento nace dónde (PRD-021-E)
+//!
+//! Este es el flujo `broadcast`, **uno por proceso**, con N suscriptores, que
+//! atraviesa TODOS los runs. Nace en `GraphRunner::emit_event()` y lo consumen:
+//!
+//! - `GET /api/v1/events` — el bus de ejecución (runs de grafos). Se cablea en
+//!   `AppState::new` vía `GraphRunner::with_event_emitter`.
+//! - `GET /api/v1/orchestrator/events` — sesiones tmux (PRD-013). El
+//!   `SessionManager` tiene **su propia instancia** de `EventEmitter`: mismo
+//!   tipo, bus distinto, a propósito (son flotas distintas).
+//!
+//! El envelope (`event_id` monótono, `session_id`, `node_id`, `timestamp`) es
+//! el producto: sin él no se correlaciona un evento con su run ni se detectan
+//! huecos.
+//!
+//! **No confundir con `StreamEvent`** (`crate::streaming`): ese es un `mpsc`
+//! por-request que alimenta `POST /api/v1/agents/{id}/stream` y es contrato
+//! público desde 0.7.0. Los dos coexisten a propósito — la tabla comparativa y
+//! el razonamiento están en `server/events.rs`.
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

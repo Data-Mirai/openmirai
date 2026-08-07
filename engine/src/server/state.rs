@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 
 use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
+use crate::core::events::EventEmitter;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
 use crate::db::{
@@ -31,6 +32,14 @@ const DEFAULT_MAX_SESSIONS: usize = 10_000;
 
 /// Default execution timeout in seconds.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
+
+/// Capacidad del bus de ejecución (PRD-021-E).
+///
+/// Es un `broadcast`: si un suscriptor se atrasa más de esto, pierde los
+/// eventos viejos (`Lagged`) — no bloquea al runner, que es lo que importa.
+/// 1024 aguanta un grafo largo con un cliente distraído sin ser un buffer
+/// desmedido por proceso.
+const EVENT_BUS_CAPACITY: usize = 1024;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -72,6 +81,19 @@ pub struct AppState {
     /// Persistencia de runs en SQLite (0.7.0). `None` → solo memoria
     /// (tests / factories sin `serve()`); `serve()` la cablea siempre.
     pub session_repo: Option<Arc<SqliteSessionRepo>>,
+    /// **Bus de ejecución** (PRD-021-E): los `ExecutionEvent` que emite el
+    /// runner mientras corre un grafo — `session_started`, `block_*`,
+    /// `checkpoint_created`, `interrupt_created`, `session_interrupted`…
+    ///
+    /// Es un `broadcast` de proceso: N suscriptores, atraviesa TODOS los runs.
+    /// Se cablea al `runner` en [`AppState::new`], así que cualquier camino que
+    /// clone ese runner (`/execute`, `/stream`) emite aquí sin tener que
+    /// acordarse. Se consume por `GET /api/v1/events` (ver `server/events.rs`).
+    ///
+    /// **No confundir con `StreamEvent`** (`streaming.rs`), que es el canal
+    /// `mpsc` por-request de `POST /agents/{id}/stream`: otro flujo, otro
+    /// contrato. La tabla que compara los dos está en `server/events.rs`.
+    pub events: EventEmitter,
 }
 
 impl AppState {
@@ -83,7 +105,14 @@ impl AppState {
     ) -> Self {
         let registry = Arc::new(tool_registry);
         let executor = RegistryExecutor::new(registry.clone());
-        let runner = GraphRunner::new(Box::new(executor));
+        let events = EventEmitter::new(EVENT_BUS_CAPACITY);
+        // PRD-021-E: EL cableado. `with_event_emitter` no se llamaba en ningún
+        // camino de producción, así que `GraphRunner::emit_event` era un no-op
+        // y TODO lo que el runner emitía (incluido el `checkpoint_created` de
+        // 021-A) se perdía. Se ata aquí, en el runner base, y no por-run: así
+        // cualquier handler que clone `state.runner` —`/execute`, `/stream`, y
+        // el que venga— hereda el bus sin tener que acordarse.
+        let runner = GraphRunner::new(Box::new(executor)).with_event_emitter(events.clone());
         Self {
             graphs: Arc::new(RwLock::new(HashMap::new())),
             agents: Arc::new(RwLock::new(HashMap::new())),
@@ -106,6 +135,7 @@ impl AppState {
             projects_dirs: Vec::new(),
             folder_picker: Arc::new(crate::sessions::picker::FolderPicker::new()),
             session_repo: None,
+            events,
         }
     }
 

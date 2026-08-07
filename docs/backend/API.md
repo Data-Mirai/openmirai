@@ -839,6 +839,55 @@ data: {"status": "Completed", "session_id": "...", "error": null}
 
 ---
 
+## Execution Event Bus (PRD-021-E)
+
+### GET /api/v1/events {#GET-events}
+
+**Descripción:** SSE con los `ExecutionEvent` que emite el runner **mientras**
+corre cualquier grafo del proceso. Es el bus de observabilidad: un consumidor se
+engancha **una vez** y ve TODOS los runs, no uno.
+
+**Auth:** `X-API-Key`, o `?api_key=` en el query (EventSource no pone cabeceras).
+
+**Query params (opcionales):**
+
+| Param | Efecto |
+|---|---|
+| `session_id` | Solo los eventos de ESE run |
+| `types` | Lista separada por comas de `event_type` (ej. `checkpoint_created,session_failed`) |
+
+**Response:** `200 OK` con `Content-Type: text/event-stream`. Primer frame
+`: connected` (comentario SSE) apenas se abre; luego un frame por evento con el
+**envelope completo**:
+
+```
+: connected
+
+event: session_started
+data: {"event_type":"session_started","timestamp":1754500000.12,"session_id":"ab12cd","data":{},"event_id":0}
+
+event: checkpoint_created
+data: {"event_type":"checkpoint_created","timestamp":1754500000.34,"session_id":"ab12cd","node_id":"ask","data":{"checkpoint_id":"...","step":1},"event_id":3}
+
+event: interrupt_created
+data: {"event_type":"interrupt_created","timestamp":1754500000.35,"session_id":"ab12cd","node_id":"ask","data":{},"event_id":4}
+```
+
+**Notas:**
+- `session_id` correlaciona con `GET /api/v1/sessions/{id}` y con el
+  `session_id` que devuelve `POST /execute` / el `run.started` de `/stream`.
+- `event_id` es monótono: permite detectar huecos.
+- Bus en vivo, **no histórico**: entrega desde el instante de la suscripción.
+- Suscriptor lento → se emite `: lagged <n>` y se sigue (nunca bloquea al runner).
+
+**No confundir con `POST /api/v1/agents/{id}/stream`** → {#POST-agents-id-stream}:
+ese es un stream **por run**, single-consumer, con otro sobre
+(`{"event": …, "data": …}`) y otros nombres de evento (`node.started`,
+`graph.completed`). Son dos flujos distintos a propósito; este endpoint es
+**aditivo** y no cambia nada de aquel.
+
+---
+
 ## Metrics
 
 ### GET /api/v1/metrics {#GET-metrics}

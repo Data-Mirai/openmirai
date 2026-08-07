@@ -31,7 +31,7 @@ pub struct Migration {
 // ---------------------------------------------------------------------------
 
 /// Current schema version shipped with this build.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Complete DDL for schema v1.  Using `IF NOT EXISTS` makes it idempotent.
 pub const SCHEMA_SQL: &str = r#"
@@ -94,15 +94,66 @@ VALUES (1, 0.0);
 "#;
 
 // ---------------------------------------------------------------------------
+// Schema v2 — checkpoints (PRD-021-A)
+// ---------------------------------------------------------------------------
+
+/// DDL de la v2: la tabla de checkpoints + el nodo actual del run.
+///
+/// **Aditiva y compatible**: no reescribe ni borra nada de la v1. Una DB
+/// creada por la v1 se abre con este binario, recibe el `ALTER TABLE` y sus
+/// filas siguen legibles (`current_node_id` queda `NULL`).
+///
+/// Un checkpoint por run (`session_id` es la PK): el estado del grafo se
+/// **sobreescribe**, no se acumula historial — así el tamaño no crece con la
+/// duración de la ejecución (riesgo del PRD).
+///
+/// Sin FK a `sessions`: el checkpoint se escribe *durante* la ejecución, y en
+/// esa ventana la fila del run puede no existir todavía. Un checkpoint tiene
+/// que poder sobrevivir por sí solo.
+pub const SCHEMA_SQL_V2: &str = r#"
+-- OpenMirai — Schema v2 (PRD-021-A): estado de ejecución reanudable
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+    session_id      TEXT PRIMARY KEY,
+    agent_id        TEXT NOT NULL DEFAULT '',
+    step            INTEGER NOT NULL DEFAULT 0,
+    node_id         TEXT NOT NULL DEFAULT '',
+    cursor_node_id  TEXT,
+    state_snapshot  TEXT NOT NULL DEFAULT '{}',
+    executed_nodes  TEXT NOT NULL DEFAULT '[]',
+    created_at      REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_agent ON checkpoints(agent_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_created ON checkpoints(created_at DESC);
+
+-- Nodo en el que va (o quedó) el run. NULL para runs de la v1.
+ALTER TABLE sessions ADD COLUMN current_node_id TEXT;
+
+INSERT OR IGNORE INTO _schema_version (version, applied_at)
+VALUES (2, 0.0);
+"#;
+
+// ---------------------------------------------------------------------------
 // Migration registry
 // ---------------------------------------------------------------------------
 
-/// Ordered list of all migrations.  For now there is only the initial schema.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    description: "Initial standalone engine schema (graphs, agents, sessions)",
-    up_sql: SCHEMA_SQL,
-}];
+/// Lista ordenada de migraciones. El runner (`db/sqlite.rs`) aplica solo las
+/// de versión mayor a la registrada en `_schema_version`: por eso una
+/// migración puede tener DDL no idempotente (`ALTER TABLE`) sin romper al
+/// reabrir la misma DB.
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "Initial standalone engine schema (graphs, agents, sessions)",
+        up_sql: SCHEMA_SQL,
+    },
+    Migration {
+        version: 2,
+        description: "Checkpoints reanudables + nodo actual del run (PRD-021-A)",
+        up_sql: SCHEMA_SQL_V2,
+    },
+];
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -131,6 +182,20 @@ mod tests {
         assert!(SCHEMA_SQL.contains("CREATE TABLE IF NOT EXISTS agents"));
         assert!(SCHEMA_SQL.contains("CREATE TABLE IF NOT EXISTS sessions"));
         assert!(SCHEMA_SQL.contains("CREATE TABLE IF NOT EXISTS _schema_version"));
+    }
+
+    #[test]
+    fn v2_is_additive_over_v1() {
+        // La v2 no puede reescribir la v1: nada de DROP/RENAME sobre lo viejo.
+        let up = SCHEMA_SQL_V2.to_uppercase();
+        assert!(!up.contains("DROP TABLE"), "v2 no puede borrar tablas v1");
+        assert!(
+            !up.contains("DROP COLUMN"),
+            "v2 no puede borrar columnas v1"
+        );
+        assert!(!up.contains("RENAME"), "v2 no puede renombrar lo de v1");
+        assert!(SCHEMA_SQL_V2.contains("CREATE TABLE IF NOT EXISTS checkpoints"));
+        assert!(SCHEMA_SQL_V2.contains("ALTER TABLE sessions ADD COLUMN current_node_id"));
     }
 
     #[test]

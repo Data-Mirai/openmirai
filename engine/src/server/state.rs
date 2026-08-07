@@ -11,7 +11,9 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
-use crate::db::{Repository, SessionRecord, SessionStatus, SqliteSessionRepo};
+use crate::db::{
+    Repository, SessionRecord, SessionStatus, SqliteCheckpointStore, SqliteSessionRepo,
+};
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
 use crate::sessions::{SessionManager, TmuxBackend};
@@ -107,6 +109,34 @@ impl AppState {
         }
     }
 
+    /// Runner cableado con **persistencia de checkpoints** para ESTE run
+    /// (PRD-021-A).
+    ///
+    /// El callback se ata por run —igual que `with_stream_tx`— porque necesita
+    /// la identidad del run: el `Checkpoint` que emite el runner solo trae el
+    /// `session_id`. Sin DB cableada devuelve el runner tal cual: el motor
+    /// corre igual, solo que sin poder reanudar.
+    pub fn runner_with_checkpoints(
+        &self,
+        agent_id: &str,
+        agent_name: &str,
+        started_at: f64,
+    ) -> GraphRunner {
+        match &self.session_repo {
+            Some(repo) => {
+                self.runner
+                    .clone()
+                    .with_checkpoint_callback(Box::new(SqliteCheckpointStore::new(
+                        repo.clone(),
+                        agent_id,
+                        agent_name,
+                        started_at,
+                    )))
+            }
+            None => self.runner.clone(),
+        }
+    }
+
     /// Registra una ejecución terminada: cache en memoria (para lecturas
     /// calientes) + persistencia en SQLite si está cableada. Un fallo de
     /// persistencia NO tumba el request — se loguea y la respuesta sigue.
@@ -120,6 +150,7 @@ impl AppState {
     ) {
         if let Some(repo) = &self.session_repo {
             let finished_at = crate::utils::now_epoch();
+            let status = SessionStatus::from_execution(&result.status);
             let rec = SessionRecord {
                 id: id.clone(),
                 agent_id: agent_id.to_string(),
@@ -129,10 +160,19 @@ impl AppState {
                 created_at: started_at,
                 finished_at: Some(finished_at),
                 duration_ms: Some((finished_at - started_at) * 1000.0),
-                status: SessionStatus::from_execution(&result.status),
+                status: status.clone(),
+                // Dónde quedó: solo tiene sentido si NO terminó el grafo.
+                current_node_id: result.interrupt_node_id.clone(),
             };
             if let Err(e) = repo.save(&rec).await {
                 tracing::warn!(session_id = %id, error = %e, "no se pudo persistir el run");
+            }
+            // Un run completado no tiene nada que reanudar: se suelta su
+            // checkpoint (si no, la tabla crece con cada ejecución exitosa).
+            if status == SessionStatus::Completed {
+                if let Err(e) = repo.delete_checkpoint(&id).await {
+                    tracing::warn!(session_id = %id, error = %e, "no se pudo soltar el checkpoint");
+                }
             }
         }
         self.insert_session(id, result).await;

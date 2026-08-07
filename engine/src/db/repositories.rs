@@ -91,14 +91,21 @@ impl AgentRecord {
 // SessionRecord
 // ---------------------------------------------------------------------------
 
-/// Lifecycle status of a session.
+/// Estado explícito de un run (PRD-021-A).
+///
+/// `Running` y `Paused` son estados **vivos**: se escriben mientras el run
+/// existe, no al terminar. `Completed` / `Failed` / `Timeout` / `Cancelled` son
+/// terminales. `Interrupted` es el histórico de 0.7.0 (lo que hoy produce
+/// `logic/human_input`); `Paused` es su reemplazo reanudable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Running,
+    Paused,
     Completed,
     Failed,
     Timeout,
+    Cancelled,
     Interrupted,
 }
 
@@ -106,9 +113,11 @@ impl std::fmt::Display for SessionStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SessionStatus::Running => write!(f, "running"),
+            SessionStatus::Paused => write!(f, "paused"),
             SessionStatus::Completed => write!(f, "completed"),
             SessionStatus::Failed => write!(f, "failed"),
             SessionStatus::Timeout => write!(f, "timeout"),
+            SessionStatus::Cancelled => write!(f, "cancelled"),
             SessionStatus::Interrupted => write!(f, "interrupted"),
         }
     }
@@ -126,15 +135,16 @@ impl SessionStatus {
         }
     }
 
-    /// Inversa de [`from_execution`]. `Running` (sin resultado final real)
-    /// reconstruye como `Interrupted`.
+    /// Inversa de [`from_execution`]. Los estados sin resultado final real
+    /// (`Running`, `Paused`, `Cancelled`) reconstruyen como `Interrupted`:
+    /// el grafo no llegó al final.
     pub fn to_execution(&self) -> crate::core::runner::ExecutionStatus {
         use crate::core::runner::ExecutionStatus as ES;
         match self {
             Self::Completed => ES::Completed,
             Self::Failed => ES::Failed,
             Self::Timeout => ES::Timeout,
-            Self::Interrupted | Self::Running => ES::Interrupted,
+            Self::Interrupted | Self::Running | Self::Paused | Self::Cancelled => ES::Interrupted,
         }
     }
 
@@ -144,9 +154,17 @@ impl SessionStatus {
             "completed" => Self::Completed,
             "failed" => Self::Failed,
             "timeout" => Self::Timeout,
+            "paused" => Self::Paused,
+            "cancelled" => Self::Cancelled,
             "interrupted" => Self::Interrupted,
             _ => Self::Running,
         }
+    }
+
+    /// ¿El run sigue vivo? Un run vivo es el único que se puede reanudar o
+    /// cancelar — y el único cuyo checkpoint sigue sirviendo para algo.
+    pub fn is_live(&self) -> bool {
+        matches!(self, Self::Running | Self::Paused)
     }
 }
 
@@ -168,6 +186,10 @@ pub struct SessionRecord {
     #[serde(default)]
     pub duration_ms: Option<f64>,
     pub status: SessionStatus,
+    /// Nodo en el que va (o quedó) el run — PRD-021-A. `None` para runs de la
+    /// v1 del esquema, que no lo registraban.
+    #[serde(default)]
+    pub current_node_id: Option<String>,
 }
 
 impl SessionRecord {
@@ -445,6 +467,7 @@ mod tests {
             finished_at: None,
             duration_ms: None,
             status: SessionStatus::Completed,
+            current_node_id: None,
         }
     }
 

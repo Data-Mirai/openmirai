@@ -374,6 +374,129 @@ async fn executed_run_persists_and_survives_memory_wipe() {
     );
 }
 
+/// Crea un agente `trigger → human_input → out` y lo ejecuta por la API.
+/// El run se detiene en el `human_input`: es un run que NO terminó, o sea el
+/// caso donde el checkpoint tiene que quedar en disco.
+async fn create_and_execute_con_pausa(app: &Router, name: &str) -> (String, String) {
+    let spec = json!({
+        "name": name,
+        "description": "run que se detiene esperando a un humano",
+        "version": "v1",
+        "graph": {
+            "nodes": [
+                {"id": "trigger", "tool_type": "trigger/manual", "config": {"payload": {"msg": "hola"}}},
+                {"id": "ask", "tool_type": "logic/human_input", "config": {"prompt": "¿seguimos?"}},
+                {"id": "out", "tool_type": "output/response", "config": {"message": "done"}}
+            ],
+            "edges": [
+                {"source": "trigger", "target": "ask"},
+                {"source": "ask", "target": "out"}
+            ]
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/agents/from-spec")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&spec).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let agent_id = body_json(resp.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/agents/{agent_id}/execute"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "trigger_data": {} })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let session_id = json["session_id"].as_str().unwrap().to_string();
+    (agent_id, session_id)
+}
+
+#[tokio::test]
+async fn ejecutar_por_la_api_guarda_checkpoint_en_sqlite() {
+    use crate::db::Repository;
+    // PRD-021-A: el runner tiene que invocar el `CheckpointCallback` en el
+    // CAMINO DE PRODUCCIÓN (antes `with_checkpoint_callback` solo se llamaba
+    // en tests). Se ejecuta por la API HTTP de verdad y se mira la DB.
+    let mut registry = ToolRegistry::new();
+    register_all_builtin_tools(&mut registry);
+    let mut state = AppState::new(registry, test_llm_factory(), None);
+    let repo = std::sync::Arc::new(crate::db::SqliteSessionRepo::open_in_memory().unwrap());
+    state.session_repo = Some(repo.clone());
+    let app = create_router(state.clone());
+
+    let (agent_id, session_id) = create_and_execute_con_pausa(&app, "test-checkpoint").await;
+
+    let cp = repo
+        .get_checkpoint(&session_id)
+        .await
+        .unwrap()
+        .expect("el run detenido tiene que dejar checkpoint en disco");
+    assert_eq!(
+        cp.agent_id, agent_id,
+        "el checkpoint sabe qué agente reanudar"
+    );
+    assert_eq!(cp.node_id, "ask", "se detuvo en el human_input");
+    assert_eq!(cp.cursor_node_id.as_deref(), Some("ask"), "ahí se retoma");
+    // Lo ya ejecutado quedó registrado — reanudar no debe repetirlo.
+    assert_eq!(cp.executed_nodes, vec!["trigger"]);
+    assert!(!cp.already_executed("out"), "el nodo final no corrió");
+    // Y el estado compartido está completo: la salida del trigger sobrevivió.
+    let estado = cp.to_shared_state().unwrap();
+    assert!(
+        estado.get("trigger").is_some(),
+        "el estado guardado debe traer la salida de los nodos que corrieron"
+    );
+
+    // El run quedó registrado con el nodo en el que se detuvo.
+    let run = repo
+        .get(&session_id)
+        .await
+        .unwrap()
+        .expect("run persistido");
+    assert_eq!(run.current_node_id.as_deref(), Some("ask"));
+    assert_eq!(run.status, crate::db::SessionStatus::Interrupted);
+}
+
+#[tokio::test]
+async fn un_run_completado_suelta_su_checkpoint() {
+    use crate::db::Repository;
+    // El checkpoint es para reanudar: si el run terminó, no hay nada que
+    // reanudar y la fila se suelta (si no, crece con cada ejecución).
+    let mut registry = ToolRegistry::new();
+    register_all_builtin_tools(&mut registry);
+    let mut state = AppState::new(registry, test_llm_factory(), None);
+    let repo = std::sync::Arc::new(crate::db::SqliteSessionRepo::open_in_memory().unwrap());
+    state.session_repo = Some(repo.clone());
+    let app = create_router(state.clone());
+
+    let (_, session_id) = create_and_execute(&app, "test-sin-pausa").await;
+
+    assert!(
+        repo.get_checkpoint(&session_id).await.unwrap().is_none(),
+        "un run completado no deja checkpoint colgando"
+    );
+    let run = repo.get(&session_id).await.unwrap().unwrap();
+    assert_eq!(run.status, crate::db::SessionStatus::Completed);
+    assert!(run.current_node_id.is_none(), "no quedó en ningún nodo");
+}
+
 #[tokio::test]
 async fn list_sessions_reads_from_db_with_agent_filter() {
     let mut registry = ToolRegistry::new();

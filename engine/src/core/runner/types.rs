@@ -77,6 +77,11 @@ pub struct Checkpoint {
     pub node_id: String,
     pub state_snapshot: HashMap<String, HashMap<String, Value>>,
     pub cursor_node_id: Option<String>,
+    /// Nodos que YA se ejecutaron, en orden (PRD-021-A). Sin esto, reanudar
+    /// vuelve a correr lo hecho y repite sus efectos (mandar el mismo correo
+    /// dos veces). `default` para deserializar checkpoints previos a 0.7.1.
+    #[serde(default)]
+    pub executed_nodes: Vec<String>,
     pub timestamp: f64,
 }
 

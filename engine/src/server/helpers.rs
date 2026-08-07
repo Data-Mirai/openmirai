@@ -84,8 +84,18 @@ pub(crate) async fn run_agent_spec(
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
     session_id: &str,
+    run_agent_id: &str,
 ) -> ExecutionResult {
-    run_agent_spec_with_memory(spec, trigger_data, state, &spec.name, true, session_id).await
+    run_agent_spec_with_memory(
+        spec,
+        trigger_data,
+        state,
+        &spec.name,
+        true,
+        session_id,
+        run_agent_id,
+    )
+    .await
 }
 
 /// Run an agent spec with memory support (PRD-008).
@@ -95,6 +105,11 @@ pub(crate) async fn run_agent_spec(
 /// `session_id`: id del run, generado por el handler ANTES de ejecutar. El
 /// contexto se construye con él para que los eventos, los logs y el registro
 /// persistido hablen del mismo run (antes cada capa inventaba el suyo).
+/// `run_agent_id`: id del agente con el que se **persiste** el run (el del
+/// registro/la ruta). Va aparte de `agent_id` a propósito: ese es la llave del
+/// store de memoria y en la ruta `/execute` vale `spec.name`, no el id — si se
+/// unifican, se cambia el comportamiento de memoria de PRD-008.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_agent_spec_with_memory(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
@@ -102,6 +117,7 @@ pub(crate) async fn run_agent_spec_with_memory(
     agent_id: &str,
     is_first_cycle_of_session: bool,
     session_id: &str,
+    run_agent_id: &str,
 ) -> ExecutionResult {
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
@@ -186,11 +202,11 @@ pub(crate) async fn run_agent_spec_with_memory(
     let initial_state =
         build_state_with_memory(spec, agent_id, state, is_first_cycle_of_session).await;
 
-    match state
-        .runner
-        .run_with_state(&graph, &context, initial_state)
-        .await
-    {
+    // PRD-021-A: runner con checkpoints. Cada nodo terminado deja el estado en
+    // SQLite, así que el run sobrevive a un reinicio del proceso.
+    let runner = state.runner_with_checkpoints(run_agent_id, &spec.name, crate::utils::now_epoch());
+
+    match runner.run_with_state(&graph, &context, initial_state).await {
         Ok(result) => result,
         Err(e) => ExecutionResult {
             status: ExecutionStatus::Failed,
@@ -214,6 +230,7 @@ pub(crate) async fn run_agent_spec_streaming(
     state: &AppState,
     session_id: &str,
     event_tx: tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>,
+    run_agent_id: &str,
 ) -> Option<ExecutionResult> {
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
@@ -271,8 +288,11 @@ pub(crate) async fn run_agent_spec_streaming(
     }
     let context = ctx_builder.build();
 
-    // Create a runner WITH the stream channel for real-time events.
-    let streaming_runner = state.runner.clone().with_stream_tx(event_tx.clone());
+    // Runner con el canal de streaming Y con checkpoints (PRD-021-A): un run
+    // observado en vivo es igual de reanudable que uno normal.
+    let streaming_runner = state
+        .runner_with_checkpoints(run_agent_id, &spec.name, crate::utils::now_epoch())
+        .with_stream_tx(event_tx.clone());
 
     match streaming_runner.run(&graph, &context).await {
         Ok(result) => Some(result), // GraphCompleted already sent by runner

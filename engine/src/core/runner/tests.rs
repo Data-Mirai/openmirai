@@ -1360,6 +1360,95 @@ async fn checkpoint_called_after_each_block() {
     assert_eq!(saved[0].node_id, "a");
     assert_eq!(saved[1].node_id, "b");
     assert_eq!(saved[2].node_id, "c");
+
+    // PRD-021-A: cada checkpoint lleva QUÉ nodos ya corrieron — sin eso,
+    // reanudar los vuelve a ejecutar y repite sus efectos.
+    assert_eq!(saved[0].executed_nodes, vec!["a"]);
+    assert_eq!(saved[1].executed_nodes, vec!["a", "b"]);
+    assert_eq!(saved[2].executed_nodes, vec!["a", "b", "c"]);
+    // Y dónde retomar: tras 'a' sigue 'b'; tras el último no queda nada.
+    assert_eq!(saved[0].cursor_node_id.as_deref(), Some("b"));
+    assert_eq!(saved[2].cursor_node_id, None);
+}
+
+// ===================================================================
+// Test 6b: el nodo que FALLÓ no cuenta como ejecutado (PRD-021-A)
+// ===================================================================
+
+/// Falla solo en un nodo concreto; el resto pasa.
+struct FailOneNodeExecutor {
+    node_id: &'static str,
+}
+
+#[async_trait]
+impl ToolExecutor for FailOneNodeExecutor {
+    async fn execute(
+        &self,
+        node: &NodeDef,
+        inputs: HashMap<String, Value>,
+        _ctx: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        if node.id == self.node_id {
+            return Err(ToolError::ExecutionFailed {
+                tool_type: node.tool_type.clone(),
+                message: "boom".to_string(),
+            });
+        }
+        let mut output = inputs;
+        output.insert("_node_id".to_string(), Value::String(node.id.clone()));
+        Ok(output)
+    }
+}
+
+#[tokio::test]
+async fn checkpoint_no_marca_como_ejecutado_el_nodo_que_fallo() {
+    // Reanudar tiene que arrancar EN el nodo que falló: si el fallido contara
+    // como ejecutado, la reanudación se lo saltaría y ese trabajo nunca se
+    // haría. (Los que se saltan a propósito — Skipped — SÍ cuentan.)
+    let graph = GraphDef {
+        id: "g".into(),
+        name: "route-error".into(),
+        version: "1.0.0".into(),
+        nodes: vec![
+            make_node("a", "tool/echo"),
+            make_node("b", "tool/echo"),
+            make_node("c", "tool/echo"),
+        ],
+        edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
+        metadata: HashMap::new(),
+    };
+
+    let cp_cb = Arc::new(MockCheckpointCallback::new());
+    struct ArcCb(Arc<MockCheckpointCallback>);
+    #[async_trait]
+    impl CheckpointCallback for ArcCb {
+        async fn save_checkpoint(&self, checkpoint: Checkpoint) -> Result<String, RunnerError> {
+            self.0.save_checkpoint(checkpoint).await
+        }
+    }
+
+    let runner = GraphRunner::new(Box::new(FailOneNodeExecutor { node_id: "b" }))
+        .with_default_retry_policy(RetryPolicy {
+            max_retries: 0,
+            backoff: BackoffStrategy::None,
+            initial_delay_secs: 0.0,
+            on_failure: FailureMode::RouteToError,
+        })
+        .with_checkpoint_callback(Box::new(ArcCb(cp_cb.clone())));
+    let ctx = TestContext::new();
+    let result = runner.run(&graph, &ctx).await.unwrap();
+
+    // 'b' quedó en la traza como Error; 'a' y 'c' como Ok.
+    let b_trace = result.trace.iter().find(|t| t.node_id == "b").unwrap();
+    assert_eq!(b_trace.status, TraceStatus::Error);
+
+    let saved = cp_cb.saved_checkpoints();
+    let ultimo = saved.last().expect("al menos un checkpoint");
+    assert_eq!(
+        ultimo.executed_nodes,
+        vec!["a", "c"],
+        "el nodo en error NO puede contar como ejecutado"
+    );
 }
 
 // ===================================================================

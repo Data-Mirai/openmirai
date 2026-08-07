@@ -436,7 +436,7 @@ impl GraphRunner {
         transcript: &[TranscriptEntry],
     ) -> Option<ExecutionResult> {
         if self.pause_requested.swap(false, Ordering::SeqCst) {
-            self.save_checkpoint(session_id, step, node_id, state, Some(node_id))
+            self.save_checkpoint(session_id, step, node_id, state, Some(node_id), trace)
                 .await;
             self.emit_event(
                 EventType::SessionInterrupted,
@@ -494,7 +494,7 @@ impl GraphRunner {
             timeout_minutes,
         };
 
-        self.save_checkpoint(session_id, step, &node.id, state, Some(&node.id))
+        self.save_checkpoint(session_id, step, &node.id, state, Some(&node.id), trace)
             .await;
         self.emit_event(
             EventType::InterruptCreated,
@@ -643,14 +643,14 @@ impl GraphRunner {
             trace.extend(fo_trace);
             transcript.extend(fo_transcript);
             let join_id = self.find_fanout_join(&next_nodes, graph);
-            self.save_checkpoint(session_id, *step, node_id, state, join_id.as_deref())
+            self.save_checkpoint(session_id, *step, node_id, state, join_id.as_deref(), trace)
                 .await;
             Ok(join_id
                 .as_deref()
                 .and_then(|nid| node_idx.get(nid).copied()))
         } else {
             let next = next_nodes.into_iter().next();
-            self.save_checkpoint(session_id, *step, node_id, state, next.as_deref())
+            self.save_checkpoint(session_id, *step, node_id, state, next.as_deref(), trace)
                 .await;
             self.record_decision_transcript(node_id, &next, graph, transcript);
             Ok(next.as_deref().and_then(|nid| node_idx.get(nid).copied()))
@@ -920,6 +920,21 @@ impl GraphRunner {
         }
     }
 
+    /// Nodos ya ejecutados, en orden y sin repetir, leídos de la traza.
+    ///
+    /// `Ok` y `Skipped` cuentan como ejecutados: ambos ya escribieron su salida
+    /// en el estado y sus efectos ya ocurrieron — reanudar no debe repetirlos.
+    /// `Error` NO cuenta: ese nodo es justo por donde hay que retomar.
+    fn executed_node_ids(trace: &[TraceEntry]) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        trace
+            .iter()
+            .filter(|t| matches!(t.status, TraceStatus::Ok | TraceStatus::Skipped))
+            .filter(|t| seen.insert(t.node_id.clone()))
+            .map(|t| t.node_id.clone())
+            .collect()
+    }
+
     /// Internal: save checkpoint if callback is configured.
     async fn save_checkpoint(
         &self,
@@ -928,6 +943,7 @@ impl GraphRunner {
         node_id: &str,
         state: &SharedState,
         cursor_node_id: Option<&str>,
+        trace: &[TraceEntry],
     ) {
         if let Some(ref cb) = self.checkpoint_cb {
             let checkpoint = Checkpoint {
@@ -936,6 +952,7 @@ impl GraphRunner {
                 node_id: node_id.to_string(),
                 state_snapshot: state.snapshot(),
                 cursor_node_id: cursor_node_id.map(String::from),
+                executed_nodes: Self::executed_node_ids(trace),
                 timestamp: now_ts(),
             };
             match cb.save_checkpoint(checkpoint).await {

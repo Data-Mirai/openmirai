@@ -318,7 +318,7 @@ pub(crate) async fn execute_agent(
     let timeout = std::time::Duration::from_secs(state.timeout_secs);
     let result = match tokio::time::timeout(
         timeout,
-        run_agent_spec(&spec, &trigger_data, &state, &session_id),
+        run_agent_spec(&spec, &trigger_data, &state, &session_id, &id),
     )
     .await
     {
@@ -423,6 +423,7 @@ pub(crate) async fn stream_agent(
             &state_clone,
             &session_id,
             event_tx,
+            &agent_id,
         )
         .await
         {
@@ -818,7 +819,14 @@ pub(crate) async fn universe_message(
         let mut trigger_data = HashMap::new();
         trigger_data.insert("message".to_string(), Value::String(message.to_string()));
 
-        let result = run_agent_spec(&spec, &trigger_data, &state, &short_id()).await;
+        let result = run_agent_spec(
+            &spec,
+            &trigger_data,
+            &state,
+            &short_id(),
+            &decision.agent_id,
+        )
+        .await;
         Some(json!({
             "status": result.status,
             "state": result.state.snapshot(),
@@ -1282,6 +1290,7 @@ pub(crate) async fn play_agent(
                     &aid,
                     is_first,
                     &crate::utils::short_id(),
+                    &aid,
                 )
                 .await;
 

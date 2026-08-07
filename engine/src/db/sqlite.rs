@@ -25,6 +25,7 @@ use serde_json::Value;
 use crate::core::runner::ExecutionResult;
 use crate::utils::now_epoch;
 
+use super::checkpoints::{CheckpointRecord, RunProgress};
 use super::migrations::MIGRATIONS;
 use super::repositories::{DbError, Repository, SessionRecord, SessionStatus};
 
@@ -64,15 +65,33 @@ impl SqliteSessionRepo {
         Self::init(conn)
     }
 
-    fn init(conn: Connection) -> Result<Self, DbError> {
+    fn init(mut conn: Connection) -> Result<Self, DbError> {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000; PRAGMA foreign_keys=ON;",
         )
         .map_err(|e| DbError::ConnectionError(format!("failed to set PRAGMAs: {e}")))?;
+
+        // Migración VERSIONADA (antes se re-ejecutaba todo el DDL en cada
+        // apertura: funcionaba solo porque la v1 era 100% `IF NOT EXISTS`).
+        // Con la v2 aparece `ALTER TABLE`, que NO es idempotente: reaplicarlo
+        // revienta con "duplicate column name". Por eso ahora se lee la
+        // versión aplicada y solo se corren las migraciones más nuevas, cada
+        // una en su transacción (o entra completa, o no entra).
+        let current = Self::applied_version(&conn)?;
         for m in MIGRATIONS {
-            conn.execute_batch(m.up_sql)
+            if m.version <= current {
+                continue;
+            }
+            let tx = conn.transaction().map_err(|e| {
+                DbError::ConnectionError(format!("migration v{}: begin: {e}", m.version))
+            })?;
+            tx.execute_batch(m.up_sql)
                 .map_err(|e| DbError::ConnectionError(format!("migration v{}: {e}", m.version)))?;
+            tx.commit().map_err(|e| {
+                DbError::ConnectionError(format!("migration v{}: commit: {e}", m.version))
+            })?;
         }
+
         // Sella el timestamp real de aplicación (el DDL inserta 0.0 idempotente).
         conn.execute(
             "UPDATE _schema_version SET applied_at = ?1 WHERE applied_at = 0.0",
@@ -82,6 +101,35 @@ impl SqliteSessionRepo {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    /// Versión de esquema ya aplicada. `0` si la DB está vacía (sin
+    /// `_schema_version`), que es lo que dispara la migración inicial.
+    fn applied_version(conn: &Connection) -> Result<u32, DbError> {
+        let has_table: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = '_schema_version'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| DbError::ConnectionError(format!("schema probe: {e}")))?;
+        if !has_table {
+            return Ok(0);
+        }
+        conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM _schema_version",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|v| v as u32)
+        .map_err(|e| DbError::ConnectionError(format!("schema version read: {e}")))
+    }
+
+    /// Versión de esquema de esta DB (para diagnóstico y tests de migración).
+    pub async fn schema_version(&self) -> Result<u32, DbError> {
+        self.with_conn(Self::applied_version).await
     }
 
     fn with_conn<T, F>(&self, f: F) -> impl std::future::Future<Output = Result<T, DbError>>
@@ -142,6 +190,177 @@ impl SqliteSessionRepo {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Checkpoints (PRD-021-A)
+// ---------------------------------------------------------------------------
+
+impl SqliteSessionRepo {
+    /// Guarda (o sobreescribe) el checkpoint del run **y** deja la fila del run
+    /// al día con su estado y nodo actual — las dos escrituras en UNA
+    /// transacción: un run nunca queda marcado en un nodo que su checkpoint no
+    /// respalda.
+    ///
+    /// La fila del run se **upserta**: si todavía no existe (lo normal, se
+    /// registra al terminar) se crea con `started_at` y el estado en vuelo; si
+    /// ya existe y sigue viva (`running`/`paused`) se le actualizan estado,
+    /// nodo actual y estado compartido. Un run ya terminado NO se revive.
+    pub async fn save_checkpoint(
+        &self,
+        cp: &CheckpointRecord,
+        run: &RunProgress,
+    ) -> Result<(), DbError> {
+        let cp = cp.clone();
+        let run = run.clone();
+        self.with_conn(move |conn| {
+            let ser = |e: serde_json::Error| DbError::SerializationError(e.to_string());
+            let sql = |e: rusqlite::Error| DbError::ConnectionError(format!("checkpoint: {e}"));
+
+            let snapshot_json = serde_json::to_string(&cp.state_snapshot).map_err(ser)?;
+            let executed_json = serde_json::to_string(&cp.executed_nodes).map_err(ser)?;
+
+            conn.execute("BEGIN IMMEDIATE", []).map_err(sql)?;
+            let out = (|| -> Result<(), DbError> {
+                conn.execute(
+                    "INSERT OR REPLACE INTO checkpoints
+                       (session_id, agent_id, step, node_id, cursor_node_id,
+                        state_snapshot, executed_nodes, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        cp.session_id,
+                        cp.agent_id,
+                        cp.step,
+                        cp.node_id,
+                        cp.cursor_node_id,
+                        snapshot_json,
+                        executed_json,
+                        cp.created_at,
+                    ],
+                )
+                .map_err(sql)?;
+
+                let graph_id = ensure_parent_rows(conn, &cp.agent_id, &run.agent_name, "")?;
+                conn.execute(
+                    "INSERT INTO sessions
+                       (id, agent_id, agent_name, graph_id, status, state,
+                        started_at, current_node_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     ON CONFLICT(id) DO UPDATE SET
+                        status          = excluded.status,
+                        state           = excluded.state,
+                        current_node_id = excluded.current_node_id
+                     WHERE sessions.status IN ('running', 'paused')",
+                    params![
+                        cp.session_id,
+                        cp.agent_id,
+                        run.agent_name,
+                        graph_id,
+                        run.status.to_string(),
+                        snapshot_json,
+                        run.started_at,
+                        cp.resume_node_id(),
+                    ],
+                )
+                .map_err(sql)?;
+                Ok(())
+            })();
+            match out {
+                Ok(()) => {
+                    conn.execute("COMMIT", []).map_err(sql)?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", []);
+                    Err(e)
+                }
+            }
+        })
+        .await
+    }
+
+    /// Lee el checkpoint de un run. `None` si nunca se guardó uno.
+    pub async fn get_checkpoint(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<CheckpointRecord>, DbError> {
+        let session_id = session_id.to_string();
+        self.with_conn(move |conn| {
+            conn.query_row(
+                "SELECT * FROM checkpoints WHERE session_id = ?1",
+                params![session_id],
+                |row| Ok(row_to_checkpoint(row)),
+            )
+            .optional()
+            .map_err(|e| DbError::ConnectionError(format!("get_checkpoint: {e}")))?
+            .transpose()
+        })
+        .await
+    }
+
+    /// Borra el checkpoint de un run (al completarlo ya no hay qué reanudar).
+    pub async fn delete_checkpoint(&self, session_id: &str) -> Result<bool, DbError> {
+        let session_id = session_id.to_string();
+        self.with_conn(move |conn| {
+            let n = conn
+                .execute(
+                    "DELETE FROM checkpoints WHERE session_id = ?1",
+                    params![session_id],
+                )
+                .map_err(|e| DbError::ConnectionError(format!("delete_checkpoint: {e}")))?;
+            Ok(n > 0)
+        })
+        .await
+    }
+}
+
+/// Rearma un `CheckpointRecord` desde una fila de `checkpoints`.
+fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> Result<CheckpointRecord, DbError> {
+    let ser = |e: serde_json::Error| DbError::SerializationError(e.to_string());
+    let col = |e: rusqlite::Error| DbError::ConnectionError(format!("column: {e}"));
+
+    let snapshot_txt: String = row.get("state_snapshot").map_err(col)?;
+    let executed_txt: String = row.get("executed_nodes").map_err(col)?;
+    Ok(CheckpointRecord {
+        session_id: row.get("session_id").map_err(col)?,
+        agent_id: row.get("agent_id").map_err(col)?,
+        step: row.get::<_, i64>("step").map_err(col)? as u32,
+        node_id: row.get("node_id").map_err(col)?,
+        cursor_node_id: row.get("cursor_node_id").map_err(col)?,
+        state_snapshot: serde_json::from_str(&snapshot_txt).map_err(ser)?,
+        executed_nodes: serde_json::from_str(&executed_txt).map_err(ser)?,
+        created_at: row.get("created_at").map_err(col)?,
+    })
+}
+
+/// Inserta las filas padre (`graphs`, `agents`) que exigen las FKs de
+/// `sessions`. Devuelve el `graph_id` efectivo. Idempotente.
+fn ensure_parent_rows(
+    conn: &Connection,
+    agent_id: &str,
+    agent_name: &str,
+    graph_id: &str,
+) -> Result<String, DbError> {
+    let sql = |e: rusqlite::Error| DbError::ConnectionError(format!("parent rows: {e}"));
+    let now = now_epoch();
+    let graph_id = if graph_id.is_empty() {
+        format!("graph-{agent_id}")
+    } else {
+        graph_id.to_string()
+    };
+    conn.execute(
+        "INSERT OR IGNORE INTO graphs (id, name, created_at, updated_at)
+         VALUES (?1, ?1, ?2, ?2)",
+        params![graph_id, now],
+    )
+    .map_err(sql)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO agents (id, name, graph_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![agent_id, agent_name, graph_id, now],
+    )
+    .map_err(sql)?;
+    Ok(graph_id)
+}
+
 /// Rearma un `SessionRecord` desde una fila de `sessions`.
 fn row_to_record(row: &rusqlite::Row<'_>) -> Result<SessionRecord, DbError> {
     let ser = |e: serde_json::Error| DbError::SerializationError(e.to_string());
@@ -159,6 +378,8 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> Result<SessionRecord, DbError> {
     let started_at: f64 = row.get("started_at").map_err(col)?;
     let finished_at: Option<f64> = row.get("finished_at").map_err(col)?;
     let duration_ms: Option<f64> = row.get("duration_ms").map_err(col)?;
+    // v2: NULL en runs escritos por la v1.
+    let current_node_id: Option<String> = row.get("current_node_id").map_err(col)?;
 
     let status = SessionStatus::parse(&status_txt);
 
@@ -182,6 +403,7 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> Result<SessionRecord, DbError> {
         finished_at,
         duration_ms,
         status,
+        current_node_id,
     })
 }
 
@@ -192,27 +414,10 @@ impl Repository<SessionRecord> for SqliteSessionRepo {
         self.with_conn(move |conn| {
             let ser = |e: serde_json::Error| DbError::SerializationError(e.to_string());
             let sql = |e: rusqlite::Error| DbError::ConnectionError(format!("save: {e}"));
-            let now = now_epoch();
 
             // El grafo puede no estar registrado (agentes cargados de YAML):
             // filas padre mínimas para satisfacer las FKs del schema.
-            let graph_id = if rec.graph_id.is_empty() {
-                format!("graph-{}", rec.agent_id)
-            } else {
-                rec.graph_id.clone()
-            };
-            conn.execute(
-                "INSERT OR IGNORE INTO graphs (id, name, created_at, updated_at)
-                 VALUES (?1, ?1, ?2, ?2)",
-                params![graph_id, now],
-            )
-            .map_err(sql)?;
-            conn.execute(
-                "INSERT OR IGNORE INTO agents (id, name, graph_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?4)",
-                params![rec.agent_id, rec.agent_name, graph_id, now],
-            )
-            .map_err(sql)?;
+            let graph_id = ensure_parent_rows(conn, &rec.agent_id, &rec.agent_name, &rec.graph_id)?;
 
             let state_json = serde_json::to_string(&rec.result.state).map_err(ser)?;
             let trace_json = serde_json::to_string(&rec.result.trace).map_err(ser)?;
@@ -221,8 +426,8 @@ impl Repository<SessionRecord> for SqliteSessionRepo {
             conn.execute(
                 "INSERT OR REPLACE INTO sessions
                    (id, agent_id, agent_name, graph_id, status, trace, transcript,
-                    state, error, started_at, finished_at, duration_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    state, error, started_at, finished_at, duration_ms, current_node_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     rec.id,
                     rec.agent_id,
@@ -236,6 +441,7 @@ impl Repository<SessionRecord> for SqliteSessionRepo {
                     rec.created_at,
                     rec.finished_at,
                     rec.duration_ms,
+                    rec.current_node_id,
                 ],
             )
             .map_err(sql)?;
@@ -344,6 +550,7 @@ mod tests {
             finished_at: Some(created_at + 0.12),
             duration_ms: Some(120.0),
             status: SessionStatus::Completed,
+            current_node_id: None,
         }
     }
 
@@ -494,5 +701,208 @@ mod tests {
     async fn get_missing_returns_none() {
         let repo = SqliteSessionRepo::open_in_memory().unwrap();
         assert!(repo.get("nope").await.unwrap().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Migración v1 → v2 (W8)
+    // -----------------------------------------------------------------------
+
+    fn temp_db(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("mirai-test-mig-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("engine.db")
+    }
+
+    /// Crea una DB EXACTAMENTE como la escribía la v1 (0.7.0) y le mete un run.
+    fn crear_db_v1(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(super::super::migrations::SCHEMA_SQL)
+            .unwrap();
+        conn.execute(
+            "INSERT INTO graphs (id, name, created_at, updated_at) VALUES ('g1','g1',1.0,1.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agents (id, name, graph_id, created_at, updated_at)
+             VALUES ('a-v1','Agente v1','g1',1.0,1.0)",
+            [],
+        )
+        .unwrap();
+        let trace = serde_json::to_string(&make_result(ExecutionStatus::Completed, None).trace)
+            .expect("trace");
+        conn.execute(
+            "INSERT INTO sessions
+               (id, agent_id, agent_name, graph_id, status, trace, transcript,
+                state, started_at, finished_at, duration_ms)
+             VALUES ('run-v1','a-v1','Agente v1','g1','completed', ?1, '[]',
+                     '{\"n1\":{\"response\":\"hola\"}}', 1700000000.0, 1700000000.5, 500.0)",
+            params![trace],
+        )
+        .unwrap();
+
+        // Comprobación de que esto ES la v1: sin checkpoints, sin nodo actual.
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('sessions')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(
+            !cols.iter().any(|c| c == "current_node_id"),
+            "la v1 no tiene current_node_id"
+        );
+        let tablas: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='checkpoints'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tablas, 0, "la v1 no tiene tabla de checkpoints");
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM _schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 1);
+    }
+
+    #[tokio::test]
+    async fn w8_db_v1_migra_a_v2_y_sus_datos_siguen_legibles() {
+        // W8: una DB del esquema anterior tiene que abrir con el binario nuevo,
+        // migrar sola, y NO perder nada de lo que ya tenía.
+        let path = temp_db("w8");
+        crear_db_v1(&path);
+
+        // El binario nuevo la abre.
+        let repo = SqliteSessionRepo::open(&path).expect("una DB v1 debe abrir sin romperse");
+        assert_eq!(repo.schema_version().await.unwrap(), 2, "migró a v2");
+
+        // Los datos de la v1 siguen ahí y se leen igual.
+        let viejo = repo
+            .get("run-v1")
+            .await
+            .unwrap()
+            .expect("el run de la v1 debe seguir legible");
+        assert_eq!(viejo.agent_id, "a-v1");
+        assert_eq!(viejo.agent_name, "Agente v1");
+        assert_eq!(viejo.status, SessionStatus::Completed);
+        assert_eq!(viejo.result.trace[0].node_id, "n1");
+        assert_eq!(
+            viejo.result.state.snapshot()["n1"]["response"],
+            serde_json::json!("hola")
+        );
+        assert!(
+            viejo.current_node_id.is_none(),
+            "la columna nueva llega vacía, no inventada"
+        );
+
+        // Y lo nuevo ya funciona sobre esa misma DB.
+        let cp = CheckpointRecord {
+            session_id: "run-nuevo".into(),
+            agent_id: "a-v1".into(),
+            step: 1,
+            node_id: "n1".into(),
+            cursor_node_id: Some("n2".into()),
+            state_snapshot: HashMap::new(),
+            executed_nodes: vec!["n1".into()],
+            created_at: 1700000100.0,
+        };
+        let progress = RunProgress {
+            agent_name: "Agente v1".into(),
+            started_at: 1700000100.0,
+            status: SessionStatus::Running,
+        };
+        repo.save_checkpoint(&cp, &progress).await.unwrap();
+        assert!(repo.get_checkpoint("run-nuevo").await.unwrap().is_some());
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn reabrir_una_db_ya_migrada_no_reaplica_la_migracion() {
+        // La v2 trae `ALTER TABLE`, que NO es idempotente: si el runner de
+        // migraciones no respeta la versión aplicada, la segunda apertura
+        // muere con "duplicate column name".
+        let path = temp_db("reabrir");
+        crear_db_v1(&path);
+
+        let repo = SqliteSessionRepo::open(&path).unwrap();
+        assert_eq!(repo.schema_version().await.unwrap(), 2);
+        drop(repo);
+
+        let otra_vez = SqliteSessionRepo::open(&path).expect("reabrir no puede romper");
+        assert_eq!(otra_vez.schema_version().await.unwrap(), 2);
+        assert!(otra_vez.get("run-v1").await.unwrap().is_some());
+        drop(otra_vez);
+
+        // Y una tercera, por si acaso.
+        let tercera = SqliteSessionRepo::open(&path).expect("idempotente de verdad");
+        assert_eq!(tercera.schema_version().await.unwrap(), 2);
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn db_nueva_arranca_directo_en_v2() {
+        let repo = SqliteSessionRepo::open_in_memory().unwrap();
+        assert_eq!(
+            repo.schema_version().await.unwrap(),
+            super::super::migrations::SCHEMA_VERSION
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Estados explícitos del run + nodo actual
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn los_cinco_estados_del_run_round_tripean_con_su_nodo_actual() {
+        let repo = SqliteSessionRepo::open_in_memory().unwrap();
+        let estados = [
+            SessionStatus::Running,
+            SessionStatus::Paused,
+            SessionStatus::Completed,
+            SessionStatus::Failed,
+            SessionStatus::Cancelled,
+        ];
+        for (i, estado) in estados.iter().enumerate() {
+            let mut rec = make_record(&format!("s{i}"), "a1", i as f64);
+            rec.status = estado.clone();
+            rec.current_node_id = Some(format!("nodo-{i}"));
+            repo.save(&rec).await.unwrap();
+
+            let got = repo.get(&format!("s{i}")).await.unwrap().unwrap();
+            assert_eq!(&got.status, estado, "estado {estado} debe persistir");
+            assert_eq!(got.current_node_id.as_deref(), Some(&*format!("nodo-{i}")));
+        }
+    }
+
+    #[tokio::test]
+    async fn borrar_checkpoint_no_toca_el_run() {
+        let repo = SqliteSessionRepo::open_in_memory().unwrap();
+        let cp = CheckpointRecord {
+            session_id: "s1".into(),
+            agent_id: "a1".into(),
+            step: 1,
+            node_id: "n1".into(),
+            cursor_node_id: None,
+            state_snapshot: HashMap::new(),
+            executed_nodes: vec![],
+            created_at: 1.0,
+        };
+        let progress = RunProgress {
+            agent_name: "Agente".into(),
+            started_at: 1.0,
+            status: SessionStatus::Running,
+        };
+        repo.save_checkpoint(&cp, &progress).await.unwrap();
+
+        assert!(repo.delete_checkpoint("s1").await.unwrap());
+        assert!(!repo.delete_checkpoint("s1").await.unwrap());
+        assert!(repo.get_checkpoint("s1").await.unwrap().is_none());
+        assert!(repo.get("s1").await.unwrap().is_some(), "el run sigue ahí");
     }
 }

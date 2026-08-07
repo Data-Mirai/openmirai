@@ -11,6 +11,10 @@ OpenMirai is a Rust-native engine that runs agentic workflows defined as simple 
 
 A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
 
+**It runs workflows. That is the whole job.** Agents as entities, goals, long-term memory and
+team collaboration are deliberately *not* here — they belong to the layer you build on top.
+See **[docs/SCOPE.md](docs/SCOPE.md)** for where the line falls and why.
+
 **52 built-in tools** · **7 LLM providers** · **879 tests** · **Apache-2.0 license**
 
 ## Why decentralized?

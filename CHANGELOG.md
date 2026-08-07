@@ -4,6 +4,29 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## v0.7.1 (2026-08-07)
+
+Run state that survives everything (PRD-021). A run can now pause waiting for a human, be cancelled mid-flight, and resume from its checkpoint — **even across a process restart**. Additive migrations only; the HTTP API and the agent YAML spec stay backward-compatible.
+
+### Added
+- **Run lifecycle**: runs checkpoint to SQLite as they advance, with explicit states (`running`, `paused`, `failed`, `completed`, `cancelled`).
+- **`POST /api/v1/sessions/{id}/resume`** — resume a paused or failed run from its checkpoint, without re-running the nodes that already produced effects.
+- **`POST /api/v1/sessions/{id}/cancel`** — cancel a run in flight.
+- **`GET /api/v1/sessions?status=…`** — filter runs by state.
+- **Human-in-the-loop end to end**: a graph can stop and wait for a human decision, and pick up exactly where it left off.
+- **Runner `EventEmitter` wired** — the event bus existed but nothing was publishing to it, so run progress was unobservable.
+
+### Fixed
+- **Resuming a run after a process restart returned `409 Conflict`.** The checkpoint recorded *where* a run stopped, but nothing recorded *which graph* to run: the `AgentSpec` lived only in an in-memory `HashMap`, and the `agents` row was written solely to satisfy the foreign key. A fresh process started with an empty map and refused to resume. The spec is now persisted (schema v3) and read back from the database. Existing tests missed this because they resumed inside the *same* process, where the map was still populated.
+
+### Changed
+- **Schema migrations v2 and v3**, both additive (`agents.spec TEXT`, nullable). No data loss, no manual step.
+
+### Upgrade note
+Databases created before v3 have `agents.spec = NULL`. Resuming a run that belongs to one of those agents still returns `409` with an explanatory message rather than guessing a graph — re-register the agent to make its runs resumable.
+
+---
+
 ## v0.7.0 (2026-08-06)
 
 Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. **The agent YAML spec and the HTTP API stay backward-compatible; the Rust crate API does not** — see Breaking below before upgrading a custom adapter.

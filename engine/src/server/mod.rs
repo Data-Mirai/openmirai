@@ -23,6 +23,10 @@ mod tests;
 #[cfg(test)]
 mod tests_ciclo_vida;
 
+/// W3-real (PRD-021-F): reanudar cruzando un reinicio de proceso de verdad.
+#[cfg(test)]
+mod tests_reinicio;
+
 // Public API re-exports.
 pub use state::*;
 

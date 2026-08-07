@@ -1,0 +1,80 @@
+
+running 9 tests
+test server::tests_ciclo_vida::reanudar_o_cancelar_un_run_inexistente_es_404 ... FAILED
+test server::tests_ciclo_vida::w2_resume_con_respuesta_humana_continua_y_completa ... FAILED
+test server::tests_ciclo_vida::cancelar_un_run_ya_terminado_es_conflicto ... FAILED
+test server::tests_ciclo_vida::w1_human_input_deja_el_run_pausado_con_estado_y_en_el_listado ... FAILED
+test server::tests_ciclo_vida::w6_consultar_un_run_muestra_estado_nodo_actual_y_desde_cuando ... FAILED
+test server::tests_ciclo_vida::reanudar_un_run_completado_es_conflicto_no_una_segunda_ejecucion ... FAILED
+test server::tests_ciclo_vida::w4_cancelar_un_run_en_vuelo_lo_detiene_y_registra_el_nodo ... FAILED
+test server::tests_ciclo_vida::w7_reanudar_no_repite_los_efectos_de_los_nodos_ya_ejecutados ... FAILED
+test server::tests_ciclo_vida::w5_run_fallido_en_el_nodo_7_reanuda_en_el_7 ... FAILED
+
+failures:
+
+---- server::tests_ciclo_vida::reanudar_o_cancelar_un_run_inexistente_es_404 stdout ----
+
+thread 'server::tests_ciclo_vida::reanudar_o_cancelar_un_run_inexistente_es_404' (6880282) panicked at engine/src/server/tests_ciclo_vida.rs:54:36:
+called `Result::unwrap()` on an `Err` value: Error("EOF while parsing a value", line: 1, column: 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- server::tests_ciclo_vida::w2_resume_con_respuesta_humana_continua_y_completa stdout ----
+
+thread 'server::tests_ciclo_vida::w2_resume_con_respuesta_humana_continua_y_completa' (6880285) panicked at engine/src/server/tests_ciclo_vida.rs:54:36:
+called `Result::unwrap()` on an `Err` value: Error("EOF while parsing a value", line: 1, column: 0)
+
+---- server::tests_ciclo_vida::cancelar_un_run_ya_terminado_es_conflicto stdout ----
+
+thread 'server::tests_ciclo_vida::cancelar_un_run_ya_terminado_es_conflicto' (6880281) panicked at engine/src/server/tests_ciclo_vida.rs:54:36:
+called `Result::unwrap()` on an `Err` value: Error("EOF while parsing a value", line: 1, column: 0)
+
+---- server::tests_ciclo_vida::w1_human_input_deja_el_run_pausado_con_estado_y_en_el_listado stdout ----
+
+thread 'server::tests_ciclo_vida::w1_human_input_deja_el_run_pausado_con_estado_y_en_el_listado' (6880284) panicked at engine/src/server/tests_ciclo_vida.rs:169:5:
+assertion `left == right` failed: un human_input pausa el run, no lo mata: {"error":null,"id":"2b316c4a","status":"Interrupted","trace":[{"duration_ms":0,"finished_at":1786112873.30836,"node_id":"trigger","retries":0,"started_at":1786112873.30836,"status":"ok","tool_type":"trigger/manual"}]}
+  left: Null
+ right: "paused"
+
+---- server::tests_ciclo_vida::w6_consultar_un_run_muestra_estado_nodo_actual_y_desde_cuando stdout ----
+
+thread 'server::tests_ciclo_vida::w6_consultar_un_run_muestra_estado_nodo_actual_y_desde_cuando' (6880288) panicked at engine/src/server/tests_ciclo_vida.rs:451:5:
+assertion `left == right` failed: estado
+  left: Null
+ right: "paused"
+
+---- server::tests_ciclo_vida::reanudar_un_run_completado_es_conflicto_no_una_segunda_ejecucion stdout ----
+
+thread 'server::tests_ciclo_vida::reanudar_un_run_completado_es_conflicto_no_una_segunda_ejecucion' (6880283) panicked at engine/src/server/tests_ciclo_vida.rs:54:36:
+called `Result::unwrap()` on an `Err` value: Error("EOF while parsing a value", line: 1, column: 0)
+
+---- server::tests_ciclo_vida::w4_cancelar_un_run_en_vuelo_lo_detiene_y_registra_el_nodo stdout ----
+
+thread 'server::tests_ciclo_vida::w4_cancelar_un_run_en_vuelo_lo_detiene_y_registra_el_nodo' (6880286) panicked at engine/src/server/tests_ciclo_vida.rs:54:36:
+called `Result::unwrap()` on an `Err` value: Error("EOF while parsing a value", line: 1, column: 0)
+
+---- server::tests_ciclo_vida::w7_reanudar_no_repite_los_efectos_de_los_nodos_ya_ejecutados stdout ----
+
+thread 'server::tests_ciclo_vida::w7_reanudar_no_repite_los_efectos_de_los_nodos_ya_ejecutados' (6880289) panicked at engine/src/server/tests_ciclo_vida.rs:54:36:
+called `Result::unwrap()` on an `Err` value: Error("EOF while parsing a value", line: 1, column: 0)
+
+---- server::tests_ciclo_vida::w5_run_fallido_en_el_nodo_7_reanuda_en_el_7 stdout ----
+
+thread 'server::tests_ciclo_vida::w5_run_fallido_en_el_nodo_7_reanuda_en_el_7' (6880287) panicked at engine/src/server/tests_ciclo_vida.rs:382:5:
+assertion `left == right` failed: {"error":"tool `filesystem/read_file` execution failed: File not found: /var/folders/dr/vyb21h_15kldmwvz3hqv73b80000gn/T/mirai-021-w5-56105-1786112873284695000/puerta.txt (No such file or directory (os error 2))","id":"792e1cf1","status":"Failed","trace":[{"duration_ms":0,"finished_at":1786112873.307859,"node_id":"trigger","retries":0,"started_at":1786112873.307859,"status":"ok","tool_type":"trigger/manual"},{"duration_ms":23,"finished_at":1786112873.333281,"node_id":"n1","retries":0,"started_at":1786112873.310281,"status":"ok","tool_type":"system/bash"},{"duration_ms":18,"finished_at":1786112873.352398,"node_id":"n2","retries":0,"started_at":1786112873.334398,"status":"ok","tool_type":"system/bash"},{"duration_ms":26,"finished_at":1786112873.379285,"node_id":"n3","retries":0,"started_at":1786112873.353285,"status":"ok","tool_type":"system/bash"},{"duration_ms":16,"finished_at":1786112873.396838,"node_id":"n4","retries":0,"started_at":1786112873.380838,"status":"ok","tool_type":"system/bash"},{"duration_ms":22,"finished_at":1786112873.419546,"node_id":"n5","retries":0,"started_at":1786112873.3975458,"status":"ok","tool_type":"system/bash"},{"duration_ms":23,"finished_at":1786112873.443444,"node_id":"n6","retries":0,"started_at":1786112873.420444,"status":"ok","tool_type":"system/bash"},{"duration_ms":0,"error":"tool `filesystem/read_file` execution failed: File not found: /var/folders/dr/vyb21h_15kldmwvz3hqv73b80000gn/T/mirai-021-w5-56105-1786112873284695000/puerta.txt (No such file or directory (os error 2))","finished_at":1786112873.444296,"node_id":"n7","retries":0,"started_at":1786112873.444296,"status":"error","tool_type":"filesystem/read_file"}]}
+  left: Null
+ right: "failed"
+
+
+failures:
+    server::tests_ciclo_vida::cancelar_un_run_ya_terminado_es_conflicto
+    server::tests_ciclo_vida::reanudar_o_cancelar_un_run_inexistente_es_404
+    server::tests_ciclo_vida::reanudar_un_run_completado_es_conflicto_no_una_segunda_ejecucion
+    server::tests_ciclo_vida::w1_human_input_deja_el_run_pausado_con_estado_y_en_el_listado
+    server::tests_ciclo_vida::w2_resume_con_respuesta_humana_continua_y_completa
+    server::tests_ciclo_vida::w4_cancelar_un_run_en_vuelo_lo_detiene_y_registra_el_nodo
+    server::tests_ciclo_vida::w5_run_fallido_en_el_nodo_7_reanuda_en_el_7
+    server::tests_ciclo_vida::w6_consultar_un_run_muestra_estado_nodo_actual_y_desde_cuando
+    server::tests_ciclo_vida::w7_reanudar_no_repite_los_efectos_de_los_nodos_ya_ejecutados
+
+test result: FAILED. 0 passed; 9 failed; 0 ignored; 0 measured; 883 filtered out; finished in 0.17s
+

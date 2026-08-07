@@ -14,6 +14,10 @@ pub mod state;
 #[cfg(test)]
 mod tests;
 
+/// Validaciones del ciclo de vida de un run (PRD-021-B/C): W1, W2, W4-W7.
+#[cfg(test)]
+mod tests_ciclo_vida;
+
 // Public API re-exports.
 pub use state::*;
 

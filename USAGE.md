@@ -149,10 +149,10 @@ Short forms also work: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`.
 | Tool | What it does |
 |------|-------------|
 | `trigger/manual` | Receives input from CLI or API call |
-| `trigger/webhook` | Receives input from HTTP webhook |
-| `trigger/schedule` | Fires on a time interval (cron) |
-| `trigger/event` | Fires on internal event |
-| `trigger/heartbeat` | Fires periodically (health check) |
+| `trigger/webhook` | Graph entry for a host-delivered webhook payload; current webhook routing is a placeholder |
+| `trigger/schedule` | Graph entry for host-delivered schedule data; cron is not implemented |
+| `trigger/event` | Graph entry for an event supplied by a host |
+| `trigger/heartbeat` | Graph entry for a host-delivered heartbeat |
 
 ### AI
 
@@ -470,22 +470,24 @@ The engine injects schema instructions into the prompt and auto-retries if the L
 
 ## 9. Retry and error handling
 
-Configure retry behavior per agent:
+Agent-level retry fields are part of AgentSpec but the default CLI/server do
+not currently apply them to `GraphRunner`. Configure the behavior that is
+actually wired per node with `config.retry_policy`:
 
 ```yaml
 name: resilient-agent
 version: v1
 
-config:
-  max_iterations: 10
-  retry:
-    max_retries: 3
-    backoff: exponential    # or: linear, none
-    initial_delay_secs: 1.0
-    on_failure: stop        # or: skip, route_to_error
-
 graph:
-  nodes: [...]
+  nodes:
+    - id: unstable
+      tool_type: ai/llm_call
+      config:
+        prompt: "Try this operation"
+        retry_policy:
+          max_retries: 3
+          backoff: exponential    # or: linear, none
+          on_failure: stop        # or: skip, route_to_error
   edges: [...]
 ```
 
@@ -505,11 +507,12 @@ Connect to Model Context Protocol servers for additional tools:
 name: agent-with-mcp
 version: v1
 
-mcp_servers:
-  - name: my-tools
-    transport: stdio
-    command: npx
-    args: ["-y", "@my-org/mcp-server"]
+config:
+  mcp_servers:
+    - name: my-tools
+      transport: stdio
+      command: npx
+      args: ["-y", "@my-org/mcp-server"]
 
 graph:
   nodes:
@@ -645,9 +648,9 @@ edge       = connection between nodes
 data_map   = pass data between nodes (source.field → target input)
 condition  = route based on output values
 inputs     = typed input contract (validation at boundary)
-outputs    = typed output contract (documentation + validation)
-config     = agent-level settings (retry, max_iterations, timeout)
-mcp_servers = external tool servers (Model Context Protocol)
+outputs    = typed output contract (descriptive in AgentSpec v1)
+config     = agent-level declarations; see AGENT_SPEC.md for current host wiring
+config.mcp_servers = external tool servers (Model Context Protocol)
 media_path = attach a file to an LLM call (v0.5.0)
 output_files = declare files a bash command generates (v0.5.0)
 ```

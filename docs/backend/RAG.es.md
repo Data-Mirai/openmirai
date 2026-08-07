@@ -253,7 +253,8 @@ Ruta: `POST /api/v1/rag/search`
 
 Handler: `engine/src/server/helpers.rs::rag_search`
 
-El endpoint requiere un encabezado de autorización `X-API-Key`, como se describe en `API.md`.
+Cuando la autenticación del servidor está configurada, el endpoint requiere un
+encabezado `X-API-Key`, como se describe en `API.md`.
 
 ### Cuerpo de la solicitud
 

@@ -99,7 +99,7 @@ mirai                  # Inicia wizard de setup → terminal interactiva
 | `/api/v1/agents/{id}/stream` | POST | Ejecuta agente (streaming) |
 | `/api/v1/agents/{id}/spec` | GET | Obtiene spec del agente |
 | `/api/v1/agents/{id}/schema` | GET | Obtiene schema (inputs/outputs) |
-| `/api/v1/agents/{id}/play` | POST | Inicia agente Live (scheduled) |
+| `/api/v1/agents/{id}/play` | POST | Registra agente Live; el arranque actual no inicia el bucle del scheduler |
 | `/api/v1/agents/{id}/stop` | POST | Detiene agente Live |
 | `/api/v1/agents/{id}/cycles` | GET | Ciclos de un agente Live |
 | `/api/v1/agents/{id}/memory` | GET, DELETE | Memoria del agente |
@@ -112,13 +112,16 @@ mirai                  # Inicia wizard de setup → terminal interactiva
 | `/api/v1/metrics` | GET | Métricas del servidor |
 | `/api/v1/rag/search` | POST | Búsqueda RAG |
 | `/api/v1/eval` | POST | Evaluación de outputs |
-| `/webhooks/{*path}` | POST | Webhooks personalizados |
+| `/webhooks/{*path}` | POST | Placeholder: confirma recepción, pero no despacha a agentes |
 
-**Autenticación (opcional):**
+**Autenticación:**
 ```
 X-API-Key: <valor>
 ```
-Si no se proporciona clave, servidor advierte y continúa sin auth.
+En loopback puede omitirse para desarrollo. En una dirección no-loopback, el
+servidor se niega a arrancar si `MIRAI_API_KEY` no está configurada. Los
+endpoints `/health`, `/version` y el contenido estático `/ui` no pasan por el
+middleware de autenticación.
 
 **Respuestas:**
 - JSON estructurado con `status`, `data`, `error`, `trace`

@@ -279,7 +279,8 @@ wiring caveat below — the flusher is implemented and tested but not currently 
 
 ## API endpoints that expose memory/session data
 
-Cross-reference: [API.md](API.md). All require `X-API-Key`.
+Cross-reference: [API.md](API.md). They require `X-API-Key` when server
+authentication is configured.
 
 | Endpoint | Exposes | Backed by |
 |----------|---------|-----------|

@@ -251,7 +251,8 @@ Route: `POST /api/v1/rag/search`
 
 Handler: `engine/src/server/helpers.rs::rag_search`
 
-The endpoint requires an `X-API-Key` auth header, as described in `API.md`.
+When server authentication is configured, the endpoint requires an `X-API-Key`
+header, as described in `API.md`.
 
 ### Request body
 

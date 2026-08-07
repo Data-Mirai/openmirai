@@ -49,7 +49,7 @@ is parsed positionally or as `--flag value` pairs.
 | Command | Interactive? | What it does |
 |---|---|---|
 | `mirai` (no args) | **Yes** | Setup wizard → interactive agentic terminal |
-| `mirai run <file>` | No | Execute an agent spec (JSON/YAML) once, print result JSON |
+| `mirai run <file>` | No | Execute a YAML agent spec once and print result JSON |
 | `mirai validate <file>` | No | Parse + report node/edge counts; non-zero exit on error |
 | `mirai serve` | No | Start the HTTP server (see [API.md](backend/API.md)) |
 | `mirai tools [<tool_type>]` | No | List all tools, or show one tool's inputs/outputs/config |
@@ -151,7 +151,7 @@ mirai run agent.yaml --benchmark        # log timing to benchmarks.jsonl
 
 **Execution pipeline** (this is the canonical CLI→engine mapping; see also §9):
 
-1. `AgentSpec::from_file(path)` parses the YAML/JSON spec.
+1. `AgentSpec::from_file(path)` parses a `.yaml` or `.yml` spec. JSON files are rejected.
 2. If `agent_type == Live`, the run is **rejected** (use a server / live runner).
 3. `spec.to_graph()` → `auto_generate_edge_ids()` → `graph.validate()`.
 4. A `ToolRegistry` is populated by `register_all_builtin_tools`.
@@ -534,7 +534,7 @@ The two modes reach the engine very differently:
 
 | | `mirai run` (and `serve`) | Interactive terminal |
 |---|---|---|
-| Spec source | `AgentSpec` from a YAML/JSON file | None — free-form chat |
+| Spec source | `AgentSpec` from a YAML file | None — free-form chat |
 | Orchestration | `GraphRunner` + `RegistryExecutor` over a validated graph | Hand-rolled `agentic_loop` |
 | Tool invocation | Engine walks nodes; tools run inside the graph | LLM emits function calls; CLI runs them directly via `ToolRegistry` |
 | Execution context | Built per run with resolved LLM + in-memory DB/storage | A fresh `DefaultExecutionContext::default_dev()` **per tool call** |

@@ -10,7 +10,7 @@ Thanks for helping build OpenMirai — the open-source engine for **decentralize
 git clone https://github.com/Data-Mirai/openmirai
 cd openmirai
 cargo build --release          # builds engine + cli (binary: ./target/release/mirai)
-cargo test --workspace         # run the full suite (712 tests)
+cargo test --workspace         # run the current workspace suite
 ./target/release/mirai run examples/hello-world.yaml
 ```
 
@@ -24,7 +24,7 @@ cargo test --workspace --all-features
 
 ## What OpenMirai is
 
-A Rust-native engine that runs agentic workflows defined as **YAML graphs**, compiled to a single portable binary with zero runtime dependencies. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system map before diving into a non-trivial change.
+A Rust-native engine that runs agentic workflows defined as **YAML graphs** and compiles to a single engine binary. Individual tools can require host programs. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/SYSTEM_LIFECYCLE.md](docs/SYSTEM_LIFECYCLE.md) before a non-trivial change.
 
 ```
 engine/        Core library (openmirai-engine crate)

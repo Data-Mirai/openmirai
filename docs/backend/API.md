@@ -1,1246 +1,294 @@
-<!--
-BLUEPRINT SEED — API.md
-Responsable: → blueprint/agents/07-CONTRACTS.md
+# OpenMirai HTTP API v1
 
-Estructura esperada:
-- Por recurso, por endpoint: descripción, auth, guard, validaciones, request, response, errores
-- Cada endpoint con anchor único: {#METODO-ruta}
+This is the human-readable contract for the Axum server in OpenMirai 0.7.0.
+The route source is `engine/src/server/mod.rs`; request/response behavior lives
+in `engine/src/server/handlers.rs` and `engine/src/server/orchestrator.rs`.
 
-Reglas:
-- NO copiar la estructura de SCHEMA.md — REFERENCIAR con → SCHEMA.md#entidad-X
-- Guards se definen aquí (el nombre concreto del guard vive en ARCHITECTURE.md)
-- Reglas de negocio se REFERENCIAN a FLUJOS.md, no se duplican aquí
-- No código de controllers/services
-- Endpoints en /api/v1/ con kebab-case plural (o la convención del proyecto)
-- Toda mutación requiere auth
-- Paginación estándar para listados (page, page_size)
--->
+Machine-readable route inventory: [`openapi.yaml`](openapi.yaml).
 
-# API.md — HTTP API Reference
-
-Documentación de todos los endpoints del servidor Axum de openmirai-engine. Ver [DOMINIO.md](../producto/DOMINIO.md) para términos y [FLUJOS.md](../producto/FLUJOS.md) para reglas de negocio.
-
-## Base URL
-
-```
-http://localhost:3000
-```
+Base URL: `http://127.0.0.1:3000`. The listener is plain HTTP. Use TLS at an
+ingress or reverse proxy.
 
 ## Authentication
 
-**Header:** `X-API-Key`
+Set `MIRAI_API_KEY` and send it in `X-API-Key`. The server refuses a
+non-loopback bind without a key. `/health` and `/version` are public; other API
+routes are protected when a key is configured. Orchestrator EventSource also
+accepts `?api_key=` because browser EventSource cannot set headers.
 
-Enviado en todas las requests excepto `/health` y `/version`:
+Authentication is one shared secret, not user identity, RBAC, tenancy, quotas,
+or rate limiting. See [Security](../../SECURITY.md).
 
-```bash
-curl -H "X-API-Key: tu-api-key" http://localhost:3000/api/v1/agents
-```
+## Conventions
 
-**Configuración:**
-- Variable de entorno: `MIRAI_API_KEY`
-- Flag CLI: `--api-key tu-api-key`
-- Si no está configurado, el servidor avisa pero no rechaza requests (modo abierto)
+- JSON errors normally use `{"error":"message"}`.
+- Lists are JSON arrays unless noted.
+- Graphs, agents, hot sessions, memory, and schedules are process-local.
+- Final execute/stream results are persisted to SQLite best-effort.
+- `404` means a process-local or persisted record was not found.
+- No rate limiting or idempotency-key contract exists.
 
-**Errores de auth:**
-| Código | Condición | Mensaje |
-|---|---|---|
-| 401 | Header falta o es incorrecto | `{"error": "unauthorized"}` |
+## Public endpoints
 
----
+### `GET /health`
 
-## Public Endpoints (Sin Auth)
+Returns process liveness, version/build/SHA/timestamp, uptime, and in-memory
+agent/session/tool counts. It does not prove SQLite or provider readiness.
 
-### GET /health {#GET-health}
+### `GET /version`
 
-**Descripción:** Health check del servidor. Retorna status y métricas en tiempo real.
+Returns compiled version, build number, Git SHA, build timestamp, and engine
+name.
 
-**Auth:** Público (no requiere API key).
+## Graphs
 
-**Response:** JSON con uptime, conteos y versión.
-
-```json
-{
-  "status": "ok",
-  "version": "0.7.0",
-  "engine": "openmirai-engine-rs",
-  "uptime_seconds": 1234,
-  "agents_loaded": 5,
-  "sessions_total": 42,
-  "tools_registered": 52
-}
-```
-
----
-
-### GET /version {#GET-version}
-
-**Descripción:** Retorna versión del engine.
-
-**Auth:** Público (no requiere API key).
-
-**Response:**
+### `POST /api/v1/graphs`
 
 ```json
 {
-  "version": "0.7.0",
-  "engine": "openmirai-engine-rs"
-}
-```
-
----
-
-## Graphs CRUD
-
-### POST /api/v1/graphs {#POST-graphs}
-
-**Descripción:** Crear un nuevo grafo dirigido (DAG).
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#rol-product-engineer](../producto/DOMINIO.md#rol-product-engineer).
-
-**Request:**
-
-```json
-{
-  "name": "mi-grafo",
+  "name": "demo",
   "nodes": [
-    {
-      "id": "nodo-1",
-      "tool_type": "llm_call",
-      "tool_config": {
-        "provider": "ollama",
-        "model": "llama2"
-      }
-    },
-    {
-      "id": "nodo-2",
-      "tool_type": "write_file",
-      "tool_config": {
-        "file_path": "/tmp/output.txt"
-      }
-    }
+    {"id":"start","tool_type":"trigger/manual","config":{}},
+    {"id":"out","tool_type":"output/response","config":{"message":"ok"}}
   ],
   "edges": [
-    {
-      "from": "nodo-1",
-      "to": "nodo-2"
-    }
+    {"source":"start","target":"out"}
   ],
-  "metadata": {
-    "author": "gabo",
-    "tags": ["demo"]
-  }
-}
-```
-
-**Response:** `201 Created`
-
-```json
-{
-  "id": "graph-abc123",
-  "name": "mi-grafo",
-  "version": "1.0.0",
-  "nodes": [...],
-  "edges": [...],
-  "metadata": {...}
-}
-```
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 400 | Node o Edge inválido | `{"error": "invalid node at index 0: ..."}` |
-| 400 | JSON malformado | Error del parser JSON |
-
----
-
-### GET /api/v1/graphs {#GET-graphs}
-
-**Descripción:** Listar todos los grafos.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Response:** Array de grafos.
-
-```json
-[
-  {
-    "id": "graph-abc123",
-    "name": "mi-grafo",
-    "version": "1.0.0",
-    "nodes": [...],
-    "edges": [...],
-    "metadata": {...}
-  }
-]
-```
-
----
-
-### GET /api/v1/graphs/{id} {#GET-graphs-id}
-
-**Descripción:** Obtener un grafo por ID.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Path Parameters:**
-| Parámetro | Tipo | Obligatorio | Descripción |
-|---|---|---|---|
-| id | string | Sí | ID único del grafo |
-
-**Response:** Objeto grafo.
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Grafo no existe | `{"error": "Graph not found"}` |
-
----
-
-### DELETE /api/v1/graphs/{id} {#DELETE-graphs-id}
-
-**Descripción:** Eliminar un grafo.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Response:** `204 No Content`
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Grafo no existe | `{"error": "Graph not found"}` |
-
----
-
-## Agents CRUD & Execution
-
-### POST /api/v1/agents {#POST-agents}
-
-**Descripción:** Crear un agente que enlaza a un grafo existente.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#rol-product-engineer](../producto/DOMINIO.md#rol-product-engineer).
-
-**Request:**
-
-```json
-{
-  "name": "mi-agente",
-  "description": "Agente de análisis",
-  "graph_id": "graph-abc123",
-  "triggers": []
-}
-```
-
-**Response:** `201 Created`
-
-```json
-{
-  "id": "agent-xyz789",
-  "name": "mi-agente",
-  "graph_id": "graph-abc123",
-  "status": "created"
-}
-```
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Graph no existe | `{"error": "Graph 'graph-abc123' not found"}` |
-
----
-
-### GET /api/v1/agents {#GET-agents}
-
-**Descripción:** Listar todos los agentes.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Response:** Array de agentes.
-
-```json
-[
-  {
-    "id": "agent-xyz789",
-    "name": "mi-agente",
-    "description": "Agente de análisis",
-    "graph_id": "graph-abc123"
-  }
-]
-```
-
----
-
-### GET /api/v1/agents/{id} {#GET-agents-id}
-
-**Descripción:** Obtener un agente por ID.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Path Parameters:**
-| Parámetro | Tipo | Obligatorio |
-|---|---|---|
-| id | string | Sí |
-
-**Response:** Objeto agente.
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Agente no existe | `{"error": "Agent not found"}` |
-
----
-
-### POST /api/v1/agents/from-spec {#POST-agents-from-spec}
-
-**Descripción:** Crear un agente directamente desde una especificación YAML completa (sin grafo separado).
-
-**Auth:** Requiere `X-API-Key`.
-
-**Request:** [→ SCHEMA.md#AgentSpec](../database/SCHEMA.md#entidad-agents)
-
-```json
-{
-  "name": "agente-directo",
-  "description": "...",
-  "version": "v1",
-  "agent_type": "workflow",
-  "graph": {...},
-  "inputs": {...},
-  "outputs": {...}
-}
-```
-
-**Response:** `201 Created`
-
-```json
-{
-  "id": "agent-direct-123",
-  "name": "agente-directo",
-  "status": "created"
-}
-```
-
----
-
-### POST /api/v1/agents/{id}/execute {#POST-agents-id-execute}
-
-**Descripción:** Ejecutar un agente de forma síncrona. Bloquea hasta que completa o timeout (300s).
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#capabilities-engine](../producto/DOMINIO.md#capabilities-engine).
-
-**Validaciones:** → [FLUJOS.md#flujo-run-agent](../producto/FLUJOS.md#flujo-run-agent).
-
-**Request:**
-
-```json
-{
-  "entry_node_id": "nodo-1",
-  "trigger_data": {
-    "user_input": "analiza esto",
-    "temperature": 0.7
-  }
-}
-```
-
-**Response:** `200 OK`
-
-```json
-{
-  "session_id": "session-abc123",
-  "agent_id": "agent-xyz789",
-  "agent_name": "mi-agente",
-  "status": "Completed",
-  "trace": [
-    {
-      "node_id": "nodo-1",
-      "tool_type": "llm_call",
-      "status": "Ok",
-      "duration_ms": 1234,
-      "retries": 0,
-      "error": null
-    }
-  ],
-  "transcript": [
-    {
-      "node": "nodo-1",
-      "type": "llm_call",
-      "input": {"prompt": "..."},
-      "output": {"response": "..."}
-    }
-  ],
-  "state": {
-    "nodo-1": {
-      "response": "...",
-      "tokens_used": 150
-    }
-  },
-  "error": null
-}
-```
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Agente no existe | `{"error": "Agent not found"}` |
-| 422 | Input validation falla | `{"error": "input validation failed: field_name required"}` |
-| 422 | Es agente Live | `{"error": "live agents are controlled via play/stop, not execute"}` |
-| 504 | Timeout de ejecución (300s) | `{"error": "execution timed out after 300s"}` |
-
-**Guardias:**
-- Agente debe existir
-- Inputs validados contra spec.inputs si está definido
-- Agente no debe ser tipo Live → [FLUJOS.md#regla-prd-008](../producto/FLUJOS.md)
-- Timeout global de 300s → [FLUJOS.md#regla-07](../producto/FLUJOS.md#regla-07)
-
-**Side-effects:**
-- Sesión creada en memory_store
-- Memory persistida si está configurada → [DOMINIO.md#Agent](../producto/DOMINIO.md#glosario)
-
----
-
-### POST /api/v1/agents/{id}/stream {#POST-agents-id-stream}
-
-**Descripción:** Ejecutar un agente con streaming en tiempo real vía Server-Sent Events (SSE).
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#capabilities-engine](../producto/DOMINIO.md#capabilities-engine).
-
-**Request:** Mismo que `/execute` → {#POST-agents-id-execute}
-
-**Response:** `200 OK` con `Content-Type: text/event-stream`
-
-Eventos SSE emitidos en tiempo real:
-
-```
-event: node_start
-data: {"node_id": "nodo-1", "tool_type": "llm_call"}
-
-event: node_progress
-data: {"node_id": "nodo-1", "progress": 0.5}
-
-event: node_end
-data: {"node_id": "nodo-1", "status": "Ok", "duration_ms": 1234, "output": {...}}
-
-event: graph_end
-data: {"status": "Completed", "session_id": "...", "error": null}
-```
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Agente no existe | `{"error": "Agent not found"}` |
-| 422 | Input validation falla | `{"error": "input validation failed: ..."}` |
-
-**Notas:**
-- Los eventos se emiten **durante** la ejecución, no post-ejecución
-- Cliente puede desconectar en cualquier momento (pero el agente sigue ejecutando)
-- Útil para UIs que muestren progreso en tiempo real
-
----
-
-### GET /api/v1/agents/{id}/spec {#GET-agents-id-spec}
-
-**Descripción:** Obtener la especificación completa del agente.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Response:** Objeto [AgentSpec](../database/SCHEMA.md#entidad-agents).
-
-```json
-{
-  "name": "mi-agente",
-  "description": "...",
-  "version": "v1",
-  "agent_type": "workflow",
-  "system_prompt": null,
-  "soul": null,
-  "inputs": {...},
-  "outputs": {...},
-  "graph": {...},
-  "schedule": null,
-  "triggers": [],
-  "config": {},
-  "resources": [],
   "metadata": {}
 }
 ```
 
-**Errores:**
+Nodes deserialize as `NodeDef` (`id`, `tool_type`, optional `version`,
+`config`, optional tuple `position`). Edges deserialize as `EdgeDef` (`id`,
+`source`, `target`, optional `condition`, optional `data_map`). Invalid shapes
+return 400. The handler stores the graph with a generated ID and version
+`1.0.0`, but does not call full graph validation at creation time.
 
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Agente no existe | `{"error": "Agent not found"}` |
+### `GET /api/v1/graphs`
 
----
+Lists process-local graphs.
 
-### GET /api/v1/agents/{id}/schema {#GET-agents-id-schema}
+### `GET /api/v1/graphs/{id}`
 
-**Descripción:** Obtener el contrato de entrada/salida del agente (PRD-004 Capa 1).
+Returns one graph or 404.
 
-**Auth:** Requiere `X-API-Key`.
+### `DELETE /api/v1/graphs/{id}`
 
-**Response:**
+Removes the process-local graph and returns 204 or 404. It does not cascade a
+durable repository because this registry is in memory.
+
+## Agents
+
+### `POST /api/v1/agents`
+
+Accepts `{name, description?, graph_id, triggers?}` and verifies that the graph
+ID exists. It creates a lightweight process-local AgentSpec record containing
+the graph ID in metadata, but does **not** copy the referenced graph nodes and
+edges into `spec.graph`. Use `from-spec` for an executable agent in 0.7.0.
+
+### `POST /api/v1/agents/from-spec`
+
+Accepts the JSON representation of [AgentSpec v1](../AGENT_SPEC.md) and returns
+`201 {id, name, status}`. Unlike file loading, HTTP naturally carries JSON.
+
+Important: this handler deserializes and stores the spec but does not call
+`AgentSpec::validate()` at registration. Graph validation occurs when a run is
+started. Unknown fields are ignored by the current Serde model.
+
+### `GET /api/v1/agents`
+
+Lists IDs, names, descriptions, and graph IDs from the process-local map.
+
+### `GET /api/v1/agents/{id}`
+
+Returns the lightweight agent summary.
+
+### `GET /api/v1/agents/{id}/spec`
+
+Returns the stored full AgentSpec.
+
+### `GET /api/v1/agents/{id}/schema`
+
+Returns the agent name/version/description plus declared inputs and outputs.
+Outputs remain descriptive in v1.
+
+## Execution
+
+### `POST /api/v1/agents/{id}/execute`
+
+Request:
 
 ```json
 {
-  "name": "mi-agente",
-  "version": "v1",
-  "description": "...",
-  "inputs": {
-    "type": "object",
-    "properties": {
-      "user_input": {"type": "string"},
-      "temperature": {"type": "number"}
-    },
-    "required": ["user_input"]
-  },
-  "outputs": {
-    "type": "object",
-    "properties": {
-      "analysis": {"type": "string"},
-      "confidence": {"type": "number"}
-    }
-  }
+  "trigger_data": {"question":"hello"},
+  "entry_node_id": null
 }
 ```
 
-**Errores:**
+The handler validates declared inputs and applies defaults, rejects live
+agents, converts/validates the graph, injects trigger/MCP/memory/prompt data,
+executes with a 300-second server timeout, persists staged memory on success,
+and records the final run best-effort.
 
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Agente no existe | `{"error": "Agent not found"}` |
-
----
-
-## Live Agent Lifecycle (PRD-008)
-
-### POST /api/v1/agents/{id}/play {#POST-agents-id-play}
-
-**Descripción:** Iniciar ciclos automáticos de un agente Live. Solo para agentes con `agent_type: Live` y un schedule configurado.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#rol-product-engineer](../producto/DOMINIO.md#rol-product-engineer).
-
-**Validaciones:**
-- Agente debe existir
-- Agente debe ser tipo Live
-- Agente debe tener schedule configurado
-- Agente no debe estar ya en play (en ciclo)
-
-**Response:** `200 OK`
+Response:
 
 ```json
 {
-  "agent_id": "agent-xyz789",
-  "status": "playing",
-  "schedule": {
-    "interval_seconds": 60
-  },
-  "memory_keys": ["counter", "last_result"]
-}
-```
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Agente no existe | `{"error": "Agent not found"}` |
-| 422 | No es Live | `{"error": "only live agents support play/stop"}` |
-| 422 | Sin schedule | `{"error": "live agent has no schedule configured"}` |
-| 409 | Ya está en play | `{"error": "agent is already playing"}` |
-
-**Side-effects:**
-- Scheduler inicia ciclos cada `interval_seconds`
-- Cada ciclo ejecuta el grafo con `trigger_data.cycle_number` y `trigger_data.triggered_by: "scheduler"`
-- Memory es persistida entre ciclos
-
----
-
-### POST /api/v1/agents/{id}/stop {#POST-agents-id-stop}
-
-**Descripción:** Detener los ciclos automáticos de un agente Live.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#rol-product-engineer](../producto/DOMINIO.md#rol-product-engineer).
-
-**Response:** `200 OK`
-
-```json
-{
-  "agent_id": "agent-xyz789",
-  "status": "enabled",
-  "cycles_completed": 42
-}
-```
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 409 | No está en play | `{"error": "agent is not playing"}` |
-
----
-
-### GET /api/v1/agents/{id}/cycles {#GET-agents-id-cycles}
-
-**Descripción:** Obtener historial de ciclos ejecutados.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Query Parameters:**
-| Parámetro | Tipo | Default | Descripción |
-|---|---|---|---|
-| limit | integer | 50 | Número máximo de ciclos a retornar |
-
-**Response:**
-
-```json
-{
-  "agent_id": "agent-xyz789",
-  "total_cycles": 42,
-  "cycles": [
-    {
-      "cycle_number": 42,
-      "timestamp": "2025-05-31T10:30:00Z",
-      "status": "Completed",
-      "duration_ms": 1234,
-      "error": null
-    }
-  ]
-}
-```
-
----
-
-### GET /api/v1/agents/{id}/memory {#GET-agents-id-memory}
-
-**Descripción:** Obtener el estado actual de memory del agente (persistente entre ciclos).
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#rol-product-engineer](../producto/DOMINIO.md#rol-product-engineer).
-
-**Response:**
-
-```json
-{
-  "agent_id": "agent-xyz789",
-  "memory": {
-    "counter": 42,
-    "last_result": "completed at 10:30",
-    "accumulated_tokens": 15000
-  }
-}
-```
-
----
-
-### DELETE /api/v1/agents/{id}/memory {#DELETE-agents-id-memory}
-
-**Descripción:** Limpiar la memory de un agente, reseteándola a valores iniciales.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#rol-product-engineer](../producto/DOMINIO.md#rol-product-engineer).
-
-**Validaciones:**
-- Agente no debe estar en play (cycling activo)
-
-**Response:** `200 OK`
-
-```json
-{
-  "agent_id": "agent-xyz789",
-  "memory": {
-    "counter": 0,
-    "last_result": null
-  },
-  "reset_to": "initial_values"
-}
-```
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 409 | Agente en play | `{"error": "cannot clear memory while agent is playing"}` |
-
----
-
-## Tools
-
-### GET /api/v1/tools {#GET-tools}
-
-**Descripción:** Listar todas las herramientas registradas con sus esquemas.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Response:** Array de tools.
-
-```json
-[
-  {
-    "tool_type": "llm_call",
-    "name": "LLM Call",
-    "description": "Ejecutar un LLM remoto",
-    "category": "llm",
-    "inputs": [
-      {
-        "name": "provider",
-        "type": "String",
-        "required": true,
-        "description": "LLM provider (ollama, claude, openai, etc)"
-      },
-      {
-        "name": "model",
-        "type": "String",
-        "required": true,
-        "description": "Model name"
-      },
-      {
-        "name": "prompt",
-        "type": "String",
-        "required": true,
-        "description": "Prompt text"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "response",
-        "type": "String",
-        "description": "LLM response text"
-      },
-      {
-        "name": "tokens_used",
-        "type": "Integer",
-        "description": "Tokens consumed"
-      }
-    ]
-  }
-]
-```
-
-**Notas:**
-- 52 herramientas builtin disponibles
-- Incluye categories: llm, files, network, math, agent, system, etc
-- Cada tool tiene inputs/outputs tipados y requeridos
-
----
-
-## Templates
-
-### GET /api/v1/templates {#GET-templates}
-
-**Descripción:** Listar plantillas de agentes predefinidas.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Response:**
-
-```json
-[
-  {
-    "id": "template-001",
-    "name": "Análisis de Documentos",
-    "category": "analysis",
-    "description": "Template para análisis de PDFs y documentos",
-    "required_providers": ["claude", "openai"],
-    "tags": ["pdf", "analysis", "nlp"]
-  }
-]
-```
-
----
-
-## Sessions
-
-### GET /api/v1/sessions {#GET-sessions}
-
-**Descripción:** Listar todas las sesiones de ejecución (en memoria).
-
-**Auth:** Requiere `X-API-Key`.
-
-**Query Parameters:**
-| Parámetro | Tipo | Default | Descripción |
-|---|---|---|---|
-| agent_id | string | — | Filtrar por agent_id (opcional) |
-| limit | integer | 50 | Número máximo de sesiones a retornar |
-
-**Response:**
-
-```json
-[
-  {
-    "id": "session-abc123",
-    "status": "Completed",
-    "trace_len": 3,
-    "error": null
-  }
-]
-```
-
-**Notas:**
-- Sesiones se eviccionan FIFO cuando se alcanza 10K → [FLUJOS.md#regla-06](../producto/FLUJOS.md#regla-06)
-- Solo almacenadas en memoria durante la sesión del servidor
-
----
-
-### GET /api/v1/sessions/{id} {#GET-sessions-id}
-
-**Descripción:** Obtener los detalles completos de una sesión.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Path Parameters:**
-| Parámetro | Tipo | Obligatorio |
-|---|---|---|
-| id | string | Sí |
-
-**Response:**
-
-```json
-{
-  "id": "session-abc123",
+  "session_id": "generated-id",
+  "agent_id": "agent-id",
+  "agent_name": "demo",
   "status": "Completed",
-  "trace": [
-    {
-      "node_id": "nodo-1",
-      "tool_type": "llm_call",
-      "status": "Ok",
-      "duration_ms": 1234,
-      "retries": 0,
-      "error": null
-    }
-  ],
+  "trace": [],
+  "transcript": [],
+  "state": {},
   "error": null
 }
 ```
 
-**Errores:**
+`entry_node_id` is currently ignored. Input errors return 422; live agents
+return 422; timeout returns 504 and is not recorded as a normal completed run.
+Agent-level `timeout_ms`, `max_iterations`, retry, and hook declarations are
+not applied by this default host path.
 
-| Código | Condición | Mensaje |
-|---|---|---|
-| 404 | Sesión no existe | `{"error": "Session not found"}` |
+### `POST /api/v1/agents/{id}/stream`
 
----
+Returns `text/event-stream`. It is not equivalent to execute: input validation,
+agent-memory seed/flush, server timeout, cancellation, and event coverage
+differ. See [Streaming](STREAMING.md) for the exact contract.
 
-## Metrics
+## Live agents
 
-### GET /api/v1/metrics {#GET-metrics}
+| Method and path | Behavior |
+|---|---|
+| `POST /api/v1/agents/{id}/play` | Intended to schedule a live agent; 409 if already scheduled. |
+| `POST /api/v1/agents/{id}/stop` | Unschedule and return completed cycle count. |
+| `GET /api/v1/agents/{id}/cycles?limit=N` | Process-local cycle history. |
+| `GET /api/v1/agents/{id}/memory` | Process-local agent KV memory. |
+| `DELETE /api/v1/agents/{id}/memory` | Reset to initial values; 409 while scheduled. |
 
-**Descripción:** Obtener métricas agregadas de todas las sesiones ejecutadas.
+The current server constructs but does not start the Scheduler, so a successful
+play response is not evidence that cycles advance. See [Live Agents](LIVE_AGENTS.md).
 
-**Auth:** Requiere `X-API-Key`.
+## Tools and templates
 
-**Response:**
+### `GET /api/v1/tools`
 
-```json
-{
-  "sessions": {
-    "total": 100,
-    "completed": 95,
-    "failed": 5
-  },
-  "nodes": {
-    "total_executed": 450,
-    "total_duration_ms": 125000,
-    "avg_duration_ms": 277.78
-  },
-  "tools_registered": 52,
-  "agents_loaded": 8
-}
-```
+Returns the 52 registered tool descriptions, categories, input fields, and
+output fields. Aliases are not listed.
 
----
+### `GET /api/v1/templates`
 
-## RAG & Evaluation
+Returns built-in template metadata (`id`, `name`, `category`, `description`,
+required providers, tags), not the complete generated AgentSpec body.
 
-### POST /api/v1/rag/search {#POST-rag-search}
+## Sessions and run history
 
-**Descripción:** Ejecutar búsqueda RAG sobre documentos con embeddings e indexación semántica.
+### `GET /api/v1/sessions?agent_id=...&limit=50`
 
-**Auth:** Requiere `X-API-Key`.
+Reads SQLite first when available, with optional agent filter and limit, then
+falls back to the in-memory hot cache on repository failure/unavailability.
 
-**Request:**
+### `GET /api/v1/sessions/{id}`
 
-```json
-{
-  "query": "cómo configurar el servidor",
-  "documents": [
-    "Contenido del documento 1",
-    "Contenido del documento 2"
-  ],
-  "top_k": 5,
-  "chunk_strategy": "paragraph",
-  "chunk_size": 512
-}
-```
+Reads hot cache then SQLite. Hot-cache responses contain ID, status, trace, and
+error. Persisted responses add agent identity, transcript, state, timing, and
+duration. Clients must tolerate the additive shape difference.
 
-**Request Parameters:**
-| Parámetro | Tipo | Default | Obligatorio | Descripción |
-|---|---|---|---|---|
-| query | string | — | Sí | Texto de búsqueda |
-| documents | array[string] | — | Sí | Array de documentos/textos a indexar |
-| top_k | integer | 3 | No | Número máximo de chunks a retornar |
-| chunk_strategy | string | "paragraph" | No | Estrategia de chunking: "paragraph", "sentence", "fixed_size" |
-| chunk_size | integer | 512 | No | Tamaño de chunk para "fixed_size" |
+### `GET /api/v1/sessions/{id}/otel-trace`
 
-**Response:**
+Returns an OpenTelemetry-compatible JSON resource/scope/span structure derived
+from the stored run. It is a pull conversion, not an OTLP exporter. See
+[Observability](OBSERVABILITY.md).
 
-```json
-{
-  "query": "cómo configurar el servidor",
-  "results": [
-    {
-      "chunk": "contenido relevante del documento...",
-      "score": 0.95,
-      "index": 0
-    }
-  ],
-  "chunks_total": 15,
-  "embedding_model": "nomic-embed-text",
-  "dimensions": 768
-}
-```
+## Specialized endpoints
 
-**Errores:**
+### `GET /api/v1/metrics`
 
-| Código | Condición | Mensaje |
-|---|---|---|
-| 400 | query vacío | `{"error": "query is required"}` |
-| 400 | documents falta o vacío | `{"error": "documents array is required"}` |
-| 500 | Falla en embeddings | `{"error": "Failed to embed query: ..."}` |
+Returns in-memory aggregate session/node counts and duration plus tool/agent
+counts. It is JSON diagnostics, not Prometheus.
 
-**Notas:**
-- Utiliza embeddings REAL via Ollama (modelo: nomic-embed-text)
-- Realiza chunking automático según la estrategia
-- Retorna scores como similitud de coseno normalizada (0.0-1.0)
+### `POST /api/v1/rag/search`
 
----
+Accepts query/documents/chunk/search options, embeds documents/query through
+the configured LLM resource, and returns ranked chunks. It is stateless per
+request; see [RAG](RAG.md).
 
-### POST /api/v1/eval {#POST-eval}
+### `POST /api/v1/eval`
 
-**Descripción:** Ejecutar evaluación de calidad en salida de agente usando un juez LLM real.
+Accepts `input`, `output`, optional `context`, `duration_ms`, optional
+`judge_model`, and required `eval_types`. Returns `{results, eval_count}`.
+Programmatic and LLM-judge behavior is described in
+[Advanced Subsystems](ADVANCED_SUBSYSTEMS.md).
 
-**Auth:** Requiere `X-API-Key`.
+### `POST /api/v1/universe/message`
 
-**Request:**
+Builds a request-scoped router from `message`, `agents`, optional `name`, and
+strategy. It executes the selected agent only if its ID is already registered
+in this process. `llm_classify` currently falls back to keyword matching in the
+synchronous router.
 
-```json
-{
-  "input": "analiza esto",
-  "output": "la salida del agente",
-  "context": "información adicional",
-  "duration_ms": 1234,
-  "judge_model": "claude-3-sonnet",
-  "eval_types": ["relevance", "faithfulness", "completeness", "format_compliance", "latency"]
-}
-```
+### `POST /api/v1/universe/groupchat`
 
-**Response:**
+Accepts `topic`, at least two `{name, personality}` participants, and optional
+`max_rounds`. It performs direct sequential LLM calls; participants are not
+AgentSpec graphs.
 
-```json
-{
-  "results": [
-    {
-      "eval_type": "relevance",
-      "score": 0.92,
-      "details": "Output is highly relevant to the input query",
-      "judge_model": "claude-3-sonnet"
-    },
-    {
-      "eval_type": "latency",
-      "score": 0.78,
-      "details": "Execution took 1234ms, acceptable for async use",
-      "judge_model": "claude-3-sonnet"
-    }
-  ],
-  "eval_count": 5
-}
-```
+## Orchestrator
 
-**Errores:**
+The following privileged API manages tmux/Claude Code sessions rather than
+graphs:
 
-| Código | Condición | Mensaje |
-|---|---|---|
-| 400 | eval_types vacío | `{"error": "eval_types array required (relevance, faithfulness, completeness, format_compliance, latency)"}` |
+| Method and path | Purpose |
+|---|---|
+| `POST, GET /api/v1/orchestrator/sessions` | Spawn/list sessions. |
+| `GET, DELETE /api/v1/orchestrator/sessions/{id}` | Detail/unregister external node. |
+| `POST /api/v1/orchestrator/sessions/{id}/send` | Send instruction. |
+| `GET /api/v1/orchestrator/sessions/{id}/output` | Capture pane output. |
+| `POST /api/v1/orchestrator/sessions/{id}/stop` | Stop tmux session. |
+| `POST /api/v1/orchestrator/sessions/{id}/restart` | Restart with optional mode/model/effort. |
+| `POST /api/v1/orchestrator/sessions/register` | Register external node. |
+| `POST /api/v1/orchestrator/sessions/{id}/status` | Update external status. |
+| `POST /api/v1/orchestrator/sessions/{id}/unregister` | Stop external node. |
+| `POST, GET /api/v1/orchestrator/sessions/{id}/activity` | Record/read activity. |
+| `GET /api/v1/orchestrator/events` | SSE events. |
+| `GET /api/v1/orchestrator/projects` | Project picker data. |
+| `POST /api/v1/orchestrator/pick-folder` | Native host folder dialog. |
 
----
-
-## Universe (Multi-Agent Router)
-
-### POST /api/v1/universe/message {#POST-universe-message}
-
-**Descripción:** Enviar un mensaje a un Universe. El sistema routea automáticamente al agente más apropiado según la estrategia configurada.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Autorización:** → [DOMINIO.md#Universe](../producto/DOMINIO.md#glosario).
-
-**Request:**
-
-```json
-{
-  "message": "necesito ayuda con Python",
-  "name": "mi-universo",
-  "strategy": "llm_classify",
-  "agents": [
-    {
-      "name": "Asistente Python",
-      "agent_id": "agent-python",
-      "capabilities": ["coding", "debugging", "documentation"]
-    },
-    {
-      "name": "Asistente SQL",
-      "agent_id": "agent-sql",
-      "capabilities": ["databases", "queries", "optimization"]
-    }
-  ]
-}
-```
-
-**Response:**
-
-```json
-{
-  "routing": {
-    "agent_name": "Asistente Python",
-    "agent_id": "agent-python",
-    "confidence": 0.95,
-    "strategy_used": "llm_classify",
-    "reason": "Mensaje relacionado con Python"
-  },
-  "executed": true,
-  "result": {
-    "status": "Completed",
-    "state": {...},
-    "error": null
-  }
-}
-```
-
-**Validaciones:**
-- `message` es obligatorio
-- `agents` array debe tener al menos 1 agente
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 400 | message falta | `{"error": "message is required"}` |
-| 400 | agents falta o vacío | `{"error": "agents array is required"}` |
-
----
-
-### POST /api/v1/universe/groupchat {#POST-universe-groupchat}
-
-**Descripción:** Ejecutar un debate entre múltiples agentes sobre un tema.
-
-**Auth:** Requiere `X-API-Key`.
-
-**Request:**
-
-```json
-{
-  "topic": "¿Es mejor monolitico o microservicios?",
-  "max_rounds": 3,
-  "participants": [
-    {
-      "name": "DevOps Engineer",
-      "personality": "Pragmático, enfocado en escalabilidad"
-    },
-    {
-      "name": "Backend Architect",
-      "personality": "Perfectcionista, valora la arquitectura limpia"
-    }
-  ]
-}
-```
-
-**Response:**
-
-```json
-{
-  "topic": "¿Es mejor monolitico o microservicios?",
-  "rounds": 3,
-  "participants": 2,
-  "transcript": [
-    {
-      "round": 1,
-      "agent": "DevOps Engineer",
-      "content": "Los microservicios dan mejor escalabilidad..."
-    },
-    {
-      "round": 2,
-      "agent": "Backend Architect",
-      "content": "Pero la complejidad aumenta significativamente..."
-    }
-  ]
-}
-```
-
-**Validaciones:**
-- `topic` es obligatorio
-- `participants` debe tener al menos 2 elementos
-
-**Errores:**
-
-| Código | Condición | Mensaje |
-|---|---|---|
-| 400 | topic falta | `{"error": "topic is required"}` |
-| 400 | participants < 2 | `{"error": "participants array required (min 2 agents with name + personality)"}` |
-
----
+Full bodies, events, dependencies, and security implications are in
+[Orchestrator](ORCHESTRATOR.md).
 
 ## Webhooks
 
-### POST /webhooks/{*path} {#POST-webhooks-path}
+### `POST /webhooks/{path}`
 
-**Descripción:** Endpoint dinámico para recibir webhooks desde sistemas externos. Se routea automáticamente a agentes con triggers configurados.
+Accepts any JSON and returns `{received, path, body}`. It is a placeholder: it
+does not match trigger declarations or execute an agent. When the server API
+key is configured, normal auth middleware applies. Do not expose it as a
+production webhook product without sender authentication, replay protection,
+payload limits, and real routing.
 
-**Auth:** Público (no requiere API key) — pero debería estar protegido en producción.
+## Error/status summary
 
-**Path Parameters:**
-| Parámetro | Tipo | Obligatorio | Descripción |
-|---|---|---|---|
-| path | string | Sí | Ruta dinámica (p.ej., `github/push`) |
+| Status | Typical meaning |
+|---:|---|
+| 200 | Successful read/action. |
+| 201 | Created. |
+| 202 | Accepted async orchestrator send/activity. |
+| 204 | Graph deleted. |
+| 400 | Invalid JSON/shape/request. |
+| 401 | Missing or invalid API key. |
+| 404 | Resource not found. |
+| 409 | Conflicting state. |
+| 422 | Agent input/type/lifecycle validation. |
+| 500 | Internal/backend/provider error depending on handler. |
+| 501 | Native folder picker unsupported. |
+| 504 | Synchronous execution timeout. |
 
-**Request:** Cualquier JSON.
+## Related documentation
 
-**Response:**
-
-```json
-{
-  "received": true,
-  "path": "github/push",
-  "body": {...}
-}
-```
-
-**Notas:**
-- Placeholder en la implementación actual — el full routing por triggers está en desarrollo
-- En producción, proteger con secret en query params o headers
-
----
-
-## Error Handling
-
-Todos los errores son JSON con este formato:
-
-```json
-{
-  "error": "descripción del error"
-}
-```
-
-**HTTP Status Codes:**
-
-| Código | Significado |
-|---|---|
-| 200 | OK |
-| 201 | Created |
-| 204 | No Content |
-| 400 | Bad Request (validación fallida) |
-| 401 | Unauthorized (API key inválida o falta) |
-| 404 | Not Found (recurso no existe) |
-| 409 | Conflict (estado inconsistente, p.ej., agent ya playing) |
-| 422 | Unprocessable Entity (validación de inputs fallida) |
-| 500 | Internal Server Error (bug del engine) |
-| 504 | Gateway Timeout (execution timeout) |
-
----
-
-## Ejemplos Completos
-
-### Flujo: Crear grafo → Crear agente → Ejecutar
-
-```bash
-# 1. Crear grafo
-curl -X POST http://localhost:3000/api/v1/graphs \
-  -H "X-API-Key: tu-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "análisis",
-    "nodes": [
-      {"id": "step1", "tool_type": "llm_call", "tool_config": {"provider": "ollama", "model": "llama2"}},
-      {"id": "step2", "tool_type": "write_file", "tool_config": {"file_path": "/tmp/result.txt"}}
-    ],
-    "edges": [{"from": "step1", "to": "step2"}],
-    "metadata": {}
-  }'
-
-# Respuesta: {"id": "graph-abc123", ...}
-
-# 2. Crear agente
-curl -X POST http://localhost:3000/api/v1/agents \
-  -H "X-API-Key: tu-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "mi-agente",
-    "graph_id": "graph-abc123"
-  }'
-
-# Respuesta: {"id": "agent-xyz789", ...}
-
-# 3. Ejecutar
-curl -X POST http://localhost:3000/api/v1/agents/agent-xyz789/execute \
-  -H "X-API-Key: tu-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "trigger_data": {"user_input": "analiza esto"}
-  }'
-
-# Respuesta: {"session_id": "...", "status": "Completed", ...}
-```
-
-### Streaming en tiempo real
-
-```bash
-curl -X POST http://localhost:3000/api/v1/agents/agent-xyz789/stream \
-  -H "X-API-Key: tu-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "trigger_data": {"user_input": "analiza esto"}
-  }' \
-  | grep -E "^event:|^data:" # SSE output
-```
-
----
-
-## Timeout & Rate Limiting
-
-- **Request timeout:** 300 segundos (configurable vía `DEFAULT_TIMEOUT_SECS`) → [FLUJOS.md#regla-07](../producto/FLUJOS.md#regla-07)
-- **Rate limiting:** No implementado aún (futura mejora)
-- **Session eviction:** FIFO cuando alcanza 10K → [FLUJOS.md#regla-06](../producto/FLUJOS.md#regla-06)
-
----
-
-## Versioning
-
-API versión actual: **v1**. Todos los endpoints bajo `/api/v1/`.
-
-Health & version endpoints sin prefijo de versión (public stable).
-
----
-
-## See Also
-
-- [DOMINIO.md](../producto/DOMINIO.md) — Términos y roles
-- [FLUJOS.md](../producto/FLUJOS.md) — Reglas de negocio
-- [SCHEMA.md](../database/SCHEMA.md) — Modelos de datos (JSON Schema)
-- [PRIMITIVES.md](PRIMITIVES.md) — Primitivas y builtin tools
+- [AgentSpec](../AGENT_SPEC.md)
+- [System lifecycle](../SYSTEM_LIFECYCLE.md)
+- [Streaming](STREAMING.md)
+- [Observability](OBSERVABILITY.md)
+- [Orchestrator](ORCHESTRATOR.md)
+- [Security](../../SECURITY.md)

@@ -1,0 +1,71 @@
+# Complete AgentSpec example used by docs/AGENT_SPEC.md.
+#
+# Validate:
+#   mirai validate examples/support-summary.yaml
+# Run:
+#   mirai run examples/support-summary.yaml \
+#     --input '{"question":"My order arrived damaged","max_words":80}'
+
+name: support-summary
+description: Summarize a support request
+version: v1
+agent_type: managed
+system_prompt: Be concise and preserve facts.
+
+inputs:
+  question:
+    type: text
+    required: true
+    description: Support request to summarize
+  max_words:
+    type: number
+    default: 120
+
+outputs:
+  answer:
+    type: text
+    description: Final response
+
+graph:
+  memory:
+    persist: none
+    keys:
+      last_topic: null
+  nodes:
+    - id: start
+      tool_type: trigger/manual
+      config: {}
+    - id: answer
+      tool_type: ai/llm_call
+      config:
+        prompt: "Summarize the support request."
+    - id: respond
+      tool_type: output/response
+      config: {}
+  edges:
+    - source: start
+      target: answer
+      data_map:
+        prompt: "Summarize in ${start.payload.max_words} words: ${start.payload.question}"
+    - source: answer
+      target: respond
+      data_map:
+        message: answer.response
+
+triggers:
+  - type: manual
+
+config:
+  max_iterations: 50
+  timeout_ms: 60000
+  retry:
+    max_retries: 3
+    backoff: exponential
+    on_failure: stop
+  hooks: {}
+  mcp_servers: []
+  vault_refs: []
+
+resources: []
+metadata:
+  owner: platform-team

@@ -1,0 +1,552 @@
+openapi: 3.1.0
+info:
+  title: OpenMirai HTTP API
+  version: 0.7.0
+  description: >-
+    Source-aligned API inventory for mirai serve. See API.md for runtime
+    caveats, persistence boundaries, and partial features.
+servers:
+  - url: http://127.0.0.1:3000
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: Process liveness and build metadata
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /version:
+    get:
+      operationId: version
+      security: []
+      responses:
+        "200":
+          description: Compiled version metadata
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /api/v1/graphs:
+    get:
+      operationId: listGraphs
+      responses:
+        "200": { $ref: "#/components/responses/JsonArray" }
+    post:
+      operationId: createGraph
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GraphCreate" }
+      responses:
+        "201":
+          description: Created graph
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Graph" }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/graphs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getGraph
+      responses:
+        "200":
+          description: Graph
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Graph" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteGraph
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      responses:
+        "200": { $ref: "#/components/responses/JsonArray" }
+    post:
+      operationId: createAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentCreate" }
+      responses:
+        "201": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/from-spec:
+    post:
+      operationId: createAgentFromSpec
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../schemas/agent-spec.schema.json
+      responses:
+        "201": { $ref: "#/components/responses/JsonObject" }
+        "422":
+          description: JSON extraction/deserialization failure; semantic AgentSpec validation is deferred until execution.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /api/v1/agents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getAgent
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/{id}/execute:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: executeAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExecuteRequest" }
+      responses:
+        "200":
+          description: Completed, failed, or interrupted execution result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "504": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/{id}/stream:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: streamAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExecuteRequest" }
+      responses:
+        "200":
+          description: Server-Sent Events; see STREAMING.md
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/{id}/spec:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getAgentSpec
+      responses:
+        "200":
+          description: Stored AgentSpec
+          content:
+            application/json:
+              schema:
+                $ref: ../../schemas/agent-spec.schema.json
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/{id}/schema:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getAgentSchema
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/{id}/play:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: playAgent
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/{id}/stop:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: stopAgent
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/agents/{id}/cycles:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: limit
+        in: query
+        schema: { type: integer, default: 50 }
+    get:
+      operationId: getAgentCycles
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /api/v1/agents/{id}/memory:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getAgentMemory
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+    delete:
+      operationId: clearAgentMemory
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/tools:
+    get:
+      operationId: listTools
+      responses:
+        "200": { $ref: "#/components/responses/JsonArray" }
+  /api/v1/templates:
+    get:
+      operationId: listTemplates
+      responses:
+        "200": { $ref: "#/components/responses/JsonArray" }
+  /api/v1/sessions:
+    get:
+      operationId: listSessions
+      parameters:
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200": { $ref: "#/components/responses/JsonArray" }
+  /api/v1/sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getSession
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/sessions/{id}/otel-trace:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getSessionOtelTrace
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/metrics:
+    get:
+      operationId: getMetrics
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /api/v1/rag/search:
+    post:
+      operationId: ragSearch
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+  /api/v1/eval:
+    post:
+      operationId: evaluate
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/universe/message:
+    post:
+      operationId: universeMessage
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/universe/groupchat:
+    post:
+      operationId: universeGroupchat
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions:
+    get:
+      operationId: listOrchestratorSessions
+      responses:
+        "200": { $ref: "#/components/responses/JsonArray" }
+    post:
+      operationId: createOrchestratorSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrchestratorSpawn" }
+      responses:
+        "201": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/register:
+    post:
+      operationId: registerExternalSession
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "201": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getOrchestratorSession
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: unregisterExternalSession
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}/send:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: sendOrchestratorInput
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "202": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}/output:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - name: lines
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 5000, default: 100 }
+    get:
+      operationId: getOrchestratorOutput
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}/stop:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: stopOrchestratorSession
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}/restart:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: restartOrchestratorSession
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: setExternalSessionStatus
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "400": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}/unregister:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: unregisterExternalSessionPost
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/sessions/{id}/activity:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getOrchestratorActivity
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: recordOrchestratorActivity
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "202": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/orchestrator/events:
+    get:
+      operationId: streamOrchestratorEvents
+      security:
+        - ApiKeyAuth: []
+        - EventQueryKey: []
+      responses:
+        "200":
+          description: Orchestrator Server-Sent Events
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /api/v1/orchestrator/projects:
+    get:
+      operationId: listOrchestratorProjects
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /api/v1/orchestrator/pick-folder:
+    post:
+      operationId: pickHostFolder
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+  /webhooks/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: receiveWebhook
+      description: Placeholder acknowledgement; does not dispatch an agent.
+      requestBody: { $ref: "#/components/requestBodies/JsonObject" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    EventQueryKey:
+      type: apiKey
+      in: query
+      name: api_key
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, additionalProperties: true }
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    JsonObject:
+      description: JSON object response; see API.md for the endpoint contract
+      content:
+        application/json:
+          schema: { type: object, additionalProperties: true }
+    JsonArray:
+      description: JSON array response; see API.md for item fields
+      content:
+        application/json:
+          schema:
+            type: array
+            items: { type: object, additionalProperties: true }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Node:
+      type: object
+      required: [id, tool_type]
+      properties:
+        id: { type: string }
+        tool_type: { type: string }
+        version: { type: string, default: 1.0.0 }
+        config: { type: object, additionalProperties: true, default: {} }
+        position:
+          type: array
+          prefixItems: [{ type: number }, { type: number }]
+          minItems: 2
+          maxItems: 2
+    Edge:
+      type: object
+      required: [source, target]
+      properties:
+        id: { type: string, default: "" }
+        source: { type: string }
+        target: { type: string }
+        condition: { type: object, additionalProperties: true }
+        data_map:
+          type: object
+          additionalProperties: { type: string }
+    GraphCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        nodes: { type: array, items: { $ref: "#/components/schemas/Node" }, default: [] }
+        edges: { type: array, items: { $ref: "#/components/schemas/Edge" }, default: [] }
+        metadata: { type: object, additionalProperties: true, default: {} }
+    Graph:
+      allOf:
+        - $ref: "#/components/schemas/GraphCreate"
+        - type: object
+          required: [id, version]
+          properties:
+            id: { type: string }
+            version: { type: string }
+    AgentCreate:
+      type: object
+      required: [name, graph_id]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        graph_id: { type: string }
+        triggers: { type: array, items: true, default: [] }
+    ExecuteRequest:
+      type: object
+      properties:
+        entry_node_id:
+          type: [string, "null"]
+          description: Accepted but ignored in OpenMirai 0.7.0.
+        trigger_data: { type: object, additionalProperties: true, default: {} }
+    ExecutionResponse:
+      type: object
+      required: [session_id, agent_id, agent_name, status, trace, transcript, state]
+      properties:
+        session_id: { type: string }
+        agent_id: { type: string }
+        agent_name: { type: string }
+        status: { enum: [Completed, Failed, Interrupted] }
+        trace: { type: array, items: { type: object, additionalProperties: true } }
+        transcript: { type: array, items: { type: object, additionalProperties: true } }
+        state: { type: object, additionalProperties: true }
+        error: { type: [string, "null"] }
+    OrchestratorSpawn:
+      type: object
+      required: [project_dir, objective]
+      properties:
+        name: { type: string }
+        project_dir: { type: string }
+        objective: { type: string }
+        model: { type: string }
+        effort: { type: string }
+        ultracode: { type: boolean, default: false }
+        parent_id: { type: string }
+        no_hooks: { type: boolean, default: false }
+        create_dir: { type: boolean, default: false }
+        mcp: { type: boolean, default: false }
+        permission_mode: { enum: [default, bypass] }

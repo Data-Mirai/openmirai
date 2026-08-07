@@ -726,7 +726,7 @@ pub struct EdgeDef {
 
 **Estado:** activo
 
-**Responsabilidad:** Sequential cursor that traverses a validated DAG, executing nodes one at a time with conditional branching, retry with backoff, hooks, checkpoints, human-input interrupts, pause/resume, and event streaming.
+**Responsabilidad:** Sequential cursor that traverses a structurally validated directed graph, executing nodes one at a time with conditional branching, retry with backoff, hooks, checkpoints, human-input interrupts, pause/resume, and event streaming. Structural validation does not prove general acyclicity.
 
 **Ubicación:** `engine/src/core/runner/graph_runner.rs`
 
@@ -1121,7 +1121,9 @@ pub enum ComparisonOp {
 
 **Responsabilidad detallada:**
 - Evaluated in EdgeCondition by GraphRunner to decide which edge to follow.
-- Flexible deserialization for YAML/JSON readability.
+- Flexible Serde deserialization for YAML AgentSpec files and equivalent JSON
+  values received through programmatic/HTTP callers. The CLI file loader itself
+  accepts YAML only.
 - Supports numeric (>, <), equality, containment, membership checks.
 
 **Side-effects:** None.

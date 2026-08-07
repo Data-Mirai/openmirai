@@ -279,7 +279,8 @@ advertencia de conexión a continuación — el flusher está implementado y pro
 
 ## Endpoints de la API que exponen datos de memoria/sesión
 
-Referencia cruzada: [API.md](API.md). Todos requieren `X-API-Key`.
+Referencia cruzada: [API.md](API.md). Requieren `X-API-Key` cuando la
+autenticación del servidor está configurada.
 
 | Endpoint | Expone | Respaldado por |
 |----------|---------|-----------|

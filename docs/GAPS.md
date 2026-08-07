@@ -35,13 +35,13 @@ Estado al v0.4.3 — documento histórico. Versión actual: v0.7.0; ver [ROADMAP
   3. Hook post-execution que ejecute evals configurados en AgentSpec
   4. LLM-as-judge: llamar al LLM real para relevance/faithfulness/completeness
 
-### GAP-H: RAG con embeddings reales
+### GAP-H: Ingesta RAG persistente
 - **Modulo**: `engine/src/rag.rs`
-- **Estado**: Chunking funciona (4 estrategias). `data/rag_search` tool existe. `SimpleVectorResource` con FTS5 funciona.
+- **Estado**: HTTP, `data/rag_search` y `mirai rag search` usan embeddings reales y similitud coseno. La indexacion por request no es persistente.
 - **Falta**:
-  1. Conectar con `context.llm().embed()` para generar embeddings reales por chunk
-  2. Busqueda por similitud coseno con embeddings reales (no solo FTS5 keyword)
-  3. CLI: `mirai rag ingest --source ./docs/`
+  1. CLI: `mirai rag ingest --source ./docs/`
+  2. Indice persistente, incremental y reutilizable entre requests
+  3. Politicas de actualizacion, borrado, namespace y retencion
 
 ## Pendientes — High Effort (1-2 semanas cada uno)
 
@@ -59,7 +59,7 @@ Estado al v0.4.3 — documento histórico. Versión actual: v0.7.0; ver [ROADMAP
 
 | GAP | Feature | Esfuerzo |
 |-----|---------|----------|
-| GAP-003 | Observabilidad (tracing visual, OpenTelemetry) | Alto |
+| GAP-003 | Observabilidad de produccion (UI + export OTLP; el JSON `/otel-trace` ya existe) | Alto |
 | GAP-004 | Fan-out dinamico (`logic/fan_out` con N runtime) | Medio |
 | GAP-005 | Cross-thread memory (store + semantic search) | Medio |
 | GAP-006 | Subgrafos composables (mejor data_map bidireccional) | Medio |

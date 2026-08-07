@@ -5,8 +5,8 @@
 | Termino | Definicion | Sinonimos |
 |---|---|---|
 | Agent | Unidad de trabajo autonoma definida en un archivo YAML. Contiene un grafo de nodos, triggers, config y opcionalmente contratos de entrada/salida. | workflow, pipeline |
-| AgentSpec | Representacion en YAML de un agente: nombre, version, grafo, triggers, config, inputs, outputs, mcp_servers. | spec, agent definition |
-| Graph | Grafo dirigido aciclico (DAG) que define el flujo de ejecucion. Compuesto por nodos y edges. | workflow graph, pipeline |
+| AgentSpec | Representacion declarativa de un agente: nombre, version, grafo, triggers, config, inputs y outputs. Los servidores MCP viven en `config.mcp_servers`. | spec, agent definition |
+| Graph | Grafo dirigido que define el flujo de ejecucion. El modelo busca un flujo tipo DAG, pero la validacion actual permite ciclos condicionales y ciclos de varios nodos. | workflow graph, pipeline |
 | Node | Unidad atomica de ejecucion dentro del grafo. Cada nodo tiene un `tool_type` que determina su comportamiento. | step, block |
 | Edge | Conexion entre dos nodos. Puede ser incondicional, condicional (con operador + valor), o con data_map. | connection, link |
 | EdgeCondition | Condicion que un edge evalua para decidir si se activa: field + operator + value. | routing condition |
@@ -24,7 +24,7 @@
 | Universe | Sistema de multi-agente: routing de mensajes entre agentes con estrategias (keyword, round-robin, LLM, explicit). | multi-agent router |
 | data_map | Mapeo de campos entre nodos: `{target_input: "source_node.output_field"}`. Soporta dot notation anidada. | field mapping |
 | MCP | Model Context Protocol — protocolo para conectar herramientas externas via stdio o HTTP. | — |
-| MCPServer | Servidor externo que expone herramientas via MCP. Configurado en `mcp_servers` del AgentSpec. | tool server |
+| MCPServer | Servidor externo que expone herramientas via MCP. Configurado en `config.mcp_servers` del AgentSpec. | tool server |
 | Hook | Punto de intercepcion durante la ejecucion (7 puntos: graph start/end, pre/post block, pre/post LLM, on_error). | interceptor, middleware |
 | Checkpoint | Snapshot del estado de ejecucion para pause/resume. | save point |
 | Energy | Sistema de tracking de costo por operacion (tokens LLM, llamadas API). | cost tracking |

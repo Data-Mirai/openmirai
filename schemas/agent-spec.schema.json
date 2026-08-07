@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Data-Mirai/openmirai/schemas/agent-spec.schema.json",
+  "title": "OpenMirai AgentSpec v1",
+  "description": "Authoring schema for OpenMirai 0.7.0. Unknown fields are intentionally allowed to match current Serde behavior.",
+  "type": "object",
+  "required": ["name", "graph"],
+  "properties": {
+    "name": { "type": "string" },
+    "description": { "type": "string", "default": "" },
+    "version": { "type": "string", "default": "v1" },
+    "agent_type": { "enum": ["managed", "live"], "default": "managed" },
+    "system_prompt": { "type": "string" },
+    "soul": { "type": "string" },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/inputField" }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/outputField" }
+    },
+    "graph": { "$ref": "#/$defs/graph" },
+    "schedule": { "$ref": "#/$defs/schedule" },
+    "triggers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/trigger" },
+      "default": []
+    },
+    "config": { "$ref": "#/$defs/config" },
+    "resources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/resource" },
+      "default": []
+    },
+    "metadata": { "type": "object", "default": {} }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["agent_type"],
+        "properties": { "agent_type": { "const": "live" } }
+      },
+      "then": { "required": ["schedule"] }
+    },
+    {
+      "if": { "required": ["schedule"] },
+      "then": {
+        "required": ["agent_type"],
+        "properties": { "agent_type": { "const": "live" } }
+      }
+    }
+  ],
+  "$defs": {
+    "fieldType": { "enum": ["text", "number", "boolean", "json", "file"] },
+    "inputField": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "$ref": "#/$defs/fieldType" },
+        "required": { "type": "boolean", "default": false },
+        "description": { "type": "string", "default": "" },
+        "default": true
+      }
+    },
+    "outputField": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "$ref": "#/$defs/fieldType" },
+        "description": { "type": "string", "default": "" }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "required": ["keys"],
+      "properties": {
+        "persist": { "enum": ["none", "cycle", "execution"], "default": "cycle" },
+        "keys": { "type": "object" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "tool_type"],
+      "properties": {
+        "id": { "type": "string" },
+        "tool_type": { "type": "string" },
+        "version": { "type": "string", "default": "1.0.0" },
+        "config": { "type": "object", "default": {} },
+        "position": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number", "default": 0 },
+            "y": { "type": "number", "default": 0 }
+          },
+          "additionalProperties": { "type": "number" },
+          "default": { "x": 0, "y": 0 }
+        }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "required": ["field", "op", "value"],
+      "properties": {
+        "field": { "type": "string" },
+        "op": {
+          "enum": [
+            "equals", "equal", "not_equals", "not_equal", "greater_than",
+            "less_than", "greater_or_equal", "greater_than_or_equal",
+            "less_or_equal", "less_than_or_equal", "in", "contains",
+            "eq", "neq", "gt", "lt", "gte", "lte", "Eq", "Neq",
+            "Gt", "Lt", "Gte", "Lte", "In", "Contains"
+          ]
+        },
+        "value": true
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["source", "target"],
+      "properties": {
+        "id": { "type": "string", "default": "" },
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "condition": { "$ref": "#/$defs/condition" },
+        "data_map": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "properties": {
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" }, "minItems": 1, "default": [] },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" }, "default": [] },
+        "memory": { "$ref": "#/$defs/memory" }
+      },
+      "default": { "nodes": [], "edges": [] }
+    },
+    "schedule": {
+      "type": "object",
+      "properties": {
+        "interval_seconds": { "type": "integer", "minimum": 1 },
+        "cron": { "type": "string", "description": "Declared but rejected in AgentSpec v1." },
+        "max_cycles": { "type": "integer", "minimum": 0 },
+        "on_cycle_error": { "enum": ["continue", "stop"], "default": "continue" }
+      },
+      "required": ["interval_seconds"],
+      "not": { "required": ["cron"] }
+    },
+    "trigger": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string" },
+        "path": { "type": "string" },
+        "method": { "type": "string" },
+        "auth": { "type": "string" },
+        "interval_seconds": { "type": "integer" },
+        "cron": { "type": "string" },
+        "event_type": { "type": "string" },
+        "source": { "type": "string" },
+        "input_form": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "max_retries": { "type": "integer", "minimum": 0, "default": 3 },
+        "backoff": { "enum": ["none", "linear", "exponential"], "default": "exponential" },
+        "on_failure": { "enum": ["stop", "skip", "route_to_error"], "default": "stop" }
+      }
+    },
+    "hook": {
+      "type": "object",
+      "required": ["handler"],
+      "properties": {
+        "handler": { "type": "string" },
+        "filter": { "type": "string" }
+      }
+    },
+    "mcpServer": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "transport": { "enum": ["stdio", "http"], "default": "stdio" },
+        "command": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "url": { "type": "string" },
+        "credential_ref": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "transport": { "const": "stdio" } } },
+          "then": { "required": ["command"] }
+        },
+        {
+          "if": {
+            "required": ["transport"],
+            "properties": { "transport": { "const": "http" } }
+          },
+          "then": { "required": ["url"] }
+        }
+      ]
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "max_iterations": { "type": "integer", "minimum": 1, "default": 50 },
+        "retry": { "$ref": "#/$defs/retry" },
+        "timeout_ms": { "type": "integer", "minimum": 0, "default": 60000 },
+        "hooks": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/hook" } },
+          "default": {}
+        },
+        "mcp_servers": { "type": "array", "items": { "$ref": "#/$defs/mcpServer" }, "default": [] },
+        "vault_refs": { "type": "array", "items": { "type": "object", "additionalProperties": { "type": "string" } }, "default": [] }
+      },
+      "default": {}
+    },
+    "resource": {
+      "type": "object",
+      "required": ["resource_type", "name"],
+      "properties": {
+        "resource_type": { "type": "string" },
+        "name": { "type": "string" },
+        "config": { "type": "object", "default": {} }
+      }
+    }
+  }
+}

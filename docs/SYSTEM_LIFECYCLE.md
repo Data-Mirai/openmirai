@@ -142,7 +142,7 @@ currently no repository-owned Docker image or Docker release job.
 | Nested agent tool | `engine/src/tools/builtin/agent.rs` | **Placeholder** | Enforces depth/cycle guards and returns host instructions; it does not execute a child graph itself. |
 | Webhook endpoint | `engine/src/server/handlers.rs` | **Placeholder** | Acknowledges the webhook body but does not route it to matching agents. |
 | Orchestrated sessions | `engine/src/sessions/`, `engine/src/server/orchestrator.rs` | **Wired on Unix with dependencies** | Manages external Claude Code processes in tmux. This is separate from YAML graph execution. |
-| RAG, eval, universe, intelligence, vault, render | dedicated engine modules | **Mixed** | Supporting subsystems with different degrees of CLI/server integration; consult their focused docs before relying on them. |
+| RAG, eval, universe, intelligence, energy, vault, render, benchmark, catalog | dedicated engine modules | **Mixed** | Supporting subsystems with different degrees of integration; see [Advanced Subsystems](backend/ADVANCED_SUBSYSTEMS.md), [RAG](backend/RAG.md), [Storage](database/STORAGE.md), and [Observability](backend/OBSERVABILITY.md). |
 
 ## 5. The four kinds of data
 

@@ -7,19 +7,20 @@
 
 > **Decentralize your AI agents.** One binary. Any LLM. Your machine. Your rules.
 
-OpenMirai is a Rust-native engine that runs agentic workflows defined as simple YAML graphs. No cloud lock-in, no heavy runtime, no vendor handcuffs — the engine runs wherever you do: your laptop, your server, your edge. A single portable binary with zero runtime dependencies.
+OpenMirai is a Rust-native engine that runs agentic workflows defined as simple YAML graphs. No cloud lock-in, no heavy language runtime, no vendor handcuffs — the core engine runs wherever you do: your laptop, your server, your edge. Some tools and orchestrator features require host programs such as a shell, Git, Python, Node, tmux, or Claude Code.
 
 A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
 
-**52 built-in tools** · **7 LLM providers** · **879 tests** · **Apache-2.0 license**
+**52 built-in tools** · **7 LLM providers** · **comprehensive test suite** · **Apache-2.0 license**
 
 ## Why decentralized?
 
 Most agent platforms run *their* runtime, on *their* cloud, against *their* preferred model. OpenMirai inverts that:
 
-- **Runs anywhere** — one self-contained binary, zero runtime dependencies. Your machine, your server, your edge.
+- **Runs anywhere** — one engine binary; enable only the host-tool dependencies your execution profile needs.
 - **Any LLM** — 7 providers today, local Ollama included. No vendor lock-in.
-- **Your data stays yours** — agents execute where you put them; nothing phones home.
+- **No required hosted control plane** — agents execute where you put them;
+  configured LLM providers and tools still receive the data you send to them.
 - **Embeddable** — drop the engine into any app via CLI, HTTP, or as a Rust crate.
 
 > Decentralizing AI agents means taking power back from closed platforms and handing it to whoever builds.
@@ -83,7 +84,7 @@ mirai run hello.yaml --input '{"query": "What is Rust?"}'
 
 ```
 Agent  = YAML config  (portable, versionable, language-agnostic)
-Engine = Rust binary   (FFI, WASM, CLI — comprehensive test suite)
+Engine = Rust binary   (CLI, HTTP, embeddable Rust crate)
 Host   = Your app      (Python, Swift, Go, JavaScript — anything)
 ```
 
@@ -93,7 +94,7 @@ The agent defines **what** to do. The engine decides **how** to run it.
 
 | | OpenMirai | LangGraph / CrewAI | Google ADK |
 |---|---|---|---|
-| Runtime | Single binary, zero deps | Python runtime + deps | Python runtime + deps |
+| Runtime | Single engine binary; tool-specific host deps | Python runtime + deps | Python runtime + deps |
 | Run on your own machine/edge | ✅ first-class | ⚠️ needs Python env | ⚠️ GCP-oriented |
 | LLM choice | 7 providers, local-first | Provider-agnostic | Gemini-first |
 | Agent format | Portable YAML | Python code | Python code |
@@ -158,16 +159,21 @@ docs/          Technical documentation
 ## Key Features
 
 - **Graph execution** with conditional branching, fan-out/fan-in, and retry with backoff
-- **Input/output contracts** — typed validation with defaults, required fields, and clear error messages
+- **Input contracts** — typed validation with defaults, required fields, and clear error messages;
+  declared top-level outputs are currently descriptive rather than enforced
 - **Structured output** — JSON schema enforcement on LLM responses with auto-retry
 - **Soul system** — give agents personality via SOUL.md files
-- **Universe** — multi-agent routing with keyword, round-robin, or LLM-based strategies
-- **Energy tracking** — metered cost accounting per operation
-- **Hook system** — 7 interception points for execution control
+- **Universe** — request-scoped routing plus partial registered-agent execution
+- **Energy primitives** — library-level rate and event accounting, not default global billing
+- **Hook system** — 7 library interception points; default CLI/server do not attach user-declared hooks
 - **SSE streaming** — real-time execution events via Server-Sent Events
 - **Security scanner** — prompt injection detection with configurable sensitivity
 - **MCP support** — Model Context Protocol for external tool servers
 - **Session orchestration** — run and coordinate several live coding sessions from one engine (see below)
+
+Trigger nodes carry entry payloads, but host-side webhook dispatch and recurring
+scheduler startup are still partial. See the
+[system lifecycle](docs/SYSTEM_LIFECYCLE.md) before using them operationally.
 
 Partially wired, so you know before you build on them: `GraphRunner::resume()` exists and is
 tested at the crate level but is not reachable from the CLI or HTTP yet, and `agent/run_agent`
@@ -227,8 +233,11 @@ OpenMirai is open source and built in the open. Contributions are welcome — ne
 
 - [Documentation index](docs/INDEX.md)
 - [Complete system and execution lifecycle](docs/SYSTEM_LIFECYCLE.md)
+- [AgentSpec v1 reference](docs/AGENT_SPEC.md)
 - [Architecture map](docs/ARCHITECTURE.md)
 - [Cloud and Docker deployment readiness](docs/infra/CLOUD-DEPLOYMENT.md)
+- [Operations runbook](docs/infra/OPERATIONS.md)
+- [Security policy and threat model](SECURITY.md)
 - [Infrastructure, CI, and release guide](docs/infra/INFRA.md)
 
 ## License

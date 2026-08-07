@@ -190,11 +190,12 @@ The **Model Context Protocol (MCP)** allows you to plug in external tool servers
 Instead of building custom UI components, extend the engine with MCP servers:
 
 ```yaml
-mcp_servers:
-  - name: my-tools
-    transport: stdio
-    command: npx
-    args: ["-y", "@my-org/mcp-server"]
+config:
+  mcp_servers:
+    - name: my-tools
+      transport: stdio
+      command: npx
+      args: ["-y", "@my-org/mcp-server"]
 
 graph:
   nodes:

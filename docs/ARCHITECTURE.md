@@ -44,7 +44,7 @@ orchestration requires Unix, `tmux`, and the `claude` CLI.
 ```
 engine/src/
   core/                  # Heart of the engine
-    runner/              # GraphRunner — DAG traversal with hooks, retry, fan-out
+    runner/              # GraphRunner — directed traversal with hooks, retry, fan-out
       graph_runner.rs    # Main execution loop (run_from + 10 submethods)
       types.rs           # ExecutionResult, TraceEntry, RetryPolicy, etc.
       traits.rs          # HookHandler, CheckpointCallback, ToolExecutor
@@ -207,9 +207,9 @@ Base URL: `/api/v1/`
 | `/api/v1/universe/message` | POST | Route message to agent |
 | `/api/v1/universe/groupchat` | POST | Multi-agent debate |
 | `/api/v1/metrics` | GET | Server metrics |
-| `/webhooks/{path}` | POST | Webhook receiver |
+| `/webhooks/{path}` | POST | Placeholder receiver; acknowledges but does not dispatch to agents |
 
-Authentication: `X-API-Key` header (optional, configured via `MIRAI_API_KEY`).
+Authentication: `X-API-Key` when `MIRAI_API_KEY` is configured. Loopback can run open for development; non-loopback startup is refused without a key.
 
 ## 9. Relation to Ecosystem
 

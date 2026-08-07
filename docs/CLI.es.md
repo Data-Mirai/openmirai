@@ -35,7 +35,7 @@ Todos los ejemplos a continuación asumen que `mirai` está en tu `PATH` (o sust
 | Comando | ¿Interactivo? | Qué hace |
 |---|---|---|
 | `mirai` (sin argumentos) | **Sí** | Asistente de configuración → terminal de agente interactiva |
-| `mirai run <archivo>` | No | Ejecuta una especificación de agente (JSON/YAML) una vez, imprime el JSON resultante |
+| `mirai run <archivo>` | No | Ejecuta una especificación YAML una vez e imprime el JSON resultante |
 | `mirai validate <archivo>` | No | Analiza e informa el conteo de nodos/aristas; salida no cero en caso de error |
 | `mirai serve` | No | Inicia el servidor HTTP (ver [API.md](backend/API.md)) |
 | `mirai tools [<tool_type>]` | No | Lista todas las herramientas, o muestra las entradas/salidas/configuración de una herramienta |
@@ -130,7 +130,7 @@ mirai run agent.yaml --benchmark        # registra tiempos en benchmarks.jsonl
 
 **Pipeline de ejecución** (este es el mapeo canónico CLI→motor; ver también §9):
 
-1. `AgentSpec::from_file(path)` analiza la especificación YAML/JSON.
+1. `AgentSpec::from_file(path)` analiza una especificación `.yaml` o `.yml`. Los archivos JSON se rechazan.
 2. Si `agent_type == Live`, la ejecución es **rechazada** (usa un servidor / ejecutor live).
 3. `spec.to_graph()` → `auto_generate_edge_ids()` → `graph.validate()`.
 4. Se puebla un `ToolRegistry` mediante `register_all_builtin_tools`.
@@ -419,7 +419,7 @@ Los dos modos llegan al motor de formas muy diferentes:
 
 | | `mirai run` (y `serve`) | Terminal interactiva |
 |---|---|---|
-| Fuente de especificación | `AgentSpec` desde un archivo YAML/JSON | Ninguna — chat de forma libre |
+| Fuente de especificación | `AgentSpec` desde un archivo YAML | Ninguna — chat de forma libre |
 | Orquestación | `GraphRunner` + `RegistryExecutor` sobre un grafo validado | `agentic_loop` hecho a medida |
 | Invocación de herramientas | El motor recorre los nodos; las herramientas se ejecutan dentro del grafo | El LLM emite llamadas a funciones; el CLI las ejecuta directamente vía `ToolRegistry` |
 | Contexto de ejecución | Construido por ejecución con LLM resuelto + DB/almacenamiento en memoria | Un `DefaultExecutionContext::default_dev()` fresco **por llamada a herramienta** |

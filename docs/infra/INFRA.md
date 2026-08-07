@@ -175,7 +175,7 @@ Follows **Semantic Versioning**: `MAJOR.MINOR.PATCH`
 
 ### HTTP Server Version
 
-The HTTP server reads its version at compile time via `env!("CARGO_PKG_VERSION")` — no manual sync needed. The server responds to `GET /version` with the compiled version.
+The HTTP server reports `MIRAI_VERSION`, injected at compile time by `engine/build.rs` from the root `VERSION` file. The build warns when the crate manifest differs. `GET /version` exposes the compiled version/build/SHA/timestamp.
 
 ## Deployment
 

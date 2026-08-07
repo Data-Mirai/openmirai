@@ -24,12 +24,12 @@
 
 ### GAP-003: Observabilidad (equivalente a LangSmith)
 - **LangGraph tiene**: LangSmith — tracing visual, evaluaciones, debugging, replay
-- **Mirai tiene**: trace + transcript (JSON plano), SSE streaming con eventos por nodo, endpoint `/api/v1/metrics`
-- **Gap real**: no hay UI para inspeccionar ejecuciones, no hay tracing anidado ni export OpenTelemetry
+- **Mirai tiene**: trace + transcript, SSE parcial, `/api/v1/metrics` y `GET /api/v1/sessions/{id}/otel-trace` con JSON compatible
+- **Gap real**: no hay UI de replay/debug, tracing anidado real, propagacion de contexto ni export OTLP continuo
 - **Solucion**:
-  - Fase 1: endpoint GET /api/v1/sessions/{id}/trace con formato OpenTelemetry-compatible
-  - Fase 2: UI web simple (timeline de nodos + inputs/outputs + duracion) — esto lo resuelve Mirai Local
-  - Fase 3: integracion con Grafana/Datadog via OTLP export
+  - ~~Fase 1: endpoint OpenTelemetry-compatible por sesion~~ — disponible como `/otel-trace`
+  - Fase 2: UI web simple (timeline de nodos + inputs/outputs + duracion)
+  - Fase 3: propagacion + export OTLP a Grafana/Datadog
 - **Impacto**: sin observabilidad visual, produccion es a ciegas
 
 ---
@@ -59,7 +59,7 @@
 
 ### GAP-006: Subgrafos composables
 - **LangGraph tiene**: `parent.add_node("research", research_subgraph)` — grafo dentro de grafo con state mapping
-- **Mirai tiene**: `agent/run_agent` — ejecuta otro agente como sub-agente (max depth 3)
+- **Mirai tiene**: `agent/run_agent` valida profundidad/ciclos pero devuelve instrucciones placeholder; el host aun debe ejecutar el hijo
 - **Gap real**: el mapping de state entre parent y child puede mejorar. Falta isolation de checkpoints.
 - **Solucion**:
   - Mejorar `data_map` bidireccional en `agent/run_agent` (input mapping + output mapping)
@@ -87,13 +87,13 @@ Estos NO son gaps — son features donde Mirai ya gana. Pulirlos y marketearlos.
 - Pulir: documentar como embedir en iOS/Android/WASM
 - Marketing: "same YAML, any platform"
 
-### VENTAJA-002: Determinismo del DAG
-- El grafo decide el flujo, no el LLM. Auditable, predecible, testeable.
+### VENTAJA-002: Flujo dirigido declarativo
+- El grafo decide el flujo, no el LLM. La validacion aun no garantiza un DAG general.
 - Pulir: herramienta de visualizacion de grafos
 - Marketing: "your agent is data, not code"
 
-### VENTAJA-003: Triggers nativos
-- Webhook, schedule, event, manual, heartbeat — integrados en el motor.
+### VENTAJA-003: Contratos de triggers nativos
+- Webhook, schedule, event, manual y heartbeat existen como contratos/nodos; la entrega host-side es parcial.
 - LangGraph NO tiene triggers — es solo una libreria.
 - Pulir: mas trigger types (Kafka, SQS, pub/sub)
 
@@ -103,16 +103,16 @@ Estos NO son gaps — son features donde Mirai ya gana. Pulirlos y marketearlos.
 - Pulir: integracion con AWS Secrets Manager, GCP Secret Manager
 
 ### VENTAJA-005: Single binary deployment
-- `cargo build --release` → ~9MB binario → deploy en cualquier server.
+- `cargo build --release` produce un binario portable; verificar tamano y librerias para cada target.
 - LangGraph necesita: Python runtime + pip install + virtualenv + 200MB de deps.
-- Marketing: "zero dependency deployment"
+- Marketing: "single engine binary"; herramientas individuales pueden requerir programas host.
 
 ### VENTAJA-006: Input/Output contracts
 - Typed validation en el boundary del agente. Errores claros antes de ejecutar.
 - LangGraph no tiene validacion de inputs declarativa — es codigo Python.
 
 ### VENTAJA-007: MCP nativo
-- Model Context Protocol integrado: `mcp_servers` en el agent spec.
+- Model Context Protocol integrado: `config.mcp_servers` en el AgentSpec.
 - LangGraph requiere wrappers adicionales para MCP.
 
 ---

@@ -195,6 +195,11 @@ These are deployment blockers to resolve, not settings hidden elsewhere.
 ## Related documentation
 
 - [Cloud deployment readiness](CLOUD-DEPLOYMENT.md)
+- [Accepted GCP architecture](CLOUD-ARCHITECTURE-DECISION.md)
+- [State, bootstrap, and recovery](STATE-BOOTSTRAP-RECOVERY.md)
+- [SLO and observability](SLO-OBSERVABILITY.md)
+- [Capacity and cost](CAPACITY-AND-COST-MODEL.md)
+- [Disaster recovery](DISASTER-RECOVERY.md)
 - [Security](../../SECURITY.md)
 - [System lifecycle](../SYSTEM_LIFECYCLE.md)
 - [Database schema](../database/SCHEMA.md)

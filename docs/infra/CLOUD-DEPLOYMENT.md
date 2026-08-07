@@ -495,6 +495,12 @@ the control plane and workers scale independently.
 ## 15. Related references
 
 - [System lifecycle](../SYSTEM_LIFECYCLE.md)
+- [Accepted GCP architecture](CLOUD-ARCHITECTURE-DECISION.md)
+- [GCP implementation plan](CLOUD-IMPLEMENTATION-PLAN.md)
+- [Container runtime contract](CONTAINER-RUNTIME-CONTRACT.md)
+- [Execution security profiles](EXECUTION-SECURITY-PROFILES.md)
+- [State, bootstrap, and recovery](STATE-BOOTSTRAP-RECOVERY.md)
+- [Cloud acceptance tests](CLOUD-ACCEPTANCE-TESTS.md)
 - [Infrastructure and releases](INFRA.md)
 - [Architecture](../ARCHITECTURE.md)
 - [Built-in tool security boundaries](../backend/BUILTIN_TOOLS.md)

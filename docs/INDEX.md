@@ -39,6 +39,18 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | STORAGE.md | Storage backends, vault, FileRef | [database/STORAGE.md](database/STORAGE.md) |
 | INFRA.md | Build, CI/CD, release, deploy, env vars | [infra/INFRA.md](infra/INFRA.md) |
 | CLOUD-DEPLOYMENT.md | Current Docker/cloud readiness, state boundaries, hardening, scaling blockers, and deployment roadmap | [infra/CLOUD-DEPLOYMENT.md](infra/CLOUD-DEPLOYMENT.md) |
+| CLOUD-ARCHITECTURE-DECISION.md | Accepted GCP region, topology, trust boundary, and scale-out decision | [infra/CLOUD-ARCHITECTURE-DECISION.md](infra/CLOUD-ARCHITECTURE-DECISION.md) |
+| CLOUD-IMPLEMENTATION-PLAN.md | Ordered implementation phases and cloud definition of done | [infra/CLOUD-IMPLEMENTATION-PLAN.md](infra/CLOUD-IMPLEMENTATION-PLAN.md) |
+| CONTAINER-RUNTIME-CONTRACT.md | Image, process, filesystem, secret, network, health, startup, and shutdown contract | [infra/CONTAINER-RUNTIME-CONTRACT.md](infra/CONTAINER-RUNTIME-CONTRACT.md) |
+| EXECUTION-SECURITY-PROFILES.md | Restricted, full-trusted, and unsupported untrusted execution boundaries | [infra/EXECUTION-SECURITY-PROFILES.md](infra/EXECUTION-SECURITY-PROFILES.md) |
+| STATE-BOOTSTRAP-RECOVERY.md | State durability inventory, boot manifest, backup, and restore semantics | [infra/STATE-BOOTSTRAP-RECOVERY.md](infra/STATE-BOOTSTRAP-RECOVERY.md) |
+| SLO-OBSERVABILITY.md | Initial SLOs, telemetry, dashboards, alerts, and error-budget policy | [infra/SLO-OBSERVABILITY.md](infra/SLO-OBSERVABILITY.md) |
+| CAPACITY-AND-COST-MODEL.md | Workload sizing, regional validation, cost components, and scaling triggers | [infra/CAPACITY-AND-COST-MODEL.md](infra/CAPACITY-AND-COST-MODEL.md) |
+| RELEASE-SUPPLY-CHAIN.md | WIF-based CI/CD, immutable images, SBOM/provenance, promotion, and rollback | [infra/RELEASE-SUPPLY-CHAIN.md](infra/RELEASE-SUPPLY-CHAIN.md) |
+| CLOUD-ACCEPTANCE-TESTS.md | End-to-end release gates for GCP, recovery, tools, identity, and telemetry | [infra/CLOUD-ACCEPTANCE-TESTS.md](infra/CLOUD-ACCEPTANCE-TESTS.md) |
+| CONTROL-PLANE-WORKER-PROTOCOL.md | Future distributed job, lease, event, cancellation, and capability protocol | [infra/CONTROL-PLANE-WORKER-PROTOCOL.md](infra/CONTROL-PLANE-WORKER-PROTOCOL.md) |
+| MULTITENANCY-AUTHORIZATION.md | Future tenant isolation, roles, credentials, quotas, and audit model | [infra/MULTITENANCY-AUTHORIZATION.md](infra/MULTITENANCY-AUTHORIZATION.md) |
+| DISASTER-RECOVERY.md | RPO/RTO, failure scenarios, regional recovery, failback, and exercises | [infra/DISASTER-RECOVERY.md](infra/DISASTER-RECOVERY.md) |
 | OPERATIONS.md | Single-process runbook: readiness, backup, restore, upgrade, incidents, shutdown | [infra/OPERATIONS.md](infra/OPERATIONS.md) |
 | SECURITY.md | Security policy, threat model, disclosure, tool risks, deployment controls | [../SECURITY.md](../SECURITY.md) |
 | COMPATIBILITY.md | Versioned surfaces, compatibility expectations, and upgrade process | [COMPATIBILITY.md](COMPATIBILITY.md) |

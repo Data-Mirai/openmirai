@@ -311,25 +311,31 @@ pub(crate) async fn execute_agent(
     }
 
     // Run the agent graph with timeout protection.
+    // El id del run se genera ANTES de ejecutar: es el que ve el contexto de
+    // ejecución (y por tanto los logs y eventos) y con el que se persiste.
+    let session_id = short_id();
     let started_at = crate::utils::now_epoch();
     let timeout = std::time::Duration::from_secs(state.timeout_secs);
-    let result =
-        match tokio::time::timeout(timeout, run_agent_spec(&spec, &trigger_data, &state)).await {
-            Ok(r) => r,
-            Err(_) => {
-                return Err((
-                    StatusCode::GATEWAY_TIMEOUT,
-                    Json(ErrorResponse {
-                        error: format!("execution timed out after {}s", state.timeout_secs),
-                    }),
-                ));
-            }
-        };
+    let result = match tokio::time::timeout(
+        timeout,
+        run_agent_spec(&spec, &trigger_data, &state, &session_id),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            return Err((
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(ErrorResponse {
+                    error: format!("execution timed out after {}s", state.timeout_secs),
+                }),
+            ));
+        }
+    };
 
     // PRD-008: persist memory after successful execution
     persist_memory_after_execution(&spec, &id, &result, &state).await;
 
-    let session_id = short_id();
     let body = json!({
         "session_id": &session_id,
         "agent_id": id,
@@ -398,14 +404,37 @@ pub(crate) async fn stream_agent(
     let spec_clone = spec.clone();
     let trigger_data = req.trigger_data.clone();
     let agent_id = id.clone();
+    // Un ÚNICO id para el run: se anuncia al cliente, viaja en el contexto de
+    // ejecución y es con el que queda persistido, así que lo que se ve en vivo
+    // se puede volver a buscar después.
+    let session_id = short_id();
     tokio::spawn(async move {
         let started_at = crate::utils::now_epoch();
-        if let Some(result) =
-            run_agent_spec_streaming(&spec_clone, &trigger_data, &state_clone, event_tx).await
+        let _ = event_tx
+            .send(crate::streaming::StreamEvent::RunStarted {
+                session_id: session_id.clone(),
+                agent_id: agent_id.clone(),
+                agent_name: spec_clone.name.clone(),
+            })
+            .await;
+        if let Some(result) = run_agent_spec_streaming(
+            &spec_clone,
+            &trigger_data,
+            &state_clone,
+            &session_id,
+            event_tx,
+        )
+        .await
         {
             // Los streams también son runs: registrar + persistir.
             state_clone
-                .record_session(short_id(), &agent_id, &spec_clone.name, started_at, result)
+                .record_session(
+                    session_id.clone(),
+                    &agent_id,
+                    &spec_clone.name,
+                    started_at,
+                    result,
+                )
                 .await;
         }
     });
@@ -789,7 +818,7 @@ pub(crate) async fn universe_message(
         let mut trigger_data = HashMap::new();
         trigger_data.insert("message".to_string(), Value::String(message.to_string()));
 
-        let result = run_agent_spec(&spec, &trigger_data, &state).await;
+        let result = run_agent_spec(&spec, &trigger_data, &state, &short_id()).await;
         Some(json!({
             "status": result.status,
             "state": result.state.snapshot(),
@@ -1252,6 +1281,7 @@ pub(crate) async fn play_agent(
                     &s,
                     &aid,
                     is_first,
+                    &crate::utils::short_id(),
                 )
                 .await;
 

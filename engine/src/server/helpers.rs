@@ -83,20 +83,25 @@ pub(crate) async fn run_agent_spec(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
+    session_id: &str,
 ) -> ExecutionResult {
-    run_agent_spec_with_memory(spec, trigger_data, state, &spec.name, true).await
+    run_agent_spec_with_memory(spec, trigger_data, state, &spec.name, true, session_id).await
 }
 
 /// Run an agent spec with memory support (PRD-008).
 ///
 /// `agent_id`: used to key the memory store.
 /// `is_first_cycle_of_session`: controls cycle-mode memory behavior.
+/// `session_id`: id del run, generado por el handler ANTES de ejecutar. El
+/// contexto se construye con él para que los eventos, los logs y el registro
+/// persistido hablen del mismo run (antes cada capa inventaba el suyo).
 pub(crate) async fn run_agent_spec_with_memory(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
     agent_id: &str,
     is_first_cycle_of_session: bool,
+    session_id: &str,
 ) -> ExecutionResult {
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
@@ -170,7 +175,8 @@ pub(crate) async fn run_agent_spec_with_memory(
     let llm = (state.llm_factory)();
     let mut ctx_builder = DefaultExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
-        .with_storage(Box::new(InMemoryStorageResource::new()));
+        .with_storage(Box::new(InMemoryStorageResource::new()))
+        .with_session_id(session_id);
     if let Some(ref prompt) = system_prompt {
         ctx_builder = ctx_builder.with_system_prompt(prompt);
     }
@@ -206,6 +212,7 @@ pub(crate) async fn run_agent_spec_streaming(
     spec: &AgentSpec,
     trigger_data: &HashMap<String, Value>,
     state: &AppState,
+    session_id: &str,
     event_tx: tokio::sync::mpsc::Sender<crate::streaming::StreamEvent>,
 ) -> Option<ExecutionResult> {
     let mut graph = spec.to_graph(Some(&spec.name));
@@ -257,7 +264,8 @@ pub(crate) async fn run_agent_spec_streaming(
     let llm = (state.llm_factory)();
     let mut ctx_builder = DefaultExecutionContext::builder(llm)
         .with_db(Box::new(InMemoryDBResource::new()))
-        .with_storage(Box::new(InMemoryStorageResource::new()));
+        .with_storage(Box::new(InMemoryStorageResource::new()))
+        .with_session_id(session_id);
     if let Some(ref prompt) = system_prompt {
         ctx_builder = ctx_builder.with_system_prompt(prompt);
     }

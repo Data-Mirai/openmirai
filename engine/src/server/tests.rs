@@ -713,3 +713,104 @@ fn host_is_loopback_classification() {
     assert!(!super::host_is_loopback("0.0.0.0"));
     assert!(!super::host_is_loopback("192.168.1.10"));
 }
+
+/// El `session_id` que viaja en los eventos SSE del stream DEBE ser el mismo
+/// con el que el run queda persistido: un cliente que ve un evento y luego
+/// pide ese run tiene que encontrarlo. Antes nacían dos ids distintos (uno en
+/// el contexto de ejecución, otro en el handler al registrar), así que
+/// correlacionar un run con sus eventos era imposible.
+#[tokio::test]
+async fn stream_event_session_id_matches_persisted_run() {
+    let mut registry = ToolRegistry::new();
+    register_all_builtin_tools(&mut registry);
+    let state = AppState::new(registry, test_llm_factory(), None);
+    let app = create_router(state);
+
+    let spec = json!({
+        "name": "stream-corr",
+        "description": "correlación de session_id",
+        "version": "v1",
+        "graph": {
+            "nodes": [
+                {"id": "trigger", "tool_type": "trigger/manual", "config": {"payload": {"msg": "hola"}}},
+                {"id": "out", "tool_type": "output/response", "config": {"message": "done"}}
+            ],
+            "edges": [{"source": "trigger", "target": "out"}]
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/agents/from-spec")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&spec).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let agent_id = body_json(resp.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/agents/{agent_id}/stream"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "trigger_data": {} })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Drenar el SSE y sacar el session_id que vio el cliente.
+    let sse = String::from_utf8(
+        resp.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    let event_session_id = sse
+        .lines()
+        .filter_map(|l| l.strip_prefix("data: "))
+        .filter_map(|d| serde_json::from_str::<Value>(d).ok())
+        // `to_sse` serializa el enum completo: {"event": "...", "data": {...}}
+        .find_map(|v| {
+            v.get("data")
+                .and_then(|d| d.get("session_id"))
+                .and_then(|s| s.as_str())
+                .map(str::to_string)
+        })
+        .expect("el stream debe anunciar el run al que pertenecen sus eventos");
+
+    // El run se persiste al terminar la ejecución, en otra tarea.
+    let mut found = None;
+    for _ in 0..40 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/sessions/{event_session_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == StatusCode::OK {
+            found = Some(body_json(resp.into_body()).await);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    let run = found.unwrap_or_else(|| {
+        panic!("el run con session_id={event_session_id} (el que vio el cliente) no existe")
+    });
+    assert_eq!(run["id"], event_session_id);
+}

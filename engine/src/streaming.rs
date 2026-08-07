@@ -13,6 +13,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
 pub enum StreamEvent {
+    /// Run announced: the very first event of a stream, naming the run the
+    /// following events belong to. Without it a client watching a live stream
+    /// has no way to correlate what it sees with the persisted run
+    /// (`GET /api/v1/sessions/{id}`), its trace, or its logs. Additive: older
+    /// clients ignore the unknown event name.
+    #[serde(rename = "run.started")]
+    RunStarted {
+        session_id: String,
+        agent_id: String,
+        agent_name: String,
+    },
+
     /// Graph execution started.
     #[serde(rename = "graph.started")]
     GraphStarted {
@@ -79,6 +91,7 @@ impl StreamEvent {
         // The event name mirrors each variant's #[serde(rename)]; the data is the
         // variant serialized as JSON. Only the name varies per arm.
         let event_name = match self {
+            Self::RunStarted { .. } => "run.started",
             Self::GraphStarted { .. } => "graph.started",
             Self::NodeStarted { .. } => "node.started",
             Self::NodeToken { .. } => "node.token",

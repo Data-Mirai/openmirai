@@ -825,7 +825,11 @@ mod tests {
             .expect("una DB ya migrada tiene que volver a abrir sin romperse");
         assert_eq!(otra_vez.schema_version().await.unwrap(), 2);
         assert!(otra_vez.get("run-v1").await.unwrap().is_some());
-        assert!(otra_vez.get_checkpoint("run-nuevo").await.unwrap().is_some());
+        assert!(otra_vez
+            .get_checkpoint("run-nuevo")
+            .await
+            .unwrap()
+            .is_some());
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

@@ -31,7 +31,7 @@ pub struct Migration {
 // ---------------------------------------------------------------------------
 
 /// Current schema version shipped with this build.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Complete DDL for schema v1.  Using `IF NOT EXISTS` makes it idempotent.
 pub const SCHEMA_SQL: &str = r#"
@@ -127,6 +127,40 @@ VALUES (2, 0.0);
 "#;
 
 // ---------------------------------------------------------------------------
+// Schema v3 — agent memory
+// ---------------------------------------------------------------------------
+
+/// DDL for schema v3.
+///
+/// Agent memory (PRD-008) lived only in RAM, so a restart wiped it: a live agent
+/// came back and kept cycling, but with its declared keys reset to their initial
+/// values. This table is the durable side of it.
+///
+/// One row per (agent, scope) holding the whole key/value map as JSON, because
+/// that is the unit the engine writes — `set_cycle_memory` / `set_execution_memory`
+/// replace the map wholesale after filtering it to the declared keys.
+///
+/// `scope` mirrors the persist mode: `cycle` (kept within a play session) and
+/// `execution` (kept across everything). `none` never reaches this table.
+///
+/// No foreign key to `agent_specs` on purpose: memory must not be what makes a
+/// write fail, and the agent delete path clears these rows explicitly.
+pub const SCHEMA_SQL_V3: &str = r#"
+-- OpenMirai — Standalone Schema v3
+
+CREATE TABLE IF NOT EXISTS agent_memory (
+    agent_id    TEXT NOT NULL,
+    scope       TEXT NOT NULL,
+    memory      TEXT NOT NULL,
+    updated_at  REAL NOT NULL,
+    PRIMARY KEY (agent_id, scope)
+);
+
+INSERT OR IGNORE INTO _schema_version (version, applied_at)
+VALUES (3, 0.0);
+"#;
+
+// ---------------------------------------------------------------------------
 // Migration registry
 // ---------------------------------------------------------------------------
 
@@ -142,6 +176,11 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 2,
         description: "Agent specs table for the HTTP server registry",
         up_sql: SCHEMA_SQL_V2,
+    },
+    Migration {
+        version: 3,
+        description: "Agent memory table (cycle + execution scopes)",
+        up_sql: SCHEMA_SQL_V3,
     },
 ];
 

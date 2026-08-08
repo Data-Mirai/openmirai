@@ -1,0 +1,51 @@
+# Flujo 11 — La memoria sobrevive al reinicio
+#
+# Guarda en memoria lo que le manda el cliente y no hace nada más. Sirve para
+# comprobar, sin carreras, que la memoria de un agente sobrevive a que el
+# proceso muera: se ejecuta con una marca reconocible, se reinicia el motor y
+# se consulta GET /api/v1/agents/{id}/memory — tiene que seguir ahí.
+#
+# `persist: execution` es el modo cuya semántica declarada es "persiste a
+# través de todo": ciclos, stop/play y ejecuciones separadas. Antes eso valía
+# solo mientras el proceso viviera; ahora también entre reinicios.
+#
+# Es un agente managed a propósito: al no ciclar, nada pisa el valor guardado
+# entre la escritura y la lectura posterior al reinicio.
+
+name: 11-memoria-persistente
+version: v1
+description: "Guarda una marca en memoria para verificar que sobrevive al reinicio"
+
+inputs:
+  nota:
+    type: text
+    required: true
+    description: "Marca a guardar en la memoria del agente"
+
+graph:
+  memory:
+    persist: execution
+    keys:
+      nota_guardada: ""
+
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: recordar
+      tool_type: state/memory
+      config: {}
+
+    - id: responder
+      tool_type: output/response
+      config:
+        message: "nota-guardada"
+
+  edges:
+    - source: trigger
+      target: recordar
+      data_map:
+        nota_guardada: "trigger.payload.nota"
+
+    - source: recordar
+      target: responder

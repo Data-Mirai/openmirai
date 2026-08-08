@@ -21,9 +21,16 @@ use super::state::{AppState, ErrorResponse};
 /// Lives here rather than inside the `play` handler because startup needs the
 /// exact same callback: agents that were cycling when the process went down are
 /// rescheduled without going through an HTTP request.
+///
+/// `reanuda` marks a restart: the agent was already cycling, nobody stopped it,
+/// and its memory came back from disk. Without this the scheduler's first cycle
+/// would report `is_first_cycle_of_session = true` and `persist: cycle` would
+/// throw that memory away and start from the declared initial values — which is
+/// the right thing for a fresh `play`, and the wrong thing for a resume.
 pub(crate) fn build_cycle_callback(
     state: &AppState,
     spec: &AgentSpec,
+    reanuda: bool,
 ) -> crate::runtime::scheduler::CycleCallback {
     let app_state = state.clone();
     let agent_spec = spec.clone();
@@ -31,6 +38,8 @@ pub(crate) fn build_cycle_callback(
     std::sync::Arc::new(move |aid, cycle_num, is_first| {
         let s = app_state.clone();
         let sp = agent_spec.clone();
+        // Una reanudación no inaugura sesión: la de play siguió viva en disco.
+        let is_first = is_first && !reanuda;
         Box::pin(async move {
             let trigger_data = {
                 let mut td = HashMap::new();
@@ -80,10 +89,53 @@ pub async fn restore_from_store(state: &AppState) -> (usize, usize) {
     };
 
     let cargados = guardados.len();
+    let claves_declaradas: HashMap<String, HashMap<String, Value>> = guardados
+        .iter()
+        .filter_map(|(id, spec)| {
+            spec.graph
+                .memory
+                .as_ref()
+                .map(|m| (id.clone(), m.keys.clone()))
+        })
+        .collect();
+
     {
         let mut agents = state.agents.write().await;
         for (id, spec) in guardados {
             agents.insert(id, spec);
+        }
+    }
+
+    // Recalentar la memoria guardada: el resto del motor la lee del store en
+    // RAM, así que basta con dejarla ahí y nada más cambia. Sin esto un agente
+    // live volvería a ciclar pero sin recuerdos.
+    match store.load_all_memory().await {
+        Ok(filas) => {
+            for (id, scope, memoria) in filas {
+                // El filtro necesita las claves declaradas del agente; si el
+                // spec ya no está o no declara memoria, la fila quedó huérfana.
+                let declaradas = match claves_declaradas.get(&id) {
+                    Some(k) => k,
+                    None => continue,
+                };
+                match scope {
+                    crate::db::MemoryScope::Cycle => {
+                        state
+                            .memory_store
+                            .set_cycle_memory(&id, memoria, declaradas)
+                            .await
+                    }
+                    crate::db::MemoryScope::Execution => {
+                        state
+                            .memory_store
+                            .set_execution_memory(&id, memoria, declaradas)
+                            .await
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "cannot read stored agent memory — agents start from their initial values");
         }
     }
 
@@ -112,7 +164,8 @@ pub async fn restore_from_store(state: &AppState) -> (usize, usize) {
             }
         };
 
-        let callback = build_cycle_callback(state, &spec);
+        // reanuda = true: viene de disco, nadie lo detuvo.
+        let callback = build_cycle_callback(state, &spec, true);
         let on_error = match schedule.on_cycle_error {
             crate::core::agent_spec::CycleErrorMode::Continue => "continue",
             crate::core::agent_spec::CycleErrorMode::Stop => "stop",
@@ -458,6 +511,21 @@ pub(crate) async fn persist_memory_after_execution(
                 .set_execution_memory(agent_id, write_data, &mem_spec.keys)
                 .await;
         }
+    }
+
+    // Espejo durable de lo que quedó en RAM. Se relee el store en vez de
+    // reusar `write_data` para guardar exactamente lo mismo que verá la
+    // próxima ejecución: ya filtrado a las claves declaradas.
+    if let Some(scope) = crate::db::MemoryScope::from_persist_mode(mem_spec.persist) {
+        let vigente = match scope {
+            crate::db::MemoryScope::Cycle => {
+                app_state.memory_store.get_cycle_memory(agent_id).await
+            }
+            crate::db::MemoryScope::Execution => {
+                app_state.memory_store.get_execution_memory(agent_id).await
+            }
+        };
+        app_state.persist_memory(agent_id, scope, &vigente).await;
     }
 }
 

@@ -11,7 +11,9 @@ use crate::core::agent_spec::AgentSpec;
 use crate::core::context::LLMResource;
 use crate::core::graph::GraphDef;
 use crate::core::runner::{ExecutionResult, GraphRunner};
-use crate::db::{AgentStore, Repository, SessionRecord, SessionStatus, SqliteSessionRepo};
+use crate::db::{
+    AgentStore, MemoryScope, Repository, SessionRecord, SessionStatus, SqliteSessionRepo,
+};
 use crate::runtime::agent_memory_store::AgentMemoryStore;
 use crate::runtime::scheduler::Scheduler;
 use crate::sessions::{SessionManager, TmuxBackend};
@@ -130,6 +132,33 @@ impl AppState {
         if let Some(store) = &self.agent_store {
             if let Err(e) = store.set_playing(id, playing).await {
                 tracing::error!(agent_id = %id, error = %e, "cannot persist playing state");
+            }
+        }
+    }
+
+    /// Espeja la memoria de un agente a disco, para que sobreviva al reinicio.
+    ///
+    /// El mapa llega ya filtrado a las claves declaradas. Igual que con el
+    /// registro, un fallo de escritura se loguea y no rompe la ejecución: el
+    /// agente ya corrió y su memoria vive en RAM.
+    pub async fn persist_memory(
+        &self,
+        id: &str,
+        scope: MemoryScope,
+        memory: &HashMap<String, Value>,
+    ) {
+        if let Some(store) = &self.agent_store {
+            if let Err(e) = store.save_memory(id, scope, memory).await {
+                tracing::error!(agent_id = %id, scope = %scope.as_str(), error = %e, "cannot persist agent memory — it will be lost on restart");
+            }
+        }
+    }
+
+    /// Borra la memoria guardada de un agente. `None` borra todos los ámbitos.
+    pub async fn clear_persisted_memory(&self, id: &str, scope: Option<MemoryScope>) {
+        if let Some(store) = &self.agent_store {
+            if let Err(e) = store.clear_memory(id, scope).await {
+                tracing::error!(agent_id = %id, error = %e, "cannot clear persisted agent memory");
             }
         }
     }

@@ -10,7 +10,7 @@ Thanks for helping build OpenMirai — the open-source engine for **decentralize
 git clone https://github.com/Data-Mirai/openmirai
 cd openmirai
 cargo build --release          # builds engine + cli (binary: ./target/release/mirai)
-cargo test --workspace         # run the full suite (900 tests)
+cargo test --workspace         # run the full suite (906 tests)
 ./target/release/mirai run examples/hello-world.yaml
 ```
 

@@ -81,7 +81,7 @@ All CI gates are defined in `.github/workflows/ci.yml` and run on every `push` t
 - Commands:
   - `cargo build --workspace --all-features`
   - `cargo test --workspace --all-features`
-- Purpose: Verify all 900 tests pass on Linux and macOS
+- Purpose: Verify all 906 tests pass on Linux and macOS
 - Failure blocks merge
 
 ### CI Environment

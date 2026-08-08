@@ -11,6 +11,9 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
   Notes: specs are stored whole, as JSON, in a new `agent_specs` table (schema v2) — the v1 `agents` table models an agent as a reference to a row in `graphs`, which would drop inputs, outputs, schedule and memory declarations. Writes go through the blocking pool, since `rusqlite` is a blocking API. A storage failure is logged but never fails the request. A live agent whose `max_cycles` were already exhausted is still rescheduled after a restart, starting a fresh cycle count.
 
+- **Agent memory survives a restart.** `AgentMemoryStore` was RAM-only (its own docs said *"V1: in-memory only — resets on server restart"*), so a live agent came back after a restart and kept cycling, but with every key it declares in `graph.memory` reset to its initial value — `persist: execution`, whose stated contract is "persists across everything", did not survive the process that wrote it. Memory is now mirrored to the same SQLite file as agents and runs (schema v3, table `agent_memory`, one row per agent and scope) and reloaded into the in-memory store at startup. `persist: none` still stores nothing.
+
+  A restart is treated as a **resume**, not a new session: the rescheduled agent's first cycle no longer reports `is_first_cycle_of_session`, so `persist: cycle` keeps what it had instead of resetting. An explicit `stop` → `play` still resets it — that is what `play` means — and now clears the stored copy too, as do `DELETE /agents/{id}/memory` and deleting the agent.
 - **`DELETE /api/v1/agents/{id}`.** There was no way to retire an agent: the spec stayed in the registry forever and, once the registry became durable, a live one was rescheduled on every startup. Deleting stops the cycling first, then drops the spec from memory, from the database and its stored memory.
 
 ### Fixed

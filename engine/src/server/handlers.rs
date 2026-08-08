@@ -1269,8 +1269,13 @@ pub(crate) async fn play_agent(
 
     // Clear cycle memory on new play session (persist: cycle resets)
     state.memory_store.clear_cycle_memory(&id).await;
+    state
+        .clear_persisted_memory(&id, Some(crate::db::MemoryScope::Cycle))
+        .await;
 
-    let callback = super::helpers::build_cycle_callback(&state, &spec);
+    // reanuda = false: un play explícito sí inaugura sesión y reinicia la
+    // memoria de ciclo (el clear_cycle_memory de arriba).
+    let callback = super::helpers::build_cycle_callback(&state, &spec, false);
 
     state
         .scheduler
@@ -1366,6 +1371,7 @@ pub(crate) async fn delete_agent(
 
     // Sin initial_values: se borra, no se reinicia — el agente ya no existe.
     state.memory_store.clear_all_memory(&id, None).await;
+    state.clear_persisted_memory(&id, None).await;
 
     Ok(Json(json!({
         "id": id,
@@ -1434,6 +1440,9 @@ pub(crate) async fn clear_agent_memory(
         .memory_store
         .clear_all_memory(&id, initial_values.as_ref())
         .await;
+    // Sin esto el reinicio siguiente traería de vuelta lo que el cliente acaba
+    // de pedir borrar.
+    state.clear_persisted_memory(&id, None).await;
 
     Ok(Json(json!({
         "agent_id": id,

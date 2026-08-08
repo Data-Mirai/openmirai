@@ -11,15 +11,53 @@
 //! writes against a local file — microseconds — but blocking the runtime for
 //! them would still be wrong.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
+use serde_json::Value;
 
 use super::migrations::MIGRATIONS;
 use super::repositories::DbError;
-use crate::core::agent_spec::AgentSpec;
+use crate::core::agent_spec::{AgentSpec, MemoryPersistMode};
 use crate::utils::now_epoch;
+
+/// Which memory bucket a row belongs to. Mirrors [`MemoryPersistMode`], minus
+/// `None` — that mode never persists anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryScope {
+    /// Kept within a play session.
+    Cycle,
+    /// Kept across sessions, restarts and separate executions.
+    Execution,
+}
+
+impl MemoryScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryScope::Cycle => "cycle",
+            MemoryScope::Execution => "execution",
+        }
+    }
+
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "cycle" => Some(MemoryScope::Cycle),
+            "execution" => Some(MemoryScope::Execution),
+            _ => None,
+        }
+    }
+
+    /// The scope a persist mode writes to. `None` → nothing to persist.
+    pub fn from_persist_mode(mode: MemoryPersistMode) -> Option<Self> {
+        match mode {
+            MemoryPersistMode::None => None,
+            MemoryPersistMode::Cycle => Some(MemoryScope::Cycle),
+            MemoryPersistMode::Execution => Some(MemoryScope::Execution),
+        }
+    }
+}
 
 /// Durable registry of agent specs.
 ///
@@ -201,6 +239,109 @@ impl AgentStore {
         .await
     }
 
+    // -----------------------------------------------------------------------
+    // Memoria de agentes
+    // -----------------------------------------------------------------------
+
+    /// Store an agent's memory for a scope, replacing whatever was there.
+    ///
+    /// The map arrives already filtered to the keys the agent declares — this
+    /// only mirrors it.
+    pub async fn save_memory(
+        &self,
+        agent_id: &str,
+        scope: MemoryScope,
+        memory: &HashMap<String, Value>,
+    ) -> Result<(), DbError> {
+        let json = serde_json::to_string(memory)
+            .map_err(|e| DbError::SerializationError(format!("cannot serialize memory: {e}")))?;
+        let id = agent_id.to_string();
+        let scope = scope.as_str();
+        let now = now_epoch();
+
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO agent_memory (agent_id, scope, memory, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(agent_id, scope) DO UPDATE SET
+                     memory = excluded.memory,
+                     updated_at = excluded.updated_at",
+                params![id, scope, json, now],
+            )
+            .map_err(|e| DbError::ConnectionError(format!("cannot save memory: {e}")))?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Every stored memory row, as `(agent_id, scope, memory)`.
+    ///
+    /// Used at startup to warm the in-memory store. Rows that no longer
+    /// deserialize are skipped: bad memory must not stop the server from
+    /// booting, the agent just starts from its initial values.
+    #[allow(clippy::type_complexity)]
+    pub async fn load_all_memory(
+        &self,
+    ) -> Result<Vec<(String, MemoryScope, HashMap<String, Value>)>, DbError> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare("SELECT agent_id, scope, memory FROM agent_memory")
+                .map_err(|e| DbError::ConnectionError(format!("cannot prepare query: {e}")))?;
+
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| DbError::ConnectionError(format!("cannot read memory: {e}")))?;
+
+            let mut out = Vec::new();
+            for row in rows {
+                let (id, scope, json) =
+                    row.map_err(|e| DbError::ConnectionError(format!("cannot read row: {e}")))?;
+                let scope = match MemoryScope::from_str(&scope) {
+                    Some(s) => s,
+                    None => {
+                        tracing::warn!(agent_id = %id, scope = %scope, "skipping memory row with unknown scope");
+                        continue;
+                    }
+                };
+                match serde_json::from_str::<HashMap<String, Value>>(&json) {
+                    Ok(memory) => out.push((id, scope, memory)),
+                    Err(e) => {
+                        tracing::warn!(agent_id = %id, error = %e, "skipping unreadable agent memory");
+                    }
+                }
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    /// Drop stored memory. `None` clears every scope for that agent.
+    pub async fn clear_memory(
+        &self,
+        agent_id: &str,
+        scope: Option<MemoryScope>,
+    ) -> Result<(), DbError> {
+        let id = agent_id.to_string();
+        self.with_conn(move |conn| {
+            match scope {
+                Some(s) => conn.execute(
+                    "DELETE FROM agent_memory WHERE agent_id = ?1 AND scope = ?2",
+                    params![id, s.as_str()],
+                ),
+                None => conn.execute("DELETE FROM agent_memory WHERE agent_id = ?1", params![id]),
+            }
+            .map_err(|e| DbError::ConnectionError(format!("cannot clear memory: {e}")))?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Number of stored agents.
     pub async fn count(&self) -> Result<usize, DbError> {
         self.with_conn(move |conn| {
@@ -323,6 +464,140 @@ mod tests {
         let todos = store.load_all().await.unwrap();
         assert_eq!(todos.len(), 2, "los agentes no sobrevivieron");
         assert_eq!(store.playing_ids().await.unwrap(), vec!["a2".to_string()]);
+    }
+
+    // --- memoria de agentes -------------------------------------------------
+
+    fn memoria(clave: &str, valor: i64) -> HashMap<String, Value> {
+        let mut m = HashMap::new();
+        m.insert(clave.to_string(), serde_json::json!(valor));
+        m
+    }
+
+    #[tokio::test]
+    async fn guarda_y_recupera_memoria() {
+        let store = AgentStore::open(":memory:").unwrap();
+        store.upsert("a1", &spec("con-memoria")).await.unwrap();
+        store
+            .save_memory("a1", MemoryScope::Execution, &memoria("total", 7))
+            .await
+            .unwrap();
+
+        let filas = store.load_all_memory().await.unwrap();
+        assert_eq!(filas.len(), 1);
+        assert_eq!(filas[0].0, "a1");
+        assert_eq!(filas[0].1, MemoryScope::Execution);
+        assert_eq!(filas[0].2["total"], serde_json::json!(7));
+    }
+
+    #[tokio::test]
+    async fn los_ambitos_no_se_pisan() {
+        let store = AgentStore::open(":memory:").unwrap();
+        store
+            .save_memory("a1", MemoryScope::Cycle, &memoria("total", 1))
+            .await
+            .unwrap();
+        store
+            .save_memory("a1", MemoryScope::Execution, &memoria("total", 99))
+            .await
+            .unwrap();
+
+        let filas = store.load_all_memory().await.unwrap();
+        assert_eq!(filas.len(), 2, "cycle y execution son filas distintas");
+        let ciclo = filas.iter().find(|f| f.1 == MemoryScope::Cycle).unwrap();
+        let ejec = filas
+            .iter()
+            .find(|f| f.1 == MemoryScope::Execution)
+            .unwrap();
+        assert_eq!(ciclo.2["total"], serde_json::json!(1));
+        assert_eq!(ejec.2["total"], serde_json::json!(99));
+    }
+
+    #[tokio::test]
+    async fn guardar_reemplaza_el_mapa_entero() {
+        let store = AgentStore::open(":memory:").unwrap();
+        store
+            .save_memory("a1", MemoryScope::Cycle, &memoria("total", 1))
+            .await
+            .unwrap();
+        store
+            .save_memory("a1", MemoryScope::Cycle, &memoria("total", 2))
+            .await
+            .unwrap();
+
+        let filas = store.load_all_memory().await.unwrap();
+        assert_eq!(filas.len(), 1, "el upsert duplicó la fila");
+        assert_eq!(filas[0].2["total"], serde_json::json!(2));
+    }
+
+    #[tokio::test]
+    async fn borra_memoria_por_ambito_y_completa() {
+        let store = AgentStore::open(":memory:").unwrap();
+        for ambito in [MemoryScope::Cycle, MemoryScope::Execution] {
+            store
+                .save_memory("a1", ambito, &memoria("total", 5))
+                .await
+                .unwrap();
+        }
+
+        store
+            .clear_memory("a1", Some(MemoryScope::Cycle))
+            .await
+            .unwrap();
+        let filas = store.load_all_memory().await.unwrap();
+        assert_eq!(filas.len(), 1);
+        assert_eq!(filas[0].1, MemoryScope::Execution);
+
+        store.clear_memory("a1", None).await.unwrap();
+        assert!(store.load_all_memory().await.unwrap().is_empty());
+    }
+
+    /// Lo que pidió esta función: que la memoria no muera con el proceso.
+    #[tokio::test]
+    async fn la_memoria_sobrevive_a_reabrir_la_base() {
+        let dir = TempDir::new().unwrap();
+        let ruta = dir.path().join("memoria.db");
+        let ruta = ruta.to_str().unwrap();
+
+        {
+            let store = AgentStore::open(ruta).unwrap();
+            store.upsert("a1", &spec("live")).await.unwrap();
+            store
+                .save_memory("a1", MemoryScope::Cycle, &memoria("ultimo_ciclo", 42))
+                .await
+                .unwrap();
+        } // muere el proceso
+
+        let store = AgentStore::open(ruta).unwrap();
+        let filas = store.load_all_memory().await.unwrap();
+        assert_eq!(filas.len(), 1, "la memoria no sobrevivió");
+        assert_eq!(filas[0].2["ultimo_ciclo"], serde_json::json!(42));
+    }
+
+    #[tokio::test]
+    async fn una_memoria_ilegible_no_tumba_la_carga() {
+        let store = AgentStore::open(":memory:").unwrap();
+        store
+            .save_memory("bueno", MemoryScope::Cycle, &memoria("total", 1))
+            .await
+            .unwrap();
+        store
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO agent_memory (agent_id, scope, memory, updated_at)
+                     VALUES ('roto', 'cycle', '{no es json}', 0.0),
+                            ('raro', 'inventado', '{}', 0.0)",
+                    [],
+                )
+                .map_err(|e| DbError::ConnectionError(e.to_string()))?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let filas = store.load_all_memory().await.unwrap();
+        assert_eq!(filas.len(), 1, "las filas rotas debían saltearse");
+        assert_eq!(filas[0].0, "bueno");
     }
 
     #[tokio::test]

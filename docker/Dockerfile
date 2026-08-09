@@ -54,7 +54,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && /out/mirai version
 
 # ---------------------------------------------------------------------------
-# runtime — la imagen que se despliega
+# runtime — perfil `restricted` del contrato de runtime
+#
+# docs/infra/CONTAINER-RUNTIME-CONTRACT.md define dos perfiles. Este es el
+# acotado: motor, CA certificates y poco más. El contrato pide que `restricted`
+# no traiga shell ni `ps`; debian-slim siempre trae `sh`, así que cumplirlo del
+# todo pide una base distroless — anotado como divergencia en docker/README.md.
 # ---------------------------------------------------------------------------
 FROM debian:${DEBIAN_RELEASE}-slim AS runtime
 
@@ -68,32 +73,76 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git tmux \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /out/mirai /usr/local/bin/mirai
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# El contrato ubica el binario y los archivos inmutables en /app, que con
+# `read_only: true` queda de solo lectura sin permisos especiales.
+COPY --from=builder /out/mirai /app/mirai
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/mirai /app/entrypoint.sh \
+    && ln -s /app/mirai /usr/local/bin/mirai
 
 # Usuario sin privilegios. El motor expone system/bash y filesystem/*: correr
 # como root le daría a cualquier YAML control total del contenedor.
+#
+# Los directorios se crean con dueño `mirai` para que, al montar volúmenes
+# vacíos encima, Docker herede ese dueño y el proceso pueda escribir.
 RUN useradd --system --create-home --uid 10001 --shell /bin/bash mirai \
-    && mkdir -p /data /opt/openmirai/flows \
-    && chown -R mirai:mirai /data /opt/openmirai
+    && mkdir -p /data/openmirai /workspace /opt/openmirai/flows \
+    && chown -R mirai:mirai /data /workspace /opt/openmirai /home/mirai
 
-# /data es el workdir: las rutas relativas de filesystem/write_file caen acá,
-# que es el volumen persistente. /opt/openmirai/flows son los specs (read-only).
-WORKDIR /data
+# /workspace es el árbol de trabajo del contrato; /data/openmirai guarda la base.
+WORKDIR /workspace
 USER mirai
 
 ENV MIRAI_HOST=0.0.0.0 \
     MIRAI_PORT=3000 \
-    MIRAI_FLOWS_DIR=/opt/openmirai/flows
+    MIRAI_DB_PATH=/data/openmirai/engine.db \
+    MIRAI_FLOWS_DIR=/opt/openmirai/flows \
+    HOME=/home/mirai \
+    TMPDIR=/tmp
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
     CMD curl -fsS "http://127.0.0.1:${MIRAI_PORT}/health" || exit 1
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["serve"]
+
+# ---------------------------------------------------------------------------
+# runtime-full — perfil `full-trusted`, el que se despliega primero
+#
+# El contrato lo describe como la imagen inicial: shell y `ps`, Git y SSH,
+# Python y Node, navegador headless, tmux y Claude CLI, más clientes MCP por
+# stdio (que salen de npx). Pesa ~1 GB contra los ~200 MB del acotado; es el
+# precio de validar estabilidad antes que tamaño.
+# ---------------------------------------------------------------------------
+FROM runtime AS runtime-full
+
+USER root
+
+# procps          → `ps`, que necesita la herramienta system/process_list
+# openssh-client  → clonar y empujar por SSH con credenciales de repositorio
+# python3 / nodejs → runtimes del perfil; npx habilita los MCP por stdio
+# chromium        → navegador headless
+# fonts-liberation → sin fuentes, el navegador renderiza cuadrados
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        procps openssh-client python3 nodejs npm chromium fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+# Claude CLI. Va con ARG para poder clavar la versión una vez que la primera
+# build registre cuál resolvió, y para poder saltearlo si el registro de npm
+# no está disponible en el entorno de build.
+ARG INSTALL_CLAUDE_CLI=true
+ARG CLAUDE_CLI_VERSION=latest
+RUN if [ "$INSTALL_CLAUDE_CLI" = "true" ]; then \
+        npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" \
+        && npm cache clean --force; \
+    else \
+        echo "Claude CLI omitido por INSTALL_CLAUDE_CLI=false"; \
+    fi
+
+USER mirai
 
 # ---------------------------------------------------------------------------
 # tester — corre la suite e2e contra el runtime (no se despliega)

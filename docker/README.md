@@ -107,7 +107,7 @@ docker compose up -d engine
 | `docker/entrypoint.sh` | Traduce `MIRAI_HOST`/`MIRAI_PORT` a flags: `mirai serve` los lee solo por línea de comandos. |
 | `docker/smoke.sh` | Suite e2e contra la API HTTP. |
 | `docker/persistencia.sh` | Verifica que los agentes sobrevivan al reinicio (dos fases, con el reinicio en el medio). |
-| `docker/flows/` | Los once flujos de prueba. |
+| `docker/flows/` | Los doce flujos de prueba. |
 | `docker-compose.yml` | Servicios `engine`, `smoke` (perfil `test`) y `ollama` (perfil `llm-local`). |
 | `.dockerignore` | Contexto mínimo de build. |
 
@@ -154,6 +154,7 @@ cliente de la nube.
 | `09-subagente` | Composición de agentes. **Brecha: devuelve un placeholder.** |
 | `10-agente-live-continuo` | Ciclado sin `max_cycles` — el caso 24/7. Lo usa `persistencia.sh`: un agente acotado terminaría sus ciclos antes del reinicio y ya no correspondería relanzarlo. |
 | `11-memoria-persistente` | Guarda una marca y no hace nada más. Managed a propósito: nada la pisa entre la escritura y la lectura de después del reinicio, así que prueba sin carreras que la memoria sobrevive. |
+| `12-perfil-full-trusted` | Inventaría los binarios del perfil y sus versiones, que es lo que piden los acceptance tests de la nube. Contra el perfil acotado falla a propósito. |
 
 Más SSE (`/stream` emite el ciclo completo de eventos), autenticación
 (401 sin clave, `/health` público) y los endpoints `/sessions` y `/metrics`.
@@ -191,6 +192,42 @@ OPENMIRAI_URL=http://127.0.0.1:4321 MIRAI_API_KEY=... \
 
 Necesita `curl`, `jq` y `python3` con PyYAML — el endpoint `from-spec` recibe
 JSON, no YAML. La imagen `tester` ya los trae.
+
+---
+
+## Contrato de runtime
+
+`docs/infra/CONTAINER-RUNTIME-CONTRACT.md` —de la rama
+`docs/system-lifecycle-cloud-readiness`— se declara "the acceptance boundary for
+the future Dockerfile, Compose file, startup wrapper". El prototipo se escribió
+antes de que ese contrato existiera; esto es lo que cumple hoy y lo que no.
+
+**Cumple**
+
+| Requisito | Cómo |
+|---|---|
+| Rootfs de solo lectura | `read_only: true` + `tmpfs` acotado en `/tmp` (1 GiB) |
+| Proceso no-root | usuario `mirai`, uid 10001 |
+| Sin socket de Docker, PID del host, privilegios ni capabilities | `cap_drop: ALL`, `no-new-privileges` |
+| Binario e inmutables en `/app` | `COPY` a `/app/mirai`, enlazado en el PATH |
+| Base en `/data/openmirai/engine.db` | `MIRAI_DB_PATH` |
+| Montajes durables `/data`, `/workspace`, `/home/mirai` | tres volúmenes nombrados |
+| `HOME`, `TMPDIR`, `umask 077` | `ENV` de la imagen y el entrypoint |
+| Drenaje acotado de 120 s | `stop_grace_period` |
+| Límites de CPU, memoria, PIDs y descriptores | `deploy.resources` + `ulimits` |
+| Perfil `full-trusted` | target `runtime-full`: shell, `ps`, Git, SSH, Python, Node, Chromium, tmux y Claude CLI. El flujo 12 lo verifica sobre la imagen desplegada |
+| Publicación en interfaz local | `127.0.0.1` por defecto |
+
+**No cumple todavía**
+
+| Requisito | Estado |
+|---|---|
+| **Startup contract (8 verificaciones)** | Ninguna. El entrypoint traduce entorno a flags y nada más. Es la próxima tanda de trabajo. |
+| Logs estructurados a stdout | El motor no emite ninguno: sigue sin subscriber de `tracing`. No es del Dockerfile. |
+| Readiness más allá de `/health` | Falta sondear SQLite escribible, disco libre y conectividad de proveedores. |
+| 4 vCPU / 16 GiB | Este host tiene 4 núcleos y 7 GiB en total; el compose queda en 4 / 4 GiB. **Al desplegar en la VM hay que subirlo.** |
+| Perfil `restricted` sin shell | `debian-slim` siempre trae `sh`; cumplirlo exige una base distroless. |
+| `/run/secrets` | Sin Secret Manager local no tiene sentido montarlo. |
 
 ---
 

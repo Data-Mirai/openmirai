@@ -16,7 +16,11 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-MIRAI_BIN=/usr/local/bin/mirai
+# El contrato de runtime pide umask 077: lo que escriban las herramientas
+# filesystem/* y el navegador queda solo para el dueño del proceso.
+umask 077
+
+MIRAI_BIN=/app/mirai
 
 # ¿Está ya presente este flag en los argumentos?
 tiene_flag() {

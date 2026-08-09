@@ -16,7 +16,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: runtime
+      # Perfil `full-trusted` del contrato de runtime: es la imagen del primer
+      # deploy. Para el perfil acotado: target: runtime.
+      target: runtime-full
       args:
         # Identifica el build en /health y /version. El sha de git queda en
         # "unknown": .git no viaja al contexto de build.
@@ -38,11 +40,11 @@ services:
       - MIRAI_LLM_PROVIDER=${MIRAI_LLM_PROVIDER:-mock}
       - MIRAI_PORT=3000
       - MIRAI_HOST=0.0.0.0
-      # Base única en el volumen: guarda los runs (0.7.0) y el registro de
-      # agentes. Sin esto, el default es ~/.openmirai/engine.db dentro del
-      # contenedor, que muere con él: se pierden las ejecuciones y los agentes
-      # registrados, y los live dejan de ciclar sin que nadie los relance.
-      - MIRAI_DB_PATH=${MIRAI_DB_PATH:-/data/openmirai.db}
+      # Base única en el volumen: guarda los runs (0.7.0), el registro de
+      # agentes y su memoria. La ruta es la que fija el contrato de runtime.
+      # Sin esto, el default es ~/.openmirai/engine.db dentro del contenedor,
+      # que muere con él.
+      - MIRAI_DB_PATH=${MIRAI_DB_PATH:-/data/openmirai/engine.db}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - MIRAI_LLM_MODEL
       - ANTHROPIC_API_KEY
@@ -65,9 +67,13 @@ services:
     volumes:
       # Specs de agentes. Read-only: el motor los lee, no los escribe.
       - ./docker/flows:/opt/openmirai/flows:ro
-      # Volumen de trabajo. Es el WORKDIR del contenedor: lo que escriban las
-      # herramientas filesystem/* con rutas relativas cae acá.
-      - mirai-datos:/data
+      # Los tres montajes durables del contrato de runtime. Con el rootfs de
+      # solo lectura, son los únicos lugares donde el proceso puede escribir
+      # —junto con el tmpfs de /tmp—, así que la superficie escribible queda
+      # declarada y acotada.
+      - mirai-datos:/data              # base SQLite y metadata del runtime
+      - mirai-workspace:/workspace     # árboles de trabajo y artefactos
+      - mirai-home:/home/mirai         # estado de las CLI aprobadas
 
     restart: unless-stopped
 
@@ -76,17 +82,39 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Endurecimiento adicional, pendiente de validar en este prototipo: con
-    # `read_only: true` hay que dar tmpfs a /tmp (el motor usa tempfile) y
-    # revisar que git/bash no necesiten escribir en $HOME.
-    #   read_only: true
-    #   tmpfs: [/tmp]
+
+    # Rootfs inmutable. El contrato lo exige y es lo que impide que un YAML
+    # con system/bash modifique la imagen bajo los pies del proceso.
+    read_only: true
+    tmpfs:
+      # Efímero y acotado: sin límite, el scratch del navegador puede llenar
+      # la memoria del host. mode=1777 porque tmux crea ahí sus sockets.
+      - /tmp:size=1g,mode=1777
+    # El navegador headless muere con los 64 MB que Docker da por defecto.
+    shm_size: 512m
+
+    # El contrato pide un drenaje acotado de 120s: `docker stop` deja terminar
+    # las ejecuciones en vuelo en vez de cortarlas a los 10s del default.
+    stop_grace_period: 120s
+    # Límite explícito de descriptores. El de procesos va en deploy.resources
+    # porque compose rechaza `pids_limit` y `deploy.resources.limits.pids`
+    # juntos.
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 16384
 
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: 1G
+          # El contrato arranca en 4 vCPU / 16 GiB, pero este host tiene 4
+          # núcleos y 7 GiB en total: pedirle 16 lo dejaría sin arrancar. Al
+          # desplegar en la VM hay que subirlo a lo que dice el contrato.
+          cpus: "4.0"
+          memory: 4G
+          # Con navegador, tmux y sesiones de Claude, el default del host no es
+          # una política: acá queda declarado.
+          pids: 1024
 
     # El healthcheck viene del Dockerfile (curl a /health, que es público).
 
@@ -135,4 +163,6 @@ services:
 
 volumes:
   mirai-datos:
+  mirai-workspace:
+  mirai-home:
   ollama-modelos:

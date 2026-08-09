@@ -1,0 +1,57 @@
+# Flujo 12 — Inventario del perfil full-trusted
+#
+# docs/infra/CLOUD-ACCEPTANCE-TESTS.md pide comprobar que la imagen contenga
+# "mirai, shell, ps, Git, Python/Node, browser, tmux, Claude CLI y los binarios
+# MCP aprobados, en versiones registradas". Este flujo los busca y reporta sus
+# versiones para que queden como evidencia de release.
+#
+# Corre contra el motor por HTTP, así que verifica la imagen realmente
+# desplegada y no lo que dice el Dockerfile.
+#
+# Contra el perfil `restricted` (target: runtime) este flujo falla a propósito:
+# ahí varios de esos binarios no existen.
+
+name: 12-perfil-full-trusted
+version: v1
+description: "Inventaría los binarios del perfil full-trusted y sus versiones"
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+
+    - id: inventario
+      tool_type: system/bash
+      config:
+        timeout: 60
+        # Una línea por binario: "nombre=versión" o "nombre=FALTA".
+        command: |
+          ver() {
+            if command -v "$1" >/dev/null 2>&1; then
+              printf '%s=%s\n' "$1" "$($2 2>&1 | head -1 | tr -d '\r')"
+            else
+              printf '%s=FALTA\n' "$1"
+            fi
+          }
+          ver mirai    "mirai version"
+          ver bash     "bash --version"
+          ver ps       "ps --version"
+          ver git      "git --version"
+          ver ssh      "ssh -V"
+          ver python3  "python3 --version"
+          ver node     "node --version"
+          ver npx      "npx --version"
+          ver chromium "chromium --version"
+          ver tmux     "tmux -V"
+          ver claude   "claude --version"
+
+    - id: responder
+      tool_type: output/response
+      config:
+        format: json
+
+  edges:
+    - source: trigger
+      target: inventario
+    - source: inventario
+      target: responder

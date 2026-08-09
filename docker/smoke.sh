@@ -225,6 +225,26 @@ USUARIO=$(tail -n1 <<<"$SALIDA" | tr -d '[:space:]')
 [ "$USUARIO" != "root" ] && afirmar "07 el motor no corre como root" 0 "usuario: $USUARIO" \
                          || afirmar "07 el motor no corre como root" 1 "corre como root — cualquier YAML tendría el contenedor entero"
 
+# --- 12 inventario del perfil full-trusted ---
+# Los acceptance tests de la nube piden que la imagen traiga estos binarios en
+# versiones registradas. Contra el perfil acotado (target: runtime) este bloque
+# falla a propósito: ahí varios no existen.
+if [ "${PERFIL:-full-trusted}" = "full-trusted" ]; then
+    ID=$(registrar 12-perfil-full-trusted.yaml)
+    R=$(ejecutar "$ID")
+    EST=$(jq -r '.status // "?"' <<<"$R")
+    SALIDA=$(jq -r '.state.inventario.stdout // ""' <<<"$R")
+    FALTANTES=$(grep -c "=FALTA" <<<"$SALIDA" || true)
+
+    if [ "$EST" = "Completed" ] && [ "$FALTANTES" -eq 0 ]; then
+        afirmar "12 perfil full-trusted completo" 0 "$(grep -c '=' <<<"$SALIDA") binarios presentes"
+    else
+        afirmar "12 perfil full-trusted completo" 1 "faltan: $(grep '=FALTA' <<<"$SALIDA" | cut -d= -f1 | tr '\n' ' ')"
+    fi
+    # Las versiones van al log como evidencia de release, no como aserción.
+    printf "%s      %s%s\n" "$GRIS" "$(tr '\n' ' ' <<<"$SALIDA")" "$FIN"
+fi
+
 # --- 08 agente live: ciclado autónomo ---
 # El flujo declara interval_seconds 1 y max_cycles 3, y el primer ciclo sale
 # sin esperar: a los 5 segundos tienen que estar los tres.

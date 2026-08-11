@@ -4,6 +4,20 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## Unreleased
+
+### Docs
+- Added `SECURITY.md` with a GitHub Private Vulnerability Reporting disclosure path.
+- Added `PUBLICATION_POLICY.md` and `tools/check_publication_safety.sh`, wired into CI as a
+  required "public repository boundary" status check, plus a public-repository safety checklist
+  in the PR template.
+- Removed `docs/GAPS.md` (stale since v0.4.3); its still-open items (GAP-F/G/H/J/K) now live in
+  `docs/ROADMAP-PARITY.md` under "Gaps internos pendientes". Updated the two `docs/backend/RAG.md`
+  / `RAG.es.md` cross-references accordingly.
+- Removed the empty `docs/prd/` scaffold directory.
+
+---
+
 ## v0.7.0 (2026-08-06)
 
 Session orchestration, voice, large media, a visual Studio, and community contributions — the biggest release since 0.6. **The agent YAML spec and the HTTP API stay backward-compatible; the Rust crate API does not** — see Breaking below before upgrading a custom adapter.

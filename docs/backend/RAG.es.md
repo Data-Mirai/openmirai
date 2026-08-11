@@ -464,7 +464,7 @@ Esta es la ruta HTTP de extremo a extremo:
 
 ## Estado vs hoja de ruta
 
-`docs/GAPS.md` es histórico en v0.4.3. La versión actual referenciada por el resumen es v0.6.0, y `docs/ROADMAP-PARITY.md` es la fuente de estado actual.
+El seguimiento histórico de brechas abajo refleja el estado GAP-H/GAP-I de v0.4.3; `docs/ROADMAP-PARITY.md` es la fuente de estado actual (GAP-H se rastrea ahí bajo "Gaps internos pendientes").
 
 | Brecha | Estado Histórico | Reconciliación del Código Actual |
 | --- | --- | --- |
@@ -502,5 +502,4 @@ Ver también `../TESTS.md`.
 | [API.md](./API.md) | Referencia del endpoint `POST /api/v1/rag/search` |
 | [PRIMITIVES.md](./PRIMITIVES.md) | `LLMResource`/`embed`, `ExecutionContext`, `VectorResource` |
 | [STORAGE.md](../database/STORAGE.md) | Recursos de almacenamiento y vectoriales |
-| [GAPS.md](../GAPS.md) | GAP-H y GAP-I |
-| [ROADMAP-PARITY.md](../ROADMAP-PARITY.md) | Memoria semántica entre hilos GAP-005 |
+| [ROADMAP-PARITY.md](../ROADMAP-PARITY.md) | GAP-H embeddings reales, memoria semántica entre hilos GAP-005 |

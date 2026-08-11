@@ -462,7 +462,7 @@ This is the end-to-end HTTP path:
 
 ## Status vs roadmap
 
-`docs/GAPS.md` is historical at v0.4.3. The current version referenced by the brief is v0.6.0, and `docs/ROADMAP-PARITY.md` is the current status source.
+The historical gap tracking below reflects the v0.4.3 GAP-H/GAP-I status; `docs/ROADMAP-PARITY.md` is the current status source (GAP-H is tracked there under "Gaps internos pendientes").
 
 | Gap | Historical Status | Current Code Reconciliation |
 | --- | --- | --- |
@@ -500,5 +500,4 @@ See also `../TESTS.md`.
 | [API.md](./API.md) | `POST /api/v1/rag/search` endpoint reference |
 | [PRIMITIVES.md](./PRIMITIVES.md) | `LLMResource`/`embed`, `ExecutionContext`, `VectorResource` |
 | [STORAGE.md](../database/STORAGE.md) | Storage and vector resources |
-| [GAPS.md](../GAPS.md) | GAP-H and GAP-I |
-| [ROADMAP-PARITY.md](../ROADMAP-PARITY.md) | GAP-005 cross-thread semantic memory |
+| [ROADMAP-PARITY.md](../ROADMAP-PARITY.md) | GAP-H real embeddings, GAP-005 cross-thread semantic memory |

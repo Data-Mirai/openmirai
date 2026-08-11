@@ -186,6 +186,46 @@ def destino_por_defecto(ruta_audio: str) -> str:
         return str(Path.home() / "Documents" / "transcripts")
 
 
+def listar_carpetas(ruta: str) -> dict:
+    """Explorador de carpetas del disco DEL SERVIDOR.
+
+    El navegador no puede dar la ruta absoluta de una carpeta, así que en vez de
+    pelear con el sandbox se navega el filesystem desde aquí. Además es lo correcto
+    para la Rocola: el destino tiene que existir en la máquina que escribe el
+    archivo, no en la que hace clic.
+    """
+    base = Path(ruta).expanduser() if ruta else Path.home()
+    try:
+        base = base.resolve()
+        if not base.is_dir():
+            base = Path.home().resolve()
+    except OSError:
+        base = Path.home().resolve()
+
+    hijos = []
+    try:
+        for h in sorted(base.iterdir(), key=lambda x: x.name.lower()):
+            if h.name.startswith("."):
+                continue
+            try:
+                if h.is_dir():
+                    hijos.append({"nombre": h.name, "ruta": str(h)})
+            except OSError:
+                continue
+    except PermissionError:
+        return {"ruta": str(base), "padre": str(base.parent), "hijos": [],
+                "aviso": "sin permiso para leer esta carpeta"}
+    except OSError:
+        pass
+
+    atajos = [{"nombre": n, "ruta": str(Path.home() / d)}
+              for n, d in (("Escritorio", "Desktop"), ("Documentos", "Documents"),
+                           ("Descargas", "Downloads"), ("Inicio", ""))
+              if (Path.home() / d).is_dir()]
+    return {"ruta": str(base), "padre": str(base.parent) if base != base.parent else "",
+            "hijos": hijos[:400], "atajos": atajos}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, formato, *args):
         pass
@@ -211,6 +251,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._envia(200, p.read_bytes(), "text/html; charset=utf-8")
         if ruta == "/api/agentes":
             return self._json(200, {"agentes": catalogo(), "mirai": bool(binario_mirai())})
+        if ruta == "/api/carpetas":
+            q = parse_qs(urlparse(self.path).query)
+            return self._json(200, listar_carpetas(q.get("ruta", [""])[0]))
+        if ruta == "/api/crear-carpeta":
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                nueva = Path(q.get("ruta", [""])[0]).expanduser() / (q.get("nombre", [""])[0] or "nueva")
+                nueva.mkdir(parents=True, exist_ok=True)
+                return self._json(200, {"ruta": str(nueva)})
+            except OSError as ex:
+                return self._json(422, {"error": f"no pude crear la carpeta: {ex}"})
         if ruta == "/api/sugerir-salida":
             q = parse_qs(urlparse(self.path).query)
             return self._json(200, {"ruta": destino_por_defecto(q.get("audio", [""])[0])})
@@ -284,6 +335,58 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
             t0 = time.time()
+
+            # ---- streaming en vivo del paso a paso ----
+            # `system/bash` del engine usa wait_with_output(): captura TODO y no devuelve
+            # nada hasta que el comando termina. Para un workflow de minutos eso es una
+            # pantalla muda. Convención: si el agente declara una `salida`, escribe su
+            # progreso en `<salida>/_progreso.log` (con tee) y aquí se sigue ese archivo
+            # como haría `tail -f`, emitiendo cada línea nueva al navegador.
+            log_progreso = None
+            if isinstance(entradas.get("salida"), str) and entradas["salida"].strip():
+                try:
+                    carpeta = Path(entradas["salida"]).expanduser()
+                    carpeta.mkdir(parents=True, exist_ok=True)
+                    log_progreso = carpeta / "_progreso.log"
+                    log_progreso.write_text("", encoding="utf-8")   # arranca limpio
+                except OSError:
+                    log_progreso = None
+
+            corriendo = threading.Event()
+            corriendo.set()
+            candado_salida = threading.Lock()
+
+            def emite(obj) -> bool:
+                with candado_salida:
+                    try:
+                        self.wfile.write((json.dumps(obj, ensure_ascii=False) + "\n").encode())
+                        self.wfile.flush()
+                        return True
+                    except OSError:
+                        return False
+
+            def sigue_log():
+                pos = 0
+                while corriendo.is_set():
+                    time.sleep(0.35)
+                    try:
+                        if not log_progreso or not log_progreso.exists():
+                            continue
+                        with open(log_progreso, "r", encoding="utf-8", errors="ignore") as f:
+                            f.seek(pos)
+                            nuevas = f.read()
+                            pos = f.tell()
+                    except OSError:
+                        continue
+                    for ln in nuevas.splitlines():
+                        if ln.strip() and not emite({"vivo": sin_ansi(ln.rstrip())}):
+                            return
+
+            vigia = None
+            if log_progreso is not None:
+                vigia = threading.Thread(target=sigue_log, daemon=True)
+                vigia.start()
+
             proc = subprocess.Popen(cmd, cwd=str(RAIZ), stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1)
             crudo, en_json = [], False
@@ -296,21 +399,23 @@ class Handler(BaseHTTPRequestHandler):
                     # resultado se resume abajo, en el evento de cierre.
                     if not en_json and linea.startswith("{"):
                         en_json = True
-                        self.wfile.write((json.dumps({"linea": "· recogiendo el resultado…"},
-                                                     ensure_ascii=False) + "\n").encode())
-                        self.wfile.flush()
+                        emite({"linea": "· recogiendo el resultado…"})
                         continue
                     if en_json:
                         continue
-                    self.wfile.write((json.dumps({"linea": sin_ansi(linea.rstrip())},
-                                                 ensure_ascii=False) + "\n").encode())
-                    self.wfile.flush()
+                    if not emite({"linea": sin_ansi(linea.rstrip())}):
+                        break
                 proc.wait(timeout=15)
             except (BrokenPipeError, OSError):
                 proc.kill()
+                corriendo.clear()
                 return None
             except subprocess.TimeoutExpired:
                 proc.kill()
+            finally:
+                corriendo.clear()
+                if vigia:
+                    vigia.join(timeout=2)
 
             texto = "".join(crudo)
             i = texto.find("{")
@@ -346,11 +451,7 @@ class Handler(BaseHTTPRequestHandler):
                         "agente": ruta.stem, "ruta": str(ruta), "estado": estado,
                         "segundos": segs, "inputs": entradas, "resumen": resumen}
             anota(registro)
-            try:
-                self.wfile.write((json.dumps({"fin": registro}, ensure_ascii=False) + "\n").encode())
-                self.wfile.flush()
-            except OSError:
-                pass
+            emite({"fin": registro})
             return None
         except Exception as ex:                       # noqa: BLE001 — el hilo no muere
             try:

@@ -70,6 +70,37 @@ border-radius:99px;padding:7px 15px;margin-right:12px;font:inherit;font-size:13p
 font-weight:650;cursor:pointer;transition:background .18s}
 input.archivo::file-selector-button:hover{background:color-mix(in srgb,var(--det) 26%,transparent)}
 .pista{font-size:11.5px;color:var(--txt2);min-height:14px}
+/* explorador de carpetas */
+#exp{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;
+background:rgba(0,0,0,.45);backdrop-filter:blur(6px)}
+.exp-caja{width:min(560px,92vw);max-height:78vh;display:flex;flex-direction:column;
+background:color-mix(in srgb,var(--panel) 96%,transparent);border:1px solid var(--linea);
+border-radius:18px;padding:16px 18px;box-shadow:0 30px 80px rgba(0,0,0,.4)}
+.exp-cab{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.exp-cab b{font-size:15px}
+#expCerrar{background:none;border:none;color:var(--txt2);font-size:22px;cursor:pointer}
+.exp-atajos{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+.atajo{background:color-mix(in srgb,var(--det) 12%,transparent);color:var(--det);
+border:1px solid color-mix(in srgb,var(--det) 35%,transparent);border-radius:99px;
+padding:5px 12px;font-size:12px;cursor:pointer}
+.atajo:hover{background:color-mix(in srgb,var(--det) 22%,transparent)}
+.exp-ruta{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--txt2);
+padding:8px 11px;background:var(--bg);border:1px solid var(--linea);border-radius:9px;
+margin-bottom:9px;overflow-x:auto;white-space:nowrap}
+.exp-lista{flex:1;overflow-y:auto;display:grid;gap:2px;min-height:180px}
+.carp{text-align:left;background:none;border:1px solid transparent;border-radius:9px;
+padding:9px 12px;font-size:13.5px;color:var(--txt);cursor:pointer}
+.carp:hover{background:color-mix(in srgb,var(--txt) 6%,transparent)}
+.carp::before{content:"";display:inline-block;width:13px;height:10px;margin-right:9px;
+border-radius:2px 3px 3px 3px;background:color-mix(in srgb,var(--acento) 55%,transparent);
+vertical-align:-1px}
+.carp.arriba{color:var(--txt2)}
+.carp.arriba::before{display:none}
+.exp-pie{display:flex;gap:9px;justify-content:flex-end;margin-top:12px;padding-top:12px;
+border-top:1px solid var(--linea)}
+/* la consola distingue el trabajo real del andamiaje */
+.consola .vivo{color:#b9c6d8}
+.consola .texto{color:#e8eef7}
 .pista.ok{color:var(--ok)} .pista.mal{color:var(--mal)} .pista.sub{color:var(--det)}
 .acciones{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
 .btn{border:none;border-radius:99px;padding:11px 20px;font:inherit;font-size:14px;font-weight:650;
@@ -140,6 +171,22 @@ padding:6px 13px;font-size:12px;cursor:pointer}
   </main>
 </div>
 
+<div id="exp" hidden>
+  <div class="exp-caja">
+    <div class="exp-cab">
+      <b>Elegir carpeta de salida</b>
+      <button id="expCerrar" title="Cerrar">&times;</button>
+    </div>
+    <div class="exp-atajos" id="expAtajos"></div>
+    <div class="exp-ruta" id="expRuta"></div>
+    <div class="exp-lista" id="expLista"></div>
+    <div class="exp-pie">
+      <button class="btn sec" id="expNueva">Carpeta nueva</button>
+      <button class="btn pri" id="expUsar">Usar esta carpeta</button>
+    </div>
+  </div>
+</div>
+
 <script>
 var AGENTES=[], SEL=null;
 
@@ -193,11 +240,15 @@ function elige(a){
         w.innerHTML=cab+'<div class="ruta"><input type="file" class="archivo" data-para="'+esc(k)+'" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.mp4,.m4v">'
           +'<input data-k="'+esc(k)+'" value="" hidden></div><div class="pista" data-pista="'+esc(k)+'"></div>';
       }else if(t==='directory'){
-        w.innerHTML=cab+'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="se rellena sola al elegir el audio">';
+        w.innerHTML=cab+'<div class="ruta"><button type="button" class="btn sel" data-carpeta="'+esc(k)+'">Elegir carpeta</button>'
+          +'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="se rellena sola al elegir el audio"></div>';
       }else{
         w.innerHTML=cab+'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="'+esc(d.description||k)+'">';
       }
       campos.appendChild(w);
+    });
+    campos.querySelectorAll('[data-carpeta]').forEach(function(b){
+      b.onclick=function(){abreExplorador(campos.querySelector('input[data-k="'+b.dataset.carpeta+'"]'))};
     });
     campos.querySelectorAll('input.archivo').forEach(function(inp){
       inp.onchange=function(){
@@ -223,6 +274,50 @@ function elige(a){
   document.getElementById('formu').hidden=false;
   document.getElementById('consola').innerHTML='';
 }
+
+/* Explorador de carpetas: el navegador no puede dar rutas de carpeta, así que se
+   navega el disco DEL SERVIDOR — que además es el que va a escribir el archivo. */
+var EXP_DESTINO=null;
+function abreExplorador(destino){
+  EXP_DESTINO=destino;
+  document.getElementById('exp').hidden=false;
+  cargaCarpeta(destino.value||'');
+}
+function cargaCarpeta(ruta){
+  fetch('/api/carpetas?ruta='+encodeURIComponent(ruta)).then(function(r){return r.json()})
+   .then(function(j){
+     document.getElementById('expRuta').textContent=j.ruta;
+     var at=document.getElementById('expAtajos');at.innerHTML='';
+     (j.atajos||[]).forEach(function(a){
+       var b=document.createElement('button');b.className='atajo';b.textContent=a.nombre;
+       b.onclick=function(){cargaCarpeta(a.ruta)};at.appendChild(b);});
+     var c=document.getElementById('expLista');c.innerHTML='';
+     if(j.padre){
+       var up=document.createElement('button');up.className='carp arriba';up.textContent='· · subir un nivel';
+       up.onclick=function(){cargaCarpeta(j.padre)};c.appendChild(up);
+     }
+     if(!j.hijos.length){
+       var v=document.createElement('p');v.className='nota';
+       v.textContent=j.aviso||'No hay subcarpetas aquí. Puedes elegir esta misma.';c.appendChild(v);
+     }
+     j.hijos.forEach(function(h){
+       var b=document.createElement('button');b.className='carp';b.textContent=h.nombre;
+       b.onclick=function(){cargaCarpeta(h.ruta)};c.appendChild(b);});
+   }).catch(function(){});
+}
+document.getElementById('expCerrar').onclick=function(){document.getElementById('exp').hidden=true};
+document.getElementById('expUsar').onclick=function(){
+  if(EXP_DESTINO)EXP_DESTINO.value=document.getElementById('expRuta').textContent;
+  document.getElementById('exp').hidden=true;
+};
+document.getElementById('expNueva').onclick=function(){
+  var n=prompt('Nombre de la carpeta nueva:');if(!n)return;
+  fetch('/api/crear-carpeta?ruta='+encodeURIComponent(document.getElementById('expRuta').textContent)
+    +'&nombre='+encodeURIComponent(n))
+   .then(function(r){return r.json()}).then(function(j){if(j.ruta)cargaCarpeta(j.ruta)});
+};
+document.getElementById('exp').addEventListener('click',function(e){
+  if(e.target===this)this.hidden=true;});
 
 function linea(txt,clase){
   var c=document.getElementById('consola');
@@ -255,6 +350,14 @@ document.getElementById('correr').onclick=function(){
          ls.forEach(function(l){
            if(!l.trim())return;
            try{var o=JSON.parse(l);
+             if(o.vivo!==undefined){
+               // línea del propio trabajo (whisper transcribiendo, pyannote separando)
+               var v=o.vivo, cv='vivo';
+               if(/^\[\d\d:\d\d/.test(v))cv='texto';        // un segmento con timestamp
+               else if(/⚠️|error|Error/i.test(v))cv='err';
+               else if(/✅|Listo|Diarización activa/i.test(v))cv='ok';
+               linea(v,cv);
+             }
              if(o.linea!==undefined){
                var t=o.linea, cl='';
                if(/error|failed|abort|NO EXISTE|VACIO/i.test(t))cl='err';

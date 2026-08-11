@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="es" data-tema="noche">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenMirai Studio — ejecutar</title>
+<style>
+:root{
+  --bg:#0b0d12; --panel:#12161f; --linea:#222a37; --txt:#eef1f6; --txt2:#95a1b4;
+  --acento:#E94B02; --ok:#4f9d69; --mal:#e0344a; --det:#5AA9FF;
+  --curva:cubic-bezier(.32,.72,0,1);
+}
+:root[data-tema="dia"]{
+  --bg:#f4f6fa; --panel:#ffffff; --linea:#dfe4ec; --txt:#101826; --txt2:#5b6779;
+  --acento:#E94B02; --ok:#2f7d4f; --mal:#c0392b; --det:#2f7be6;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--txt);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+-webkit-font-smoothing:antialiased;min-height:100vh;
+background-image:radial-gradient(60vw 40vh at 85% -5%,color-mix(in srgb,var(--acento) 8%,transparent),transparent 70%),
+                 radial-gradient(50vw 40vh at 5% 100%,color-mix(in srgb,var(--det) 7%,transparent),transparent 70%)}
+.marco{display:grid;grid-template-columns:340px 1fr;min-height:100vh}
+/* ---- panel izquierdo: los agentes ---- */
+aside{border-right:1px solid var(--linea);padding:20px 16px;display:flex;flex-direction:column;gap:14px;
+background:color-mix(in srgb,var(--panel) 55%,transparent);backdrop-filter:blur(18px)}
+.marca{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;letter-spacing:-.02em}
+.marca i{width:9px;height:9px;border-radius:99px;background:var(--acento)}
+.buscar{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--linea);
+border-radius:99px;padding:9px 14px;font:inherit;font-size:13.5px;outline:none}
+.buscar:focus{border-color:var(--acento)}
+.grupo{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--txt2);
+font-weight:700;margin:8px 2px 2px}
+.lista{display:grid;gap:5px;overflow-y:auto;flex:1;padding-right:2px}
+.ag{text-align:left;background:none;border:1px solid transparent;border-radius:12px;padding:10px 12px;
+cursor:pointer;color:var(--txt);display:grid;gap:3px;transition:background .18s,border-color .18s,transform .18s var(--curva)}
+.ag:hover{background:color-mix(in srgb,var(--txt) 5%,transparent)}
+.ag:active{transform:scale(.99)}
+.ag.on{border-color:var(--acento);background:color-mix(in srgb,var(--acento) 10%,transparent)}
+.ag b{font-size:13.5px;font-weight:650}
+.ag span{font-size:11.5px;color:var(--txt2);display:flex;gap:7px;align-items:center}
+.tag{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;
+padding:2px 7px;border-radius:99px;border:1px solid currentColor}
+.tag.det{color:var(--det)} .tag.ia{color:var(--acento)}
+/* ---- panel derecho: ejecutar ---- */
+main{padding:26px 30px;display:flex;flex-direction:column;gap:18px;min-width:0}
+h1{font-size:clamp(20px,2.4vw,27px);letter-spacing:-.02em}
+.sub{color:var(--txt2);font-size:13.5px;max-width:80ch}
+.tarjeta{background:color-mix(in srgb,var(--panel) 70%,transparent);backdrop-filter:blur(16px);
+border:1px solid var(--linea);border-radius:16px;padding:18px 20px}
+.campos{display:grid;gap:12px;margin-top:4px}
+.campo{display:grid;gap:5px}
+.campo label{font-size:12px;color:var(--txt2);display:flex;gap:8px;align-items:center}
+.campo label b{color:var(--txt);font-weight:650;font-size:12.5px}
+.campo .req{color:var(--acento);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.campo input{background:var(--bg);color:var(--txt);border:1px solid var(--linea);border-radius:10px;
+padding:10px 13px;font:inherit;font-size:14px;outline:none;width:100%}
+.campo input:focus{border-color:var(--acento)}
+.acciones{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.btn{border:none;border-radius:99px;padding:11px 20px;font:inherit;font-size:14px;font-weight:650;
+cursor:pointer;transition:transform .18s var(--curva),filter .2s}
+.btn:active{transform:scale(.97)}
+.btn.pri{background:var(--acento);color:#fff}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.pri:disabled{opacity:.5;cursor:default}
+.btn.sec{background:none;color:var(--txt2);border:1px solid var(--linea)}
+.nota{font-size:12px;color:var(--txt2)}
+/* ---- la consola del paso a paso ---- */
+.consola{flex:1;min-height:220px;background:#07090d;border:1px solid var(--linea);border-radius:16px;
+padding:16px 18px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+font-size:12.5px;line-height:1.65;color:#c9d4e3;white-space:pre-wrap;word-break:break-word}
+:root[data-tema="dia"] .consola{background:#0d1117;color:#d5dee9}
+.consola .n{color:#7f8ea3}
+.consola .ok{color:#63c98a} .consola .err{color:#ff7a6b} .consola .det{color:#6fb4ff}
+.consola:empty::before{content:"Elige un agente, llena sus datos y pulsa Ejecutar. Aquí sale el paso a paso.";
+color:#5d6b7e;font-style:italic}
+/* ---- historial ---- */
+.hist{display:grid;gap:6px;max-height:26vh;overflow-y:auto}
+.h{display:flex;gap:10px;align-items:center;font-size:12.5px;padding:8px 11px;border-radius:10px;
+background:color-mix(in srgb,var(--txt) 4%,transparent);border:1px solid var(--linea)}
+.h .pt{width:8px;height:8px;border-radius:99px;flex:0 0 8px}
+.h .pt.ok{background:var(--ok)} .h .pt.mal{background:var(--mal)}
+.h b{font-weight:650;white-space:nowrap}
+.h span{color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.h em{color:var(--txt2);font-style:normal;font-size:11.5px;white-space:nowrap}
+.cab{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px}
+.cab h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--txt2);font-weight:700}
+#tema{background:none;border:1px solid var(--linea);color:var(--txt2);border-radius:99px;
+padding:6px 13px;font-size:12px;cursor:pointer}
+@media(max-width:900px){.marco{grid-template-columns:1fr}aside{border-right:none;border-bottom:1px solid var(--linea)}
+.lista{max-height:32vh}}
+</style>
+</head>
+<body>
+<div class="marco">
+  <aside>
+    <div class="marca"><i></i>OpenMirai Studio</div>
+    <input id="q" class="buscar" placeholder="Buscar agente…" autocomplete="off">
+    <div id="lista" class="lista"></div>
+    <button id="tema">Modo día</button>
+  </aside>
+
+  <main>
+    <div>
+      <h1 id="titulo">Elige un agente</h1>
+      <p class="sub" id="desc">Los marcados <b style="color:var(--det)">DETERMINISTA</b> corren sin IA:
+      mismos pasos, mismo resultado, sin cuota ni internet.</p>
+    </div>
+
+    <div class="tarjeta" id="formu" hidden>
+      <div class="cab"><h2>Datos de entrada</h2><span class="nota" id="ruta"></span></div>
+      <div class="campos" id="campos"></div>
+      <div class="acciones">
+        <button class="btn pri" id="correr">Ejecutar</button>
+        <span class="nota" id="estado"></span>
+      </div>
+    </div>
+
+    <div class="consola" id="consola"></div>
+
+    <div class="tarjeta">
+      <div class="cab"><h2>Ejecuciones</h2><span class="nota">reales, guardadas en disco</span></div>
+      <div class="hist" id="hist"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+var AGENTES=[], SEL=null;
+
+function esc(t){var d=document.createElement('div');d.textContent=t==null?'':t;return d.innerHTML}
+
+function pintaLista(filtro){
+  var cont=document.getElementById('lista');cont.innerHTML='';
+  var f=(filtro||'').toLowerCase().trim();
+  var vis=AGENTES.filter(function(a){
+    return !f || (a.id+' '+a.descripcion+' '+a.fuente).toLowerCase().indexOf(f)>=0;});
+  var det=vis.filter(function(a){return !a.usa_ia}), ia=vis.filter(function(a){return a.usa_ia});
+  [['Sin IA — deterministas',det],['Con IA',ia]].forEach(function(par){
+    if(!par[1].length)return;
+    var t=document.createElement('div');t.className='grupo';t.textContent=par[0]+' ('+par[1].length+')';
+    cont.appendChild(t);
+    par[1].forEach(function(a){
+      var b=document.createElement('button');b.className='ag'+(SEL&&SEL.ruta===a.ruta?' on':'');
+      b.innerHTML='<b>'+esc(a.id)+'</b><span><i class="tag '+(a.usa_ia?'ia">IA':'det">DETERMINISTA')+'</i>'+esc(a.fuente)+'</span>';
+      b.onclick=function(){elige(a)};
+      cont.appendChild(b);
+    });
+  });
+}
+
+function elige(a){
+  SEL=a;pintaLista(document.getElementById('q').value);
+  document.getElementById('titulo').textContent=a.id;
+  document.getElementById('desc').textContent=a.descripcion||'(sin descripción)';
+  document.getElementById('ruta').textContent=a.ruta;
+  var campos=document.getElementById('campos');campos.innerHTML='';
+  var claves=Object.keys(a.inputs||{});
+  if(!claves.length){
+    campos.innerHTML='<p class="nota">Este agente no declara entradas.</p>';
+  }else{
+    claves.forEach(function(k){
+      var d=a.inputs[k]||{};
+      var w=document.createElement('div');w.className='campo';
+      w.innerHTML='<label><b>'+esc(k)+'</b>'+(d.required?'<span class="req">obligatorio</span>':'')
+        +'<span>'+esc(d.description||'')+'</span></label>'
+        +'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="'+esc(d.description||k)+'">';
+      campos.appendChild(w);
+    });
+  }
+  document.getElementById('formu').hidden=false;
+  document.getElementById('consola').innerHTML='';
+}
+
+function linea(txt,clase){
+  var c=document.getElementById('consola');
+  var s=document.createElement('span');if(clase)s.className=clase;
+  s.textContent=txt+'\n';c.appendChild(s);c.scrollTop=c.scrollHeight;
+}
+
+document.getElementById('correr').onclick=function(){
+  if(!SEL)return;
+  var btn=this, inputs={};
+  document.querySelectorAll('#campos input').forEach(function(i){
+    if(i.value!=='')inputs[i.dataset.k]=i.value;});
+  var faltan=Object.keys(SEL.inputs||{}).filter(function(k){
+    return SEL.inputs[k].required && !inputs[k];});
+  if(faltan.length){document.getElementById('estado').textContent='Falta: '+faltan.join(', ');return}
+  btn.disabled=true;document.getElementById('estado').textContent='corriendo…';
+  document.getElementById('consola').innerHTML='';
+  linea('$ mirai run '+SEL.ruta,'n');
+  var t0=Date.now();
+  fetch('/api/ejecutar',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ruta:SEL.ruta,inputs:inputs})})
+   .then(function(r){
+     if(!r.ok)return r.json().then(function(j){throw new Error(j.error||'falló')});
+     var lec=r.body.getReader(),dec=new TextDecoder(),resto='';
+     function paso(){
+       return lec.read().then(function(x){
+         if(x.done)return;
+         resto+=dec.decode(x.value,{stream:true});
+         var ls=resto.split('\n');resto=ls.pop();
+         ls.forEach(function(l){
+           if(!l.trim())return;
+           try{var o=JSON.parse(l);
+             if(o.linea!==undefined){
+               var t=o.linea, cl='';
+               if(/error|failed|abort|NO EXISTE|VACIO/i.test(t))cl='err';
+               else if(/Completed|OK|✅|hablantes:/i.test(t))cl='ok';
+               else if(/Determinista/i.test(t))cl='det';
+               linea(t,cl);
+             }
+             if(o.fin){
+               var s=o.fin.estado==='completed'?'ok':'err';
+               linea('— '+o.fin.estado.toUpperCase()+' en '+o.fin.segundos+'s',s);
+               cargaHist();
+             }
+           }catch(e){}
+         });
+         return paso();
+       });
+     }
+     return paso();
+   })
+   .catch(function(e){linea('ERROR: '+e.message,'err')})
+   .finally(function(){
+     btn.disabled=false;
+     document.getElementById('estado').textContent='listo en '+Math.round((Date.now()-t0)/1000)+'s';
+   });
+};
+
+function cargaHist(){
+  fetch('/api/ejecuciones').then(function(r){return r.json()}).then(function(j){
+    var c=document.getElementById('hist');c.innerHTML='';
+    if(!j.ejecuciones.length){c.innerHTML='<p class="nota">Todavía no has corrido nada desde aquí.</p>';return}
+    j.ejecuciones.forEach(function(e){
+      var d=document.createElement('div');d.className='h';
+      d.innerHTML='<i class="pt '+(e.estado==='completed'?'ok':'mal')+'"></i>'
+        +'<b>'+esc(e.agente)+'</b><span>'+esc((e.resumen||'').split('\n')[0])+'</span>'
+        +'<em>'+esc(e.segundos)+'s · '+esc((e.ts||'').replace('T',' ').slice(5,16))+'</em>';
+      c.appendChild(d);
+    });
+  }).catch(function(){});
+}
+
+document.getElementById('q').addEventListener('input',function(){pintaLista(this.value)});
+document.getElementById('tema').onclick=function(){
+  var r=document.documentElement, d=r.getAttribute('data-tema')==='dia';
+  r.setAttribute('data-tema',d?'noche':'dia');
+  this.textContent=d?'Modo día':'Modo noche';
+  try{localStorage.setItem('studio-tema',r.getAttribute('data-tema'))}catch(e){}
+};
+try{var g=localStorage.getItem('studio-tema');
+  if(g){document.documentElement.setAttribute('data-tema',g);
+    document.getElementById('tema').textContent=g==='dia'?'Modo noche':'Modo día';}}catch(e){}
+
+fetch('/api/agentes').then(function(r){return r.json()}).then(function(j){
+  AGENTES=j.agentes||[];pintaLista('');
+  if(!j.mirai)linea('AVISO: no encontré el binario `mirai`. Compílalo con: cargo build --release','err');
+});
+cargaHist();
+</script>
+</body>
+</html>

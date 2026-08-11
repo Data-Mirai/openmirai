@@ -248,28 +248,6 @@ async fn run_agent(args: &[String]) {
         openmirai_engine::benchmark::enable(bench_path);
     }
 
-    // Show provider info
-    eprintln!(
-        "{}LLM: {provider}/{model}{}{}",
-        colors::DIM,
-        if benchmark_enabled {
-            " [benchmark]"
-        } else {
-            ""
-        },
-        colors::RESET
-    );
-
-    // PRD-014: preflight — ensure the provider/model is ready, guide if not.
-    if !run_preflight(&provider, &model, &api_key, &base_url).await {
-        eprintln!(
-            "{}Run aborted: provider not ready. Run `mirai doctor` for the full check.{}",
-            colors::RED,
-            colors::RESET
-        );
-        process::exit(1);
-    }
-
     // Load agent spec
     let spec = match AgentSpec::from_file(path) {
         Ok(s) => s,
@@ -282,6 +260,35 @@ async fn run_agent(args: &[String]) {
             process::exit(1);
         }
     };
+
+    // Un workflow SIN nodos de IA no necesita proveedor: es un programa determinista
+    // paso a paso. Antes el preflight corría ANTES de leer el YAML y abortaba un grafo
+    // de puro `system/bash` exigiendo un modelo — la dependencia de IA era del CLI, no
+    // del agente. Ahora el requisito lo declara el grafo.
+    let usa_ia = spec.needs_llm();
+    if usa_ia {
+        eprintln!(
+            "{}LLM: {provider}/{model}{}{}",
+            colors::DIM,
+            if benchmark_enabled { " [benchmark]" } else { "" },
+            colors::RESET
+        );
+        // PRD-014: preflight — ensure the provider/model is ready, guide if not.
+        if !run_preflight(&provider, &model, &api_key, &base_url).await {
+            eprintln!(
+                "{}Run aborted: provider not ready. Run `mirai doctor` for the full check.{}",
+                colors::RED,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    } else {
+        eprintln!(
+            "{}Determinista: este agente no usa IA — sin proveedor{}",
+            colors::DIM,
+            colors::RESET
+        );
+    }
 
     // PRD-008: Reject live agents — they must be started with `mirai play`
     if spec.agent_type == openmirai_engine::AgentType::Live {

@@ -524,6 +524,30 @@ fn default_spec_version() -> String {
 }
 
 impl AgentSpec {
+    /// Whether this agent needs an LLM provider at all.
+    ///
+    /// A graph made of `system/bash`, `filesystem/*` and `logic/*` is a deterministic
+    /// program: same inputs, same steps, same output. Requiring a model to run it makes
+    /// the whole pipeline hostage to a quota that has nothing to do with the work.
+    /// Only these tool families actually talk to a model.
+    pub fn needs_llm(&self) -> bool {
+        const IA: [&str; 6] = [
+            "ai/llm_call",
+            "ai/transcribe",
+            "ai/embeddings",
+            "ai/image_edit",
+            "ai/tts",
+            "ai/claude_code",
+        ];
+        // `agent/run_agent` may call a sub-agent that uses AI; treat it as needing one.
+        self.graph
+            .nodes
+            .iter()
+            .any(|n| IA.contains(&n.tool_type.as_str()) || n.tool_type == "agent/run_agent")
+            || self.system_prompt.is_some()
+            || self.soul.is_some()
+    }
+
     /// Auto-generate IDs for edges with empty `id` (FEAT-034 / API-02).
     pub fn auto_generate_edge_ids(&mut self) {
         let mut pair_counts: HashMap<String, usize> = HashMap::new();

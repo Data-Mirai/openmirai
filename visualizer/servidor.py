@@ -165,31 +165,25 @@ def anota(entrada: dict) -> None:
         pass
 
 
-def elegir_nativo(tipo: str, titulo: str = "") -> str | None:
-    """Abre el selector de archivos de macOS y devuelve la ruta ABSOLUTA.
+# Carpeta donde aterrizan los archivos que el navegador sube. Vive en el disco del
+# SERVIDOR a propósito: cuando Studio corra en la Rocola y el equipo entre por SSH,
+# el archivo tiene que llegar a la máquina que lo va a procesar, no quedarse en la
+# laptop de quien lo eligió.
+SUBIDAS = VIS / "subidas"
 
-    El navegador no puede darla: un <input type=file> entrega el nombre y un blob,
-    nunca la ruta real — es una restricción de seguridad correcta. Pero el servidor
-    corre en la misma máquina que el usuario, así que puede pedirle al sistema que
-    abra su propio diálogo. Resultado: un botón "Seleccionar" que se comporta como
-    en cualquier app nativa, sin que el usuario escriba rutas a mano.
+
+def destino_por_defecto(ruta_audio: str) -> str:
+    """Dónde escribir si el usuario no dice nada: al lado del audio, en `transcripts/`.
+
+    Elegir carpeta a mano es el paso que más fricción metía y el que menos decisión
+    real tiene: el 90% de las veces uno quiere el resultado junto al original.
     """
-    verbo = "choose folder" if tipo == "carpeta" else "choose file"
-    prompt = titulo or ("Elige la carpeta de salida" if tipo == "carpeta" else "Elige el archivo")
-    guion = (
-        f'try\n'
-        f'  set elegido to ({verbo} with prompt "{prompt}")\n'
-        f'  return POSIX path of elegido\n'
-        f'on error number -128\n'
-        f'  return ""\n'
-        f'end try'
-    )
     try:
-        r = subprocess.run(["osascript", "-e", guion], capture_output=True, text=True, timeout=180)
-        ruta = (r.stdout or "").strip()
-        return ruta.rstrip("/") if ruta else None
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+        p = Path(ruta_audio)
+        base = p.parent if p.parent.name != SUBIDAS.name else Path.home() / "Documents"
+        return str(base / "transcripts")
+    except Exception:                                     # noqa: BLE001
+        return str(Path.home() / "Documents" / "transcripts")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -217,11 +211,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._envia(200, p.read_bytes(), "text/html; charset=utf-8")
         if ruta == "/api/agentes":
             return self._json(200, {"agentes": catalogo(), "mirai": bool(binario_mirai())})
-        if ruta == "/api/elegir":
+        if ruta == "/api/sugerir-salida":
             q = parse_qs(urlparse(self.path).query)
-            tipo = q.get("tipo", ["archivo"])[0]
-            elegido = elegir_nativo(tipo, q.get("titulo", [""])[0])
-            return self._json(200, {"ruta": elegido or "", "cancelado": not elegido})
+            return self._json(200, {"ruta": destino_por_defecto(q.get("audio", [""])[0])})
         if ruta == "/api/ejecuciones":
             return self._json(200, {"ejecuciones": ejecuciones()})
         if ruta == "/api/agente":
@@ -234,7 +226,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            if urlparse(self.path).path != "/api/ejecutar":
+            ruta_post = urlparse(self.path).path
+            if ruta_post == "/api/subir":
+                # El navegador manda el archivo tal cual en el cuerpo; el nombre viaja
+                # en una cabecera. Sin multipart: una dependencia menos y el streaming
+                # a disco es directo, que importa con audios de cientos de megas.
+                nombre = self.headers.get("X-Nombre") or "audio"
+                nombre = re.sub(r"[^A-Za-z0-9._-]", "_", Path(nombre).name)[:120] or "audio"
+                largo = int(self.headers.get("Content-Length") or 0)
+                if largo <= 0:
+                    return self._json(400, {"error": "archivo vacío"})
+                SUBIDAS.mkdir(parents=True, exist_ok=True)
+                destino = SUBIDAS / nombre
+                escrito = 0
+                with open(destino, "wb") as f:
+                    while escrito < largo:
+                        trozo = self.rfile.read(min(1 << 20, largo - escrito))
+                        if not trozo:
+                            break
+                        f.write(trozo)
+                        escrito += len(trozo)
+                if escrito < largo:
+                    destino.unlink(missing_ok=True)
+                    return self._json(400, {"error": "la subida se cortó"})
+                return self._json(200, {"ruta": str(destino), "bytes": escrito,
+                                        "sugerencia_salida": destino_por_defecto(str(destino))})
+            if ruta_post != "/api/ejecutar":
                 return self._json(404, {"error": "no existe"})
             largo = int(self.headers.get("Content-Length") or 0)
             if largo <= 0 or largo > MAX_CUERPO:

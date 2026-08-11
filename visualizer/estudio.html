@@ -61,11 +61,16 @@ padding:10px 13px;font:inherit;font-size:14px;outline:none;width:100%;cursor:poi
 .ruta{display:flex;gap:9px;align-items:center}
 .ruta input{flex:1;min-width:0;cursor:default;color:var(--txt2);font-size:13px}
 .ruta input:not([value=""]){color:var(--txt)}
-.btn.sel{background:color-mix(in srgb,var(--det) 14%,transparent);color:var(--det);
-border:1px solid color-mix(in srgb,var(--det) 45%,transparent);white-space:nowrap;
-padding:10px 16px;font-size:13.5px}
-.btn.sel:hover{background:color-mix(in srgb,var(--det) 22%,transparent)}
-.btn.sel:disabled{opacity:.6;cursor:default}
+input.archivo{flex:1;min-width:0;background:var(--bg);color:var(--txt);
+border:1px dashed color-mix(in srgb,var(--det) 55%,transparent);border-radius:10px;
+padding:11px 13px;font:inherit;font-size:13.5px;cursor:pointer}
+input.archivo::file-selector-button{background:color-mix(in srgb,var(--det) 16%,transparent);
+color:var(--det);border:1px solid color-mix(in srgb,var(--det) 45%,transparent);
+border-radius:99px;padding:7px 15px;margin-right:12px;font:inherit;font-size:13px;
+font-weight:650;cursor:pointer;transition:background .18s}
+input.archivo::file-selector-button:hover{background:color-mix(in srgb,var(--det) 26%,transparent)}
+.pista{font-size:11.5px;color:var(--txt2);min-height:14px}
+.pista.ok{color:var(--ok)} .pista.mal{color:var(--mal)} .pista.sub{color:var(--det)}
 .acciones{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
 .btn{border:none;border-radius:99px;padding:11px 20px;font:inherit;font-size:14px;font-weight:650;
 cursor:pointer;transition:transform .18s var(--curva),filter .2s}
@@ -180,27 +185,38 @@ function elige(a){
         if(!ops.length)ops=[d.default||''];
         w.innerHTML=cab+'<select data-k="'+esc(k)+'">'+ops.map(function(o){
           return '<option'+(o===(d.default||'')?' selected':'')+'>'+esc(o)+'</option>';}).join('')+'</select>';
-      }else if(t==='file'||t==='directory'){
-        // el botón abre el diálogo NATIVO de macOS (el servidor lo dispara): la ruta
-        // absoluta llega sola, sin que nadie la escriba ni la pegue
-        w.innerHTML=cab+'<div class="ruta"><button type="button" class="btn sel" data-pick="'+(t==='directory'?'carpeta':'archivo')+'" data-k="'+esc(k)+'">'
-          +(t==='directory'?'Elegir carpeta':'Elegir archivo')+'</button>'
-          +'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="sin elegir" readonly></div>';
+      }else if(t==='file'){
+        // El selector de toda la vida del navegador. El archivo se SUBE al servidor:
+        // es la única forma en que una página conoce el contenido, y además es lo
+        // correcto cuando el servidor corre en otra máquina (la Rocola por SSH) —
+        // el audio tiene que llegar a quien lo procesa.
+        w.innerHTML=cab+'<div class="ruta"><input type="file" class="archivo" data-para="'+esc(k)+'" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.mp4,.m4v">'
+          +'<input data-k="'+esc(k)+'" value="" hidden></div><div class="pista" data-pista="'+esc(k)+'"></div>';
+      }else if(t==='directory'){
+        w.innerHTML=cab+'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="se rellena sola al elegir el audio">';
       }else{
         w.innerHTML=cab+'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="'+esc(d.description||k)+'">';
       }
       campos.appendChild(w);
     });
-    campos.querySelectorAll('[data-pick]').forEach(function(b){
-      b.onclick=function(){
-        var destino=campos.querySelector('input[data-k="'+b.dataset.k+'"]');
-        b.disabled=true;var antes=b.textContent;b.textContent='eligiendo…';
-        fetch('/api/elegir?tipo='+b.dataset.pick+'&titulo='+encodeURIComponent(
-          b.dataset.pick==='carpeta'?'Dónde guardar el transcript':'Elige el audio de la reunión'))
+    campos.querySelectorAll('input.archivo').forEach(function(inp){
+      inp.onchange=function(){
+        var f=inp.files&&inp.files[0];if(!f)return;
+        var oculto=campos.querySelector('input[data-k="'+inp.dataset.para+'"]');
+        var pista=campos.querySelector('[data-pista="'+inp.dataset.para+'"]');
+        var mb=(f.size/1048576).toFixed(1);
+        pista.textContent='subiendo '+f.name+' ('+mb+' MB)…';pista.className='pista sub';
+        fetch('/api/subir',{method:'POST',headers:{'X-Nombre':encodeURIComponent(f.name)
+          .replace(/%[0-9A-F]{2}/g,'_')},body:f})
          .then(function(r){return r.json()})
-         .then(function(j){if(j.ruta){destino.value=j.ruta;destino.title=j.ruta;}})
-         .catch(function(){})
-         .finally(function(){b.disabled=false;b.textContent=antes;});
+         .then(function(j){
+           if(j.error)throw new Error(j.error);
+           oculto.value=j.ruta;
+           pista.textContent=f.name+' · '+mb+' MB · listo';pista.className='pista ok';
+           var sal=campos.querySelector('input[data-k="salida"]');
+           if(sal&&!sal.value&&j.sugerencia_salida)sal.value=j.sugerencia_salida;
+         })
+         .catch(function(e){pista.textContent='no se pudo subir: '+e.message;pista.className='pista mal';});
       };
     });
   }

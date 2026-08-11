@@ -77,7 +77,8 @@ def _lee_yaml_min(texto: str) -> dict:
             campo = re.match(r"^  (\w+):\s*$", linea)
             if campo:
                 actual = campo.group(1)
-                datos["inputs"][actual] = {"required": False, "default": "", "description": ""}
+                datos["inputs"][actual] = {"required": False, "default": "",
+                                           "description": "", "type": "text", "opciones": ""}
                 continue
             if actual:
                 prop = re.match(r"^    (\w+):\s*(.+)$", linea)
@@ -85,6 +86,10 @@ def _lee_yaml_min(texto: str) -> dict:
                     clave, valor = prop.group(1), prop.group(2).strip().strip("\"'")
                     if clave == "required":
                         datos["inputs"][actual]["required"] = valor == "true"
+                    elif clave == "options":
+                        datos["inputs"][actual]["opciones"] = " | ".join(
+                            v.strip().strip('"\'') for v in
+                            valor.strip("[]").split(",") if v.strip())
                     elif clave in ("default", "description", "type"):
                         datos["inputs"][actual][clave] = valor
     return datos
@@ -160,6 +165,33 @@ def anota(entrada: dict) -> None:
         pass
 
 
+def elegir_nativo(tipo: str, titulo: str = "") -> str | None:
+    """Abre el selector de archivos de macOS y devuelve la ruta ABSOLUTA.
+
+    El navegador no puede darla: un <input type=file> entrega el nombre y un blob,
+    nunca la ruta real — es una restricción de seguridad correcta. Pero el servidor
+    corre en la misma máquina que el usuario, así que puede pedirle al sistema que
+    abra su propio diálogo. Resultado: un botón "Seleccionar" que se comporta como
+    en cualquier app nativa, sin que el usuario escriba rutas a mano.
+    """
+    verbo = "choose folder" if tipo == "carpeta" else "choose file"
+    prompt = titulo or ("Elige la carpeta de salida" if tipo == "carpeta" else "Elige el archivo")
+    guion = (
+        f'try\n'
+        f'  set elegido to ({verbo} with prompt "{prompt}")\n'
+        f'  return POSIX path of elegido\n'
+        f'on error number -128\n'
+        f'  return ""\n'
+        f'end try'
+    )
+    try:
+        r = subprocess.run(["osascript", "-e", guion], capture_output=True, text=True, timeout=180)
+        ruta = (r.stdout or "").strip()
+        return ruta.rstrip("/") if ruta else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, formato, *args):
         pass
@@ -185,6 +217,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._envia(200, p.read_bytes(), "text/html; charset=utf-8")
         if ruta == "/api/agentes":
             return self._json(200, {"agentes": catalogo(), "mirai": bool(binario_mirai())})
+        if ruta == "/api/elegir":
+            q = parse_qs(urlparse(self.path).query)
+            tipo = q.get("tipo", ["archivo"])[0]
+            elegido = elegir_nativo(tipo, q.get("titulo", [""])[0])
+            return self._json(200, {"ruta": elegido or "", "cancelado": not elegido})
         if ruta == "/api/ejecuciones":
             return self._json(200, {"ejecuciones": ejecuciones()})
         if ruta == "/api/agente":

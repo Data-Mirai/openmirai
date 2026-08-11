@@ -55,7 +55,17 @@ border:1px solid var(--linea);border-radius:16px;padding:18px 20px}
 .campo .req{color:var(--acento);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
 .campo input{background:var(--bg);color:var(--txt);border:1px solid var(--linea);border-radius:10px;
 padding:10px 13px;font:inherit;font-size:14px;outline:none;width:100%}
-.campo input:focus{border-color:var(--acento)}
+.campo input:focus,.campo select:focus{border-color:var(--acento)}
+.campo select{background:var(--bg);color:var(--txt);border:1px solid var(--linea);border-radius:10px;
+padding:10px 13px;font:inherit;font-size:14px;outline:none;width:100%;cursor:pointer}
+.ruta{display:flex;gap:9px;align-items:center}
+.ruta input{flex:1;min-width:0;cursor:default;color:var(--txt2);font-size:13px}
+.ruta input:not([value=""]){color:var(--txt)}
+.btn.sel{background:color-mix(in srgb,var(--det) 14%,transparent);color:var(--det);
+border:1px solid color-mix(in srgb,var(--det) 45%,transparent);white-space:nowrap;
+padding:10px 16px;font-size:13.5px}
+.btn.sel:hover{background:color-mix(in srgb,var(--det) 22%,transparent)}
+.btn.sel:disabled{opacity:.6;cursor:default}
 .acciones{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
 .btn{border:none;border-radius:99px;padding:11px 20px;font:inherit;font-size:14px;font-weight:650;
 cursor:pointer;transition:transform .18s var(--curva),filter .2s}
@@ -160,12 +170,38 @@ function elige(a){
     campos.innerHTML='<p class="nota">Este agente no declara entradas.</p>';
   }else{
     claves.forEach(function(k){
-      var d=a.inputs[k]||{};
+      var d=a.inputs[k]||{}, t=d.type||'text';
       var w=document.createElement('div');w.className='campo';
-      w.innerHTML='<label><b>'+esc(k)+'</b>'+(d.required?'<span class="req">obligatorio</span>':'')
-        +'<span>'+esc(d.description||'')+'</span></label>'
-        +'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="'+esc(d.description||k)+'">';
+      var cab='<label><b>'+esc(k)+'</b>'+(d.required?'<span class="req">obligatorio</span>':'')
+        +'<span>'+esc(d.description||'')+'</span></label>';
+      if(t==='choice'){
+        // desplegable: escribir "es" a mano es una oportunidad de escribirlo mal
+        var ops=(d.opciones||'').split('|').map(function(x){return x.trim()}).filter(Boolean);
+        if(!ops.length)ops=[d.default||''];
+        w.innerHTML=cab+'<select data-k="'+esc(k)+'">'+ops.map(function(o){
+          return '<option'+(o===(d.default||'')?' selected':'')+'>'+esc(o)+'</option>';}).join('')+'</select>';
+      }else if(t==='file'||t==='directory'){
+        // el botón abre el diálogo NATIVO de macOS (el servidor lo dispara): la ruta
+        // absoluta llega sola, sin que nadie la escriba ni la pegue
+        w.innerHTML=cab+'<div class="ruta"><button type="button" class="btn sel" data-pick="'+(t==='directory'?'carpeta':'archivo')+'" data-k="'+esc(k)+'">'
+          +(t==='directory'?'Elegir carpeta':'Elegir archivo')+'</button>'
+          +'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="sin elegir" readonly></div>';
+      }else{
+        w.innerHTML=cab+'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="'+esc(d.description||k)+'">';
+      }
       campos.appendChild(w);
+    });
+    campos.querySelectorAll('[data-pick]').forEach(function(b){
+      b.onclick=function(){
+        var destino=campos.querySelector('input[data-k="'+b.dataset.k+'"]');
+        b.disabled=true;var antes=b.textContent;b.textContent='eligiendo…';
+        fetch('/api/elegir?tipo='+b.dataset.pick+'&titulo='+encodeURIComponent(
+          b.dataset.pick==='carpeta'?'Dónde guardar el transcript':'Elige el audio de la reunión'))
+         .then(function(r){return r.json()})
+         .then(function(j){if(j.ruta){destino.value=j.ruta;destino.title=j.ruta;}})
+         .catch(function(){})
+         .finally(function(){b.disabled=false;b.textContent=antes;});
+      };
     });
   }
   document.getElementById('formu').hidden=false;
@@ -181,7 +217,7 @@ function linea(txt,clase){
 document.getElementById('correr').onclick=function(){
   if(!SEL)return;
   var btn=this, inputs={};
-  document.querySelectorAll('#campos input').forEach(function(i){
+  document.querySelectorAll('#campos input,#campos select').forEach(function(i){
     if(i.value!=='')inputs[i.dataset.k]=i.value;});
   var faltan=Object.keys(SEL.inputs||{}).filter(function(k){
     return SEL.inputs[k].required && !inputs[k];});

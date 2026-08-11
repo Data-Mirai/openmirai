@@ -353,7 +353,15 @@ pub enum InputType {
     Number,
     Boolean,
     Json,
+    /// A path to an existing file. A host UI should offer a file picker.
     File,
+    /// A path to a directory (usually an output folder). A host UI should offer a
+    /// folder picker: making the user type a path by hand is how you get typos in
+    /// the one field that decides where the work lands.
+    Directory,
+    /// One value out of a fixed list, declared in `options`. A host UI should offer
+    /// a dropdown — free text on a closed set is an error waiting to happen.
+    Choice,
 }
 
 impl InputType {
@@ -364,7 +372,7 @@ impl InputType {
             InputType::Number => value.is_number(),
             InputType::Boolean => value.is_boolean(),
             InputType::Json => value.is_object() || value.is_array(),
-            InputType::File => value.is_string(),
+            InputType::File | InputType::Directory | InputType::Choice => value.is_string(),
         }
     }
 
@@ -376,6 +384,8 @@ impl InputType {
             InputType::Boolean => "boolean",
             InputType::Json => "json",
             InputType::File => "file",
+            InputType::Directory => "directory",
+            InputType::Choice => "choice",
         }
     }
 }
@@ -397,6 +407,9 @@ pub struct InputFieldSpec {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<serde_json::Value>,
+    /// Allowed values when `field_type` is `choice`. Ignored otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
 }
 
 /// Describes a single output field in spec.outputs (declarative — not enforced at runtime v1).
@@ -1128,6 +1141,7 @@ graph:
                 required: true,
                 description: "Pregunta".to_string(),
                 default: None,
+                options: vec![],
             },
         );
         schema.insert(
@@ -1137,6 +1151,7 @@ graph:
                 required: false,
                 description: "Contexto".to_string(),
                 default: Some(serde_json::json!("default ctx")),
+                options: vec![],
             },
         );
 
@@ -1158,6 +1173,7 @@ graph:
                 required: true,
                 description: "Pregunta del usuario".to_string(),
                 default: None,
+                options: vec![],
             },
         );
 
@@ -1179,6 +1195,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
 
@@ -1202,6 +1219,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
 
@@ -1224,6 +1242,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
         schema.insert(
@@ -1233,6 +1252,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
 

@@ -144,8 +144,8 @@ pub fn ensure_hook_script(base: &Path) -> Result<PathBuf, SessionError> {
 // ---------------------------------------------------------------------------
 
 /// The Atlassian (Jira + Confluence) OFFICIAL remote MCP server. HTTP transport
-/// with OAuth 2.1 handled by the CLI. Already proven in the `back-to-my-center`
-/// project. This is the demo "real arm": a worker with this server can operate
+/// with OAuth 2.1 handled by the CLI. This is the demo "real arm": a worker
+/// with this server can operate
 /// Jira, and each call pulses the visualizer via the `mcp__.*` matcher.
 pub const ATLASSIAN_MCP_URL: &str = "https://mcp.atlassian.com/v1/mcp/authv2";
 

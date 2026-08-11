@@ -61,14 +61,14 @@ padding:10px 13px;font:inherit;font-size:14px;outline:none;width:100%;cursor:poi
 .ruta{display:flex;gap:9px;align-items:center}
 .ruta input{flex:1;min-width:0;cursor:default;color:var(--txt2);font-size:13px}
 .ruta input:not([value=""]){color:var(--txt)}
-input.archivo{flex:1;min-width:0;background:var(--bg);color:var(--txt);
-border:1px dashed color-mix(in srgb,var(--det) 55%,transparent);border-radius:10px;
-padding:11px 13px;font:inherit;font-size:13.5px;cursor:pointer}
-input.archivo::file-selector-button{background:color-mix(in srgb,var(--det) 16%,transparent);
-color:var(--det);border:1px solid color-mix(in srgb,var(--det) 45%,transparent);
-border-radius:99px;padding:7px 15px;margin-right:12px;font:inherit;font-size:13px;
-font-weight:650;cursor:pointer;transition:background .18s}
-input.archivo::file-selector-button:hover{background:color-mix(in srgb,var(--det) 26%,transparent)}
+/* El <input type=file> nativo se esconde: su botón "Choose File" viene con el estilo
+   y el idioma de Chrome, y al lado de nuestro botón de carpeta parecían dos features
+   distintas. Se dispara con .click() desde el nuestro. */
+.btn.sel{background:color-mix(in srgb,var(--det) 14%,transparent);color:var(--det);
+border:1px solid color-mix(in srgb,var(--det) 45%,transparent);white-space:nowrap;
+padding:11px 18px;font-size:13.5px;font-weight:650}
+.btn.sel:hover{background:color-mix(in srgb,var(--det) 24%,transparent)}
+.btn.sel:active{transform:scale(.97)}
 .pista{font-size:11.5px;color:var(--txt2);min-height:14px}
 /* explorador de carpetas */
 #exp{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;
@@ -237,8 +237,11 @@ function elige(a){
         // es la única forma en que una página conoce el contenido, y además es lo
         // correcto cuando el servidor corre en otra máquina (la Rocola por SSH) —
         // el audio tiene que llegar a quien lo procesa.
-        w.innerHTML=cab+'<div class="ruta"><input type="file" class="archivo" data-para="'+esc(k)+'" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.mp4,.m4v">'
-          +'<input data-k="'+esc(k)+'" value="" hidden></div><div class="pista" data-pista="'+esc(k)+'"></div>';
+        w.innerHTML=cab+'<div class="ruta">'
+          +'<button type="button" class="btn sel" data-abrearchivo="'+esc(k)+'">Elegir archivo</button>'
+          +'<input data-k="'+esc(k)+'" value="" placeholder="sin elegir" readonly>'
+          +'<input type="file" class="archivo" data-para="'+esc(k)+'" hidden accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac,.mp4,.m4v">'
+          +'</div><div class="pista" data-pista="'+esc(k)+'"></div>';
       }else if(t==='directory'){
         w.innerHTML=cab+'<div class="ruta"><button type="button" class="btn sel" data-carpeta="'+esc(k)+'">Elegir carpeta</button>'
           +'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="se rellena sola al elegir el audio"></div>';
@@ -246,6 +249,10 @@ function elige(a){
         w.innerHTML=cab+'<input data-k="'+esc(k)+'" value="'+esc(d.default||'')+'" placeholder="'+esc(d.description||k)+'">';
       }
       campos.appendChild(w);
+    });
+    campos.querySelectorAll('[data-abrearchivo]').forEach(function(b){
+      b.onclick=function(){
+        campos.querySelector('input.archivo[data-para="'+b.dataset.abrearchivo+'"]').click();};
     });
     campos.querySelectorAll('[data-carpeta]').forEach(function(b){
       b.onclick=function(){abreExplorador(campos.querySelector('input[data-k="'+b.dataset.carpeta+'"]'))};
@@ -262,8 +269,12 @@ function elige(a){
          .then(function(r){return r.json()})
          .then(function(j){
            if(j.error)throw new Error(j.error);
-           oculto.value=j.ruta;
-           pista.textContent=f.name+' · '+mb+' MB · listo';pista.className='pista ok';
+           // en pantalla el nombre del archivo; la ruta donde el servidor lo guardó es
+           // detalle de implementación y no aporta nada a quien está eligiendo
+           oculto.value=f.name;
+           oculto.dataset.ruta=j.ruta;
+           oculto.title=j.ruta;
+           pista.textContent=mb+' MB · subido, listo para procesar';pista.className='pista ok';
            var sal=campos.querySelector('input[data-k="salida"]');
            if(sal&&!sal.value&&j.sugerencia_salida)sal.value=j.sugerencia_salida;
          })
@@ -329,7 +340,9 @@ document.getElementById('correr').onclick=function(){
   if(!SEL)return;
   var btn=this, inputs={};
   document.querySelectorAll('#campos input,#campos select').forEach(function(i){
-    if(i.value!=='')inputs[i.dataset.k]=i.value;});
+    if(i.type==='file'||!i.dataset.k)return;
+    var v=i.dataset.ruta||i.value;      // los archivos mandan la ruta, no el nombre visible
+    if(v!=='')inputs[i.dataset.k]=v;});
   var faltan=Object.keys(SEL.inputs||{}).filter(function(k){
     return SEL.inputs[k].required && !inputs[k];});
   if(faltan.length){document.getElementById('estado').textContent='Falta: '+faltan.join(', ');return}

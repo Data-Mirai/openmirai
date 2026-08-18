@@ -18,6 +18,7 @@ use crate::core::events::{EventEmitter, EventType};
 use crate::core::graph::{ComparisonOp, EdgeCondition, GraphDef, NodeDef};
 use crate::core::state::SharedState;
 use crate::core::well_known as wk;
+use crate::core::well_known::STRICT_PREFIX;
 
 use super::helpers::{compare_numbers, now_ts, run_hook_with_timeout};
 use super::traits::{CheckpointCallback, HookHandler, ToolExecutor};
@@ -284,7 +285,7 @@ impl GraphRunner {
     ///    c. On success → record, advance cursor (fan-out or sequential).
     ///    d. On failure → apply failure mode (stop / skip / route-to-error).
     /// 4. Call on_graph_end hook, emit completed, return result.
-    async fn run_from(
+    pub(crate) async fn run_from(
         &self,
         graph: &GraphDef,
         context: &dyn ExecutionContext,
@@ -305,6 +306,10 @@ impl GraphRunner {
             .collect();
         let mut current_idx: Option<usize> = node_idx.get(entry_node_id).copied();
         let session_id = context.session_id().to_string();
+        // Where the walk died — the node(s) whose value has to justify a
+        // `Completed` under `strict_completion` (PRD-022). Normally one node;
+        // several only when the cursor dies right after a terminal fan-out.
+        let mut ended_at: Vec<String> = vec![entry_node_id.to_string()];
 
         // Phase 1: Start
         self.emit_graph_started(graph, &session_id, entry_node_id, &mut transcript);
@@ -320,6 +325,7 @@ impl GraphRunner {
         while let Some(idx) = current_idx {
             let node = &graph.nodes[idx];
             let node_id = node.id.as_str();
+            ended_at = vec![node_id.to_string()];
 
             // --- Interrupts ---
             // Cancelación cooperativa: se mira ANTES de ejecutar nada, o sea
@@ -452,6 +458,7 @@ impl GraphRunner {
                         &mut transcript,
                         &mut step,
                         &node_idx,
+                        &mut ended_at,
                     )
                     .await?
                 }
@@ -487,7 +494,15 @@ impl GraphRunner {
 
         // Phase 3: Finalize
         Ok(self
-            .finalize_graph_execution(graph, context, &session_id, state, trace, transcript)
+            .finalize_graph_execution(
+                graph,
+                context,
+                &session_id,
+                state,
+                trace,
+                transcript,
+                &ended_at,
+            )
             .await)
     }
 
@@ -737,6 +752,7 @@ impl GraphRunner {
         transcript: &mut Vec<TranscriptEntry>,
         step: &mut u32,
         node_idx: &HashMap<&str, usize>,
+        ended_at: &mut Vec<String>,
     ) -> Result<Option<usize>, RunnerError> {
         let node_id = node.id.as_str();
 
@@ -808,7 +824,12 @@ impl GraphRunner {
                 .await?;
             trace.extend(fo_trace);
             transcript.extend(fo_transcript);
-            let join_id = self.find_fanout_join(&next_nodes, graph);
+            let join_id = graph.common_unconditional_successor(&next_nodes);
+            // Without a join the walk stops here: the branches, not this node,
+            // are where the run actually ended.
+            if join_id.is_none() {
+                *ended_at = next_nodes.clone();
+            }
             self.save_checkpoint(session_id, *step, node_id, state, join_id.as_deref(), trace)
                 .await;
             Ok(join_id
@@ -1042,6 +1063,87 @@ impl GraphRunner {
         }
     }
 
+    /// Why this run must not be signed off as `Completed` (PRD-022, layer 2).
+    ///
+    /// Only called when the graph declares `strict_completion`. Rules run in
+    /// order of how much they explain: a swallowed error beats "ended with no
+    /// value", because the error IS the reason there is no value.
+    ///
+    /// - **R2** — a trace entry carrying an error that never became the result:
+    ///   `on_failure: skip`, a `route_to_error` that matched no error edge, or
+    ///   a fan-out branch that failed while the walk went on.
+    /// - **R3** — the walk died on a node that still had somewhere to go.
+    ///   Layer 1 (S1) rejects that shape at load time; this is the net below.
+    /// - **R1** — the run ended without producing a value.
+    ///
+    /// The `strict_completion:` prefix is the stable, greppable surface for
+    /// whoever operates a fleet — it is part of the contract, not decoration.
+    fn strict_violation(
+        &self,
+        graph: &GraphDef,
+        state: &SharedState,
+        trace: &[TraceEntry],
+        ended_at: &[String],
+    ) -> Option<String> {
+        // R2 — an error nobody answered for.
+        if let Some(entry) = trace.iter().find(|t| t.error.is_some()) {
+            let cause = entry.error.as_deref().unwrap_or("unknown error");
+            let node_id = &entry.node_id;
+            // The error sitting in the node's own output is the signature of
+            // `route_to_error` finding no error edge to route to.
+            let error_is_the_output = state
+                .get(node_id)
+                .is_some_and(|out| out.contains_key(wk::ERROR_FIELD));
+            let msg = if matches!(entry.status, TraceStatus::Skipped) {
+                format!("node '{node_id}' failed and was skipped — {cause}")
+            } else if error_is_the_output {
+                format!("node '{node_id}' routed to error but no error edge matched — {cause}")
+            } else {
+                format!("node '{node_id}' failed and the run carried on — {cause}")
+            };
+            return Some(format!("{STRICT_PREFIX}{msg}"));
+        }
+
+        for node_id in ended_at {
+            // R3 — dead end at runtime: it had exits, none of them was taken.
+            let outgoing = graph.outgoing_edges(node_id);
+            if !outgoing.is_empty() {
+                return Some(format!(
+                    "{STRICT_PREFIX}run ended at node '{node_id}' but none of its {} outgoing edges matched",
+                    outgoing.len()
+                ));
+            }
+
+            // R1 — nothing to show for it.
+            let produced_value = state
+                .get(node_id)
+                .is_some_and(|out| out.values().any(|v| !v.is_null()));
+            if !produced_value {
+                return Some(format!(
+                    "{STRICT_PREFIX}run ended at node '{node_id}' with no value"
+                ));
+            }
+        }
+
+        None
+    }
+
+    /// Last word to the stream: the walk is over and this is how it went.
+    fn stream_graph_finished(
+        &self,
+        status: ExecutionStatus,
+        state: &SharedState,
+        trace: &[TraceEntry],
+    ) {
+        self.stream_event(crate::streaming::StreamEvent::GraphCompleted {
+            status: format!("{status:?}"),
+            total_duration_ms: trace.iter().map(|t| t.duration_ms).sum(),
+            nodes_executed: trace.len(),
+            output: serde_json::to_value(state.snapshot()).unwrap_or(serde_json::Value::Null),
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn finalize_graph_execution(
         &self,
         graph: &GraphDef,
@@ -1050,10 +1152,30 @@ impl GraphRunner {
         state: SharedState,
         trace: Vec<TraceEntry>,
         mut transcript: Vec<TranscriptEntry>,
+        ended_at: &[String],
     ) -> ExecutionResult {
         if let Some(ref hook) = self.hook_handler {
             let _ = run_hook_with_timeout(hook.on_graph_end(graph, &state, context)).await;
         }
+
+        // PRD-022: the only place a `Completed` is born — so the only place
+        // that has to earn it.
+        if graph.strict_completion {
+            if let Some(error) = self.strict_violation(graph, &state, &trace, ended_at) {
+                warn!(session_id = %session_id, error = %error, "strict_completion violated — run reported as failed");
+                transcript.push(TranscriptEntry {
+                    entry_type: wk::TRANSCRIPT_ERROR.to_string(),
+                    message: error.clone(),
+                    timestamp: now_ts(),
+                    node_id: ended_at.first().cloned(),
+                    metadata: HashMap::new(),
+                });
+                self.emit_event(EventType::SessionFailed, session_id, None, HashMap::new());
+                self.stream_graph_finished(ExecutionStatus::Failed, &state, &trace);
+                return self.make_failed_result(state, trace, transcript, error);
+            }
+        }
+
         transcript.push(TranscriptEntry {
             entry_type: wk::TRANSCRIPT_COMPLETED.to_string(),
             message: format!("Execution completed ({} blocks)", trace.len()),
@@ -1067,13 +1189,7 @@ impl GraphRunner {
             None,
             HashMap::new(),
         );
-        let total_ms: u64 = trace.iter().map(|t| t.duration_ms).sum();
-        self.stream_event(crate::streaming::StreamEvent::GraphCompleted {
-            status: format!("{:?}", ExecutionStatus::Completed),
-            total_duration_ms: total_ms,
-            nodes_executed: trace.len(),
-            output: serde_json::to_value(state.snapshot()).unwrap_or(serde_json::Value::Null),
-        });
+        self.stream_graph_finished(ExecutionStatus::Completed, &state, &trace);
         info!(session_id = %session_id, nodes_executed = trace.len(), "graph execution completed");
         ExecutionResult {
             status: ExecutionStatus::Completed,
@@ -1418,38 +1534,6 @@ impl GraphRunner {
         self.emit_event(EventType::BlockCompleted, session_id, None, HashMap::new());
 
         Ok((trace_entries, transcript_entries))
-    }
-
-    /// Find the join node after a fan-out: the common successor of all
-    /// parallel nodes. Returns None if they don't converge.
-    fn find_fanout_join(&self, parallel_node_ids: &[String], graph: &GraphDef) -> Option<String> {
-        if parallel_node_ids.is_empty() {
-            return None;
-        }
-
-        // For each parallel node, find its unconditional targets.
-        let mut successor_sets: Vec<std::collections::HashSet<String>> = Vec::new();
-        for nid in parallel_node_ids {
-            let targets: std::collections::HashSet<String> = graph
-                .outgoing_edges(nid)
-                .iter()
-                .filter(|e| e.condition.is_none())
-                .map(|e| e.target.clone())
-                .collect();
-            successor_sets.push(targets);
-        }
-
-        // Find the intersection — nodes that ALL parallel paths lead to.
-        if let Some(first) = successor_sets.first() {
-            let common: std::collections::HashSet<String> = first
-                .iter()
-                .filter(|n| successor_sets.iter().all(|s| s.contains(*n)))
-                .cloned()
-                .collect();
-            common.into_iter().next()
-        } else {
-            None
-        }
     }
 
     /// Evaluate a single edge condition against a node's output map.

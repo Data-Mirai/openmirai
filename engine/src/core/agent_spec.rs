@@ -178,6 +178,10 @@ pub struct AgentGraphSpec {
     /// Keys are injected as virtual node "memory" in SharedState.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<AgentMemorySpec>,
+    /// Refuse to report `Completed` unless the run ended on a node that
+    /// produced a value (PRD-022). Default `false` — see [`GraphDef`].
+    #[serde(default)]
+    pub strict_completion: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -751,6 +755,7 @@ impl AgentSpec {
             nodes,
             edges,
             metadata: self.metadata.clone(),
+            strict_completion: self.graph.strict_completion,
         }
     }
 
@@ -805,6 +810,7 @@ mod tests {
                     data_map: None,
                 }],
                 memory: None,
+                strict_completion: false,
             },
             schedule: None,
             triggers: vec![AgentTriggerSpec {

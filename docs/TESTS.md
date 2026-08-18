@@ -16,7 +16,7 @@ Reglas:
 
 # Test Strategy
 
-OpenMirai implements a **712-test suite** across unit, integration, and system-level tests. No external services are required—all tests run in-process with bundled SQLite and in-memory adapters.
+OpenMirai implements a **963-test suite** across unit, integration, and system-level tests. No external services are required—all tests run in-process with bundled SQLite and in-memory adapters. Two shell suites drive the compiled binary end to end: `test/run_all.sh` and `test/e2e_strict_completion.sh`.
 
 ## Running Tests
 
@@ -32,6 +32,9 @@ cargo test --lib core::runner --all-features
 
 # Integration tests (manual YAML-based scenarios)
 ./test/run_all.sh
+
+# strict_completion end-to-end — drives the compiled binary (PRD-022)
+cargo build --release && bash test/e2e_strict_completion.sh
 ```
 
 ## Test Architecture
@@ -295,6 +298,84 @@ fn test_llm_factory() -> LLMFactory {
 - **When**: All nodes execute successfully.
 - **Then**: Checkpoint callback called 3 times (once per node), saved checkpoints contain node_id and step counter, can resume from any checkpoint.
 
+### Scenario 11: `strict_completion` — no silent endings (PRD-022)
+
+Opt-in per graph (`graph.strict_completion: true`) or per invocation
+(`mirai run|validate --strict`). Unit coverage lives in `core::graph::tests`
+and `core::runner::tests`; the CLI end-to-end suite is
+`test/e2e_strict_completion.sh`, which drives the compiled binary against the
+agents in `test/strict/` — real tools, no mock provider.
+
+**TEST-207: A node whose only exits are conditional is rejected at load time**
+
+- **CA**: Layer 1 (S1) refuses a graph with no guaranteed route out of a node.
+- **Given**: A graph with `strict_completion: true` where `route` has only conditional outgoing edges.
+- **When**: `mirai validate` (and `mirai run`) loads it.
+- **Then**: Exit `1`, error names `route` and asks for an unconditional default edge.
+
+**TEST-208: The same graph without the flag is untouched**
+
+- **CA**: The guarantee is opt-in; existing graphs behave exactly as before.
+- **Given**: The TEST-207 graph with the `strict_completion` key removed.
+- **When**: `mirai validate` and `mirai run` are called.
+- **Then**: Both exit `0`; the run reports `Completed`.
+
+**TEST-209: A fan-out whose branches never converge is rejected at load time**
+
+- **CA**: Layer 1 (S2) refuses a shape where work after the branches can never run.
+- **Given**: `strict_completion: true`, `trigger` fans out to `branch_a`/`branch_b`, each leading somewhere different.
+- **When**: The spec is validated.
+- **Then**: Exit `1`, error names the node and both branches.
+
+**TEST-210: A run that ends without a value fails**
+
+- **CA**: Layer 1 (R1) — `Completed` requires a value.
+- **Given**: `strict_completion: true` and a terminal `logic/merge` whose output is `{data: null}`.
+- **When**: The agent runs.
+- **Then**: `Failed`, exit `1`, error `strict_completion: run ended at node 'summarize' with no value`.
+
+**TEST-211: An error swallowed by `on_failure: skip` surfaces**
+
+- **CA**: Layer 2 (R2) — an error nobody answered for is not a success.
+- **Given**: `strict_completion: true` and a terminal node that really fails (missing file) with `on_failure: skip`.
+- **When**: The agent runs.
+- **Then**: `Failed` with `strict_completion: node 'save' failed and was skipped — <original cause>` (today: `Completed`).
+
+**TEST-212: `route_to_error` with no error edge surfaces**
+
+- **CA**: Layer 2 (R2) — the error stayed in the state and nobody routed it.
+- **Given**: Same graph with `on_failure: route_to_error` and no error edge.
+- **When**: The agent runs.
+- **Then**: `Failed` with `strict_completion: node 'save' routed to error but no error edge matched — <original cause>`.
+
+**TEST-213: A sound graph with the flag completes — zero false positives**
+
+- **CA**: The guarantee stays silent on graphs that do their job.
+- **Given**: `strict_completion: true`, conditional routing **with** a default route, ending in `output/response`.
+- **When**: The agent runs.
+- **Then**: `Completed`, `error: null`, exit `0`.
+
+**TEST-214: A paused run is not evaluated**
+
+- **CA**: `strict_completion` can only turn a `Completed` into a `Failed`.
+- **Given**: `strict_completion: true` and a `logic/human_input` node.
+- **When**: The agent runs.
+- **Then**: `Paused`, no error — exactly as without the flag.
+
+**TEST-215: `--strict` forces the guarantee on a graph that does not declare it**
+
+- **CA**: The adoption path — sweep an existing fleet without editing any YAML.
+- **Given**: The TEST-208 graph (no flag).
+- **When**: `mirai validate … --strict` / `mirai run … --strict`.
+- **Then**: Both exit `1` with the S1 error, while the same commands without `--strict` still pass.
+
+**TEST-216: A `GraphDef` serialized before the field existed still loads**
+
+- **CA**: Backward compatibility via `#[serde(default)]` — no migration.
+- **Given**: JSON for a graph with no `strict_completion` key.
+- **When**: The current binary deserializes it.
+- **Then**: `strict_completion == false` and `validate()` passes.
+
 ---
 
 ## Test Execution Summary
@@ -306,7 +387,7 @@ fn test_llm_factory() -> LLMFactory {
 | Tools & LLM adapters | ~200 | Mixed | All PRs | In-memory or mock |
 | Memory & persistence | ~45 | Sync+Async | All PRs | SQLite bundled, no external |
 | System & cross-cutting | ~300 | Sync+Async | All PRs | SQLite bundled, no external |
-| **Total** | **712** | — | — | **Zero external dependencies** |
+| **Total** | **963** | — | — | **Zero external dependencies** |
 
 ## CI Pipeline
 
@@ -316,7 +397,7 @@ fn test_llm_factory() -> LLMFactory {
 2. **clippy**: Linter (treat warnings as errors)
 3. **test**: Full `cargo test --workspace --all-features` on Ubuntu & macOS
 
-All 712 tests must pass before merge.
+All 963 tests must pass before merge.
 
 ## Notes
 

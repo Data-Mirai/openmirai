@@ -62,8 +62,8 @@
 
 | De | A | Guard (condicion) | Quien puede |
 |---|---|---|---|
-| Running | Completed | Ultimo nodo ejecutado sin error | Engine |
-| Running | Failed | Nodo fallo + on_failure=stop + retries agotados | Engine |
+| Running | Completed | Ultimo nodo ejecutado sin error. Con `strict_completion` ademas debe haber producido un valor (ver REGLA-11) | Engine |
+| Running | Failed | Nodo fallo + on_failure=stop + retries agotados, o violacion de `strict_completion` | Engine |
 | Running | Timeout | Tiempo total excede timeout_ms | Engine |
 | Running | Interrupted | human_input requiere decision o pause_interrupt activo | Engine / PE (resume) |
 
@@ -190,3 +190,27 @@
 **Descripcion:** Max iterations per node.
 **Condicion:** Un nodo se visita mas de `max_iterations` veces (config del agent).
 **Efecto:** Ejecucion se aborta con error de ciclo infinito detectado.
+
+### REGLA-11 {#regla-11}
+**Descripcion:** Regla de terminacion — cuando el motor puede decir `Completed` (PRD-022).
+**Condicion:** El grafo declara `graph.strict_completion: true` (o la invocacion usa `--strict`). Opt-in; por defecto `false` y el comportamiento es el de siempre.
+**Efecto:** en dos capas.
+
+**Capa estatica (al cargar, en `GraphDef::validate`)** — se rechazan las formas que garantizan un final mudo:
+
+| Regla | Se rechaza |
+|---|---|
+| S1 | Nodo con salidas donde **todas** son condicionales: no hay ruta por defecto. La arista incondicional a un `default_handler` pasa de recomendacion a requisito. |
+| S2 | Fan-out cuyas ramas siguen trabajando pero **nunca convergen**: lo que cuelga de las ramas jamas correria. |
+
+**Capa runtime (al terminar el walk)** — un `Completed` que no se gano se convierte en `Failed`:
+
+| Regla | Se rechaza |
+|---|---|
+| R2 | Un error en la traza que nunca fue el resultado del run: tragado por `on_failure: skip`, o `route_to_error` sin arista de error que matchee. Se reporta la **causa original**. |
+| R3 | El walk murio en un nodo que todavia tenia salidas (defensa en profundidad de S1). |
+| R1 | El run termino en un nodo sin valor: output vacio o todo-null. |
+
+**Radio de impacto:** `strict_completion` **solo** puede convertir un `Completed` en `Failed`. No toca `Paused`, `Cancelled`, `Timeout` ni `Interrupted` — un run pausado esperando a un humano no ha terminado y no se evalua. Un run que ya fallo, ya fallo.
+
+**Superficie de error:** todos los mensajes llevan el prefijo estable `strict_completion: ` seguido del nodo y la causa. Es greppable a proposito.

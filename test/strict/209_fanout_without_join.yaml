@@ -1,0 +1,45 @@
+# TEST-209 — a fan-out whose branches never converge.
+#
+# `report` hangs off branch_a and `archive` off branch_b, and there is no node
+# both branches reach. The runner would resume the walk at a join that does not
+# exist, so everything after the branches never runs. Rejected at load time.
+
+name: strict-209-fanout-without-join
+version: v1
+
+graph:
+  strict_completion: true
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          task: "fan out"
+
+    - id: branch_a
+      tool_type: logic/merge
+      config: {}
+
+    - id: branch_b
+      tool_type: logic/merge
+      config: {}
+
+    - id: report
+      tool_type: output/response
+      config:
+        message: "a done"
+
+    - id: archive
+      tool_type: output/response
+      config:
+        message: "b done"
+
+  edges:
+    - source: trigger
+      target: branch_a
+    - source: trigger
+      target: branch_b
+    - source: branch_a
+      target: report
+    - source: branch_b
+      target: archive

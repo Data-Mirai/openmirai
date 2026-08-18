@@ -270,7 +270,11 @@ async fn run_agent(args: &[String]) {
         eprintln!(
             "{}LLM: {provider}/{model}{}{}",
             colors::DIM,
-            if benchmark_enabled { " [benchmark]" } else { "" },
+            if benchmark_enabled {
+                " [benchmark]"
+            } else {
+                ""
+            },
             colors::RESET
         );
         // PRD-014: preflight — ensure the provider/model is ready, guide if not.
@@ -303,6 +307,9 @@ async fn run_agent(args: &[String]) {
     // Convert to graph
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
+    // PRD-022: `--strict` forces the guarantee on a graph that does not declare
+    // it. There is no `--no-strict`: a graph that asks for it keeps it.
+    graph.strict_completion |= has_flag(args, "--strict");
     if let Err(e) = graph.validate() {
         eprintln!(
             "{}Graph validation failed: {e}{}",
@@ -496,25 +503,42 @@ async fn run_agent(args: &[String]) {
 }
 
 /// Validate an agent spec without running it.
+///
+/// `--strict` applies the `strict_completion` shape rules to a spec that does
+/// not declare them (PRD-022) — the way to sweep an existing fleet for graphs
+/// with holes without editing a single YAML.
 fn validate_agent(args: &[String]) {
-    let path = match args.first() {
+    let path = match args.iter().find(|a| !a.starts_with("--")) {
         Some(p) => p.as_str(),
         None => {
             eprintln!(
-                "{}Usage: mirai validate <agent.yaml>{}",
+                "{}Usage: mirai validate <agent.yaml> [--strict]{}",
                 colors::YELLOW,
                 colors::RESET
             );
             process::exit(1);
         }
     };
+    let force_strict = has_flag(args, "--strict");
 
     match AgentSpec::from_file(path) {
-        Ok(spec) => {
+        Ok(mut spec) => {
+            if force_strict && !spec.graph.strict_completion {
+                spec.graph.strict_completion = true;
+                if let Err(e) = spec.to_graph(None).validate() {
+                    eprintln!("{}✗ Invalid agent spec: {e}{}", colors::RED, colors::RESET);
+                    process::exit(1);
+                }
+            }
             let nodes = spec.graph.nodes.len();
             let edges = spec.graph.edges.len();
+            let strict = if spec.graph.strict_completion {
+                ", strict_completion"
+            } else {
+                ""
+            };
             println!(
-                "{}✓ Valid agent spec: '{}' ({nodes} nodes, {edges} edges){}",
+                "{}✓ Valid agent spec: '{}' ({nodes} nodes, {edges} edges{strict}){}",
                 colors::GREEN,
                 spec.name,
                 colors::RESET
@@ -1493,7 +1517,7 @@ fn print_help() {
 {bold}USAGE:{reset}
     mirai                                    Interactive setup wizard + terminal
     mirai run <file> [options]               Execute agent from JSON/YAML file
-    mirai validate <file>                    Validate agent spec
+    mirai validate <file> [--strict]         Validate agent spec
     mirai serve [--port N] [--ui-dir <dir>] [--db-path <file>]  Start HTTP server (+ web UI at /ui; runs persisted to SQLite, default ~/.openmirai/engine.db)
     mirai runs <cmd>                         Ver, reanudar y cancelar ejecuciones de agentes
                                              (list|show|resume|cancel; `mirai runs help`)
@@ -1517,6 +1541,9 @@ fn print_help() {
     --model <name>           Model name (auto-detects provider if omitted)
     --api-key <key>          API key (or use env: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     --base-url <url>         Custom API base URL
+    --strict                 Force strict_completion: the run may only report
+                             Completed if it ended on a node that produced a
+                             value. Also available on `mirai validate`.
 
 {bold}ENVIRONMENT VARIABLES:{reset}
     MIRAI_LLM_PROVIDER       Default LLM provider

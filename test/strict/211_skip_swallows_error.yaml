@@ -1,0 +1,32 @@
+# TEST-211 — `on_failure: skip` swallows the error and the run ends there.
+#
+# `save` reads a path that does not exist, so the tool really fails. `skip`
+# stores an empty output and the walk ends. Today that is a `Completed` whose
+# error only survives in the trace; with the flag it is a `Failed` carrying the
+# original cause.
+
+name: strict-211-skip-swallows-error
+version: v1
+
+graph:
+  strict_completion: true
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          task: "save it"
+
+    - id: save
+      tool_type: filesystem/read_file
+      config:
+        path: /nonexistent/openmirai/strict-completion/no-such-file.txt
+        retry_policy:
+          max_retries: 0
+          backoff: none
+          initial_delay_secs: 0.0
+          on_failure: skip
+
+  edges:
+    - source: trigger
+      target: save

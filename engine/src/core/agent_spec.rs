@@ -178,6 +178,10 @@ pub struct AgentGraphSpec {
     /// Keys are injected as virtual node "memory" in SharedState.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<AgentMemorySpec>,
+    /// Refuse to report `Completed` unless the run ended on a node that
+    /// produced a value (PRD-022). Default `false` — see [`GraphDef`].
+    #[serde(default)]
+    pub strict_completion: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -353,7 +357,15 @@ pub enum InputType {
     Number,
     Boolean,
     Json,
+    /// A path to an existing file. A host UI should offer a file picker.
     File,
+    /// A path to a directory (usually an output folder). A host UI should offer a
+    /// folder picker: making the user type a path by hand is how you get typos in
+    /// the one field that decides where the work lands.
+    Directory,
+    /// One value out of a fixed list, declared in `options`. A host UI should offer
+    /// a dropdown — free text on a closed set is an error waiting to happen.
+    Choice,
 }
 
 impl InputType {
@@ -364,7 +376,7 @@ impl InputType {
             InputType::Number => value.is_number(),
             InputType::Boolean => value.is_boolean(),
             InputType::Json => value.is_object() || value.is_array(),
-            InputType::File => value.is_string(),
+            InputType::File | InputType::Directory | InputType::Choice => value.is_string(),
         }
     }
 
@@ -376,6 +388,8 @@ impl InputType {
             InputType::Boolean => "boolean",
             InputType::Json => "json",
             InputType::File => "file",
+            InputType::Directory => "directory",
+            InputType::Choice => "choice",
         }
     }
 }
@@ -397,6 +411,9 @@ pub struct InputFieldSpec {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<serde_json::Value>,
+    /// Allowed values when `field_type` is `choice`. Ignored otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
 }
 
 /// Describes a single output field in spec.outputs (declarative — not enforced at runtime v1).
@@ -524,6 +541,30 @@ fn default_spec_version() -> String {
 }
 
 impl AgentSpec {
+    /// Whether this agent needs an LLM provider at all.
+    ///
+    /// A graph made of `system/bash`, `filesystem/*` and `logic/*` is a deterministic
+    /// program: same inputs, same steps, same output. Requiring a model to run it makes
+    /// the whole pipeline hostage to a quota that has nothing to do with the work.
+    /// Only these tool families actually talk to a model.
+    pub fn needs_llm(&self) -> bool {
+        const IA: [&str; 6] = [
+            "ai/llm_call",
+            "ai/transcribe",
+            "ai/embeddings",
+            "ai/image_edit",
+            "ai/tts",
+            "ai/claude_code",
+        ];
+        // `agent/run_agent` may call a sub-agent that uses AI; treat it as needing one.
+        self.graph
+            .nodes
+            .iter()
+            .any(|n| IA.contains(&n.tool_type.as_str()) || n.tool_type == "agent/run_agent")
+            || self.system_prompt.is_some()
+            || self.soul.is_some()
+    }
+
     /// Auto-generate IDs for edges with empty `id` (FEAT-034 / API-02).
     pub fn auto_generate_edge_ids(&mut self) {
         let mut pair_counts: HashMap<String, usize> = HashMap::new();
@@ -714,6 +755,7 @@ impl AgentSpec {
             nodes,
             edges,
             metadata: self.metadata.clone(),
+            strict_completion: self.graph.strict_completion,
         }
     }
 
@@ -768,6 +810,7 @@ mod tests {
                     data_map: None,
                 }],
                 memory: None,
+                strict_completion: false,
             },
             schedule: None,
             triggers: vec![AgentTriggerSpec {
@@ -1104,6 +1147,7 @@ graph:
                 required: true,
                 description: "Pregunta".to_string(),
                 default: None,
+                options: vec![],
             },
         );
         schema.insert(
@@ -1113,6 +1157,7 @@ graph:
                 required: false,
                 description: "Contexto".to_string(),
                 default: Some(serde_json::json!("default ctx")),
+                options: vec![],
             },
         );
 
@@ -1134,6 +1179,7 @@ graph:
                 required: true,
                 description: "Pregunta del usuario".to_string(),
                 default: None,
+                options: vec![],
             },
         );
 
@@ -1155,6 +1201,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
 
@@ -1178,6 +1225,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
 
@@ -1200,6 +1248,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
         schema.insert(
@@ -1209,6 +1258,7 @@ graph:
                 required: true,
                 description: String::new(),
                 default: None,
+                options: vec![],
             },
         );
 

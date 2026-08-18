@@ -1,0 +1,32 @@
+# TEST-214 — a run waiting on a human is not a run that ended.
+#
+# `strict_completion` can only turn a `Completed` into a `Failed`. A `Paused`
+# run never reaches the completion check and must come out `Paused`.
+
+name: strict-214-human-input-pauses
+version: v1
+
+graph:
+  strict_completion: true
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          task: "ask first"
+
+    - id: ask
+      tool_type: logic/human_input
+      config:
+        prompt: "Approve?"
+
+    - id: done
+      tool_type: output/response
+      config:
+        message: "approved"
+
+  edges:
+    - source: trigger
+      target: ask
+    - source: ask
+      target: done

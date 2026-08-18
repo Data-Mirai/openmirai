@@ -231,6 +231,7 @@ async fn linear_graph_executes_all_nodes() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -257,6 +258,7 @@ async fn trace_entries_carry_real_timestamps() {
         nodes: vec![make_node("a", "tool/echo"), make_node("b", "tool/echo")],
         edges: vec![make_edge("e1", "a", "b")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let before = std::time::SystemTime::now()
@@ -298,6 +300,7 @@ async fn single_node_graph() {
         nodes: vec![make_node("only", "tool/echo")],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -339,6 +342,7 @@ async fn conditional_edge_routes_correctly() {
             ),
         ],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -376,6 +380,7 @@ async fn unconditional_fallback_when_no_condition_matches() {
             make_edge("e_fallback", "a", "fallback_target"),
         ],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -395,6 +400,7 @@ async fn failure_mode_stop_returns_failed() {
         nodes: vec![make_node("a", "tool/fail")],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(FailExecutor)).with_default_retry_policy(RetryPolicy {
@@ -433,6 +439,7 @@ async fn failure_mode_skip_continues() {
         nodes: vec![node_a, make_node("b", "tool/fail")],
         edges: vec![make_edge("e1", "a", "b")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     // FailExecutor fails on both nodes.  Node "a" has Skip policy so runner
@@ -487,6 +494,7 @@ async fn failure_mode_route_to_error() {
             make_edge("e_happy", "a", "happy"),
         ],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(FailExecutor)).with_default_retry_policy(RetryPolicy {
@@ -526,6 +534,7 @@ async fn retry_succeeds_on_second_attempt() {
         nodes: vec![node],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     // Fail once, then succeed.
@@ -557,6 +566,7 @@ async fn max_iterations_exceeded() {
             make_edge("e3", "c", "b"),
         ],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor)).with_max_iterations(3);
@@ -575,6 +585,7 @@ async fn empty_graph_returns_graph_error() {
         nodes: vec![],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -603,6 +614,7 @@ async fn data_map_passes_values_between_nodes() {
             }),
         }],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -626,6 +638,7 @@ async fn event_emitter_receives_events() {
         nodes: vec![make_node("a", "tool/echo")],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor)).with_event_emitter(emitter);
@@ -1188,6 +1201,7 @@ async fn hook_on_graph_start_aborts() {
         nodes: vec![make_node("a", "tool/echo")],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let hook =
@@ -1216,6 +1230,7 @@ async fn hook_pre_block_exec_skips() {
         nodes: vec![make_node("a", "tool/echo"), make_node("b", "tool/echo")],
         edges: vec![make_edge("e1", "a", "b")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let hook = MockHookHandler::new().with_pre_block_exec(HookResult::Skip);
@@ -1242,6 +1257,7 @@ async fn hook_pre_block_exec_modifies_inputs() {
         nodes: vec![make_node("a", "tool/echo")],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let mut injected = HashMap::new();
@@ -1272,6 +1288,7 @@ async fn hook_on_error_triggers_retry() {
         nodes: vec![make_node("a", "tool/flaky")],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     // FailNExecutor fails once then succeeds. The hook tells the runner
@@ -1304,6 +1321,7 @@ async fn hook_timeout_returns_continue() {
         nodes: vec![make_node("a", "tool/echo")],
         edges: vec![],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner =
@@ -1334,6 +1352,7 @@ async fn checkpoint_called_after_each_block() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let cp_cb = Arc::new(MockCheckpointCallback::new());
@@ -1416,6 +1435,7 @@ async fn checkpoint_no_marca_como_ejecutado_el_nodo_que_fallo() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let cp_cb = Arc::new(MockCheckpointCallback::new());
@@ -1479,6 +1499,7 @@ async fn human_input_interrupts_execution() {
         ],
         edges: vec![make_edge("e1", "a", "hi"), make_edge("e2", "hi", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -1518,6 +1539,7 @@ async fn pause_request_interrupts() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -1549,6 +1571,7 @@ async fn resume_continues_from_state() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     // Simulate: "a" already completed, resume from "b"
@@ -1597,6 +1620,7 @@ async fn transcript_contains_all_event_types() {
             make_conditional_edge("e_no", "a", "c", "_node_id", ComparisonOp::Neq, json!("a")),
         ],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -1644,6 +1668,7 @@ async fn fanout_executes_parallel_nodes() {
             make_edge("e4", "c", "d"),
         ],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -1688,6 +1713,7 @@ async fn fanout_single_unconditional_edge_is_sequential() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -1722,6 +1748,7 @@ async fn fanout_without_join_terminates_after_parallel() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "a", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -1750,6 +1777,7 @@ async fn resolve_all_next_nodes_returns_multiple_unconditional() {
         ],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "a", "c")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(EchoExecutor));
@@ -1817,6 +1845,7 @@ fn grafo_lineal(ids: &[&str]) -> GraphDef {
             .map(|(i, par)| make_edge(&format!("e{i}"), par[0], par[1]))
             .collect(),
         metadata: HashMap::new(),
+        strict_completion: false,
     }
 }
 
@@ -1941,6 +1970,7 @@ async fn el_salto_es_de_una_sola_vez_para_no_romper_los_bucles() {
         nodes: vec![make_node("a", "tool/echo"), make_node("b", "tool/echo")],
         edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "a")],
         metadata: HashMap::new(),
+        strict_completion: false,
     };
 
     let runner = GraphRunner::new(Box::new(Contador(bitacora.clone()))).with_max_iterations(2);
@@ -1964,4 +1994,214 @@ async fn el_salto_es_de_una_sola_vez_para_no_romper_los_bucles() {
         corridas.iter().any(|n| n == "a"),
         "en la vuelta del ciclo 'a' SÍ ejecuta — el salto valió una sola vez: {corridas:?}"
     );
+}
+
+// ===========================================================================
+// strict_completion — layer 2 (PRD-022)
+// ===========================================================================
+
+/// Emits an output whose only field is null: the shape of a node that ran and
+/// produced nothing — `logic/merge` with no data, the `db_write` sentinel.
+struct EmptyOutputExecutor;
+
+#[async_trait]
+impl ToolExecutor for EmptyOutputExecutor {
+    async fn execute(
+        &self,
+        _node: &NodeDef,
+        _inputs: HashMap<String, Value>,
+        _ctx: &dyn ExecutionContext,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let mut out = HashMap::new();
+        out.insert("data".to_string(), Value::Null);
+        Ok(out)
+    }
+}
+
+fn strict_linear_graph(nodes: Vec<NodeDef>, edges: Vec<EdgeDef>) -> GraphDef {
+    GraphDef {
+        id: "strict".into(),
+        name: "strict".into(),
+        version: "1.0.0".into(),
+        nodes,
+        edges,
+        metadata: HashMap::new(),
+        strict_completion: true,
+    }
+}
+
+fn node_with_failure_mode(id: &str, on_failure: FailureMode) -> NodeDef {
+    let mut node = make_node(id, "tool/fail");
+    node.config.insert(
+        "retry_policy".to_string(),
+        serde_json::to_value(RetryPolicy {
+            max_retries: 0,
+            backoff: BackoffStrategy::None,
+            initial_delay_secs: 0.0,
+            on_failure,
+        })
+        .unwrap(),
+    );
+    node
+}
+
+/// R1 — the walk ended on a node that produced no value.
+#[tokio::test]
+async fn strict_r1_fails_when_the_run_ends_without_a_value() {
+    let graph = strict_linear_graph(
+        vec![make_node("a", "logic/merge"), make_node("b", "logic/merge")],
+        vec![make_edge("e1", "a", "b")],
+    );
+
+    let runner = GraphRunner::new(Box::new(EmptyOutputExecutor));
+    let result = runner.run(&graph, &TestContext::new()).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Failed);
+    let error = result.error.expect("strict violation must carry a message");
+    assert!(error.starts_with(wk::STRICT_PREFIX), "got: {error}");
+    assert!(error.contains("'b'"), "must name the node: {error}");
+    assert!(error.contains("no value"), "got: {error}");
+}
+
+/// TEST-213 / zero false positives — the same shape with a real value passes.
+#[tokio::test]
+async fn strict_lets_a_healthy_run_complete() {
+    let graph = strict_linear_graph(
+        vec![
+            make_node("a", "logic/merge"),
+            make_node("b", "output/response"),
+        ],
+        vec![make_edge("e1", "a", "b")],
+    );
+
+    let runner = GraphRunner::new(Box::new(EchoExecutor));
+    let result = runner.run(&graph, &TestContext::new()).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Completed);
+    assert!(result.error.is_none());
+}
+
+/// Same graph, flag off: the value-less ending stays `Completed`, byte for
+/// byte what the engine did before PRD-022.
+#[tokio::test]
+async fn strict_off_keeps_the_silent_completion() {
+    let mut graph = strict_linear_graph(
+        vec![make_node("a", "logic/merge"), make_node("b", "logic/merge")],
+        vec![make_edge("e1", "a", "b")],
+    );
+    graph.strict_completion = false;
+
+    let runner = GraphRunner::new(Box::new(EmptyOutputExecutor));
+    let result = runner.run(&graph, &TestContext::new()).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Completed);
+    assert!(result.error.is_none());
+}
+
+/// R2 — `on_failure: skip` swallowed the error; the run must carry the cause.
+#[tokio::test]
+async fn strict_r2_reports_the_error_a_skip_swallowed() {
+    let graph = strict_linear_graph(
+        vec![node_with_failure_mode("save", FailureMode::Skip)],
+        vec![],
+    );
+
+    let runner = GraphRunner::new(Box::new(FailExecutor));
+    let result = runner.run(&graph, &TestContext::new()).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Failed);
+    let error = result.error.expect("strict violation must carry a message");
+    assert!(error.starts_with(wk::STRICT_PREFIX), "got: {error}");
+    assert!(error.contains("'save'"), "must name the node: {error}");
+    assert!(error.contains("skipped"), "got: {error}");
+    assert!(
+        error.contains("always fails"),
+        "must carry the original cause: {error}"
+    );
+}
+
+/// R2 — `route_to_error` with no error edge: the error stayed in the state.
+#[tokio::test]
+async fn strict_r2_reports_route_to_error_that_found_no_edge() {
+    let graph = strict_linear_graph(
+        vec![node_with_failure_mode("save", FailureMode::RouteToError)],
+        vec![],
+    );
+
+    let runner = GraphRunner::new(Box::new(FailExecutor));
+    let result = runner.run(&graph, &TestContext::new()).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Failed);
+    let error = result.error.expect("strict violation must carry a message");
+    assert!(error.starts_with(wk::STRICT_PREFIX), "got: {error}");
+    assert!(
+        error.contains("routed to error"),
+        "must distinguish it from a skip: {error}"
+    );
+    assert!(
+        error.contains("always fails"),
+        "must carry the original cause: {error}"
+    );
+}
+
+/// R3 — defense in depth: a runtime dead end that layer 1 never saw, because
+/// the graph was handed straight to the runner with the flag set after load.
+#[tokio::test]
+async fn strict_r3_fails_on_a_runtime_dead_end() {
+    let mut graph = strict_linear_graph(
+        vec![
+            make_node("route", "logic/switch"),
+            make_node("yes", "output/response"),
+        ],
+        vec![make_conditional_edge(
+            "e1",
+            "route",
+            "yes",
+            "missing_field",
+            ComparisonOp::Eq,
+            json!(true),
+        )],
+    );
+    // Layer 1 would reject this shape (S1); skip it to exercise layer 2 alone.
+    graph.strict_completion = false;
+    graph.validate().unwrap();
+    graph.strict_completion = true;
+
+    let runner = GraphRunner::new(Box::new(EchoExecutor));
+    let result = runner
+        .run_from(
+            &graph,
+            &TestContext::new(),
+            SharedState::new(),
+            "route",
+            0,
+            std::collections::HashSet::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Failed);
+    let error = result.error.expect("strict violation must carry a message");
+    assert!(error.starts_with(wk::STRICT_PREFIX), "got: {error}");
+    assert!(error.contains("'route'"), "must name the node: {error}");
+    assert!(error.contains("outgoing edges matched"), "got: {error}");
+}
+
+/// TEST-214 — a paused run never reaches the completion check: strict only
+/// ever turns a `Completed` into a `Failed`.
+#[tokio::test]
+async fn strict_leaves_a_paused_run_alone() {
+    let graph = strict_linear_graph(
+        vec![
+            make_node("ask", wk::HUMAN_INPUT_TOOL),
+            make_node("done", "output/response"),
+        ],
+        vec![make_edge("e1", "ask", "done")],
+    );
+
+    let runner = GraphRunner::new(Box::new(EmptyOutputExecutor));
+    let result = runner.run(&graph, &TestContext::new()).await.unwrap();
+
+    assert_eq!(result.status, ExecutionStatus::Paused);
+    assert!(result.error.is_none());
 }

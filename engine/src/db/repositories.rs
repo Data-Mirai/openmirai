@@ -448,6 +448,7 @@ mod tests {
             }],
             edges: vec![],
             metadata: HashMap::new(),
+            strict_completion: false,
         }
     }
 

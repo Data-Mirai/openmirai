@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Open-source agent execution engine compiled in Rust. Runs agentic workflows defined as YAML graphs. One binary, any LLM, 50 built-in tools, 7 LLM providers, 712 tests. Alternative to LangGraph, CrewAI, and Google ADK. Version: v0.6.0.
+Open-source engine for **Graph Engineering**, compiled in Rust: the workflow graph is a complete, portable YAML artifact and the engine that runs it is a single binary with zero runtime dependencies. Any LLM, 50 built-in tools, 7 LLM providers. Alternative to LangGraph, CrewAI, and Google ADK. Positioning and honest comparison → [graph-engineering.md](graph-engineering.md).
 
 ## 2. Stack
 
@@ -12,6 +12,8 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 
 | Document | Description | Path |
 |---|---|---|
+| graph-engineering.md | What Graph Engineering is, the four properties, honest comparison vs LangGraph / ADK / CrewAI / Dify / n8n | [graph-engineering.md](graph-engineering.md) |
+| SCOPE.md | What the engine does and deliberately does not do | [SCOPE.md](SCOPE.md) |
 | ARCHITECTURE.md | Stack, modules, conventions | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | CLI.md | `mirai` command reference, interactive mode, sessions | [CLI.md](CLI.md) |
 | CLI.es.md | Spanish translation of CLI.md | [CLI.es.md](CLI.es.md) |

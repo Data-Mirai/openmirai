@@ -21,6 +21,14 @@ pub const AI_TOOL_PREFIX: &str = "ai/";
 pub const ERROR_FIELD: &str = "__error__";
 
 // ---------------------------------------------------------------------------
+// strict_completion (PRD-022)
+// ---------------------------------------------------------------------------
+
+/// Prefix every `strict_completion` failure message carries. Stable on
+/// purpose: it is the greppable surface for whoever operates a fleet.
+pub const STRICT_PREFIX: &str = "strict_completion: ";
+
+// ---------------------------------------------------------------------------
 // Transcript entry types
 // ---------------------------------------------------------------------------
 

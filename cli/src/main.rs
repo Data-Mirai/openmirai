@@ -11,6 +11,7 @@
 
 mod adapter_factory;
 mod colors;
+mod runs_cmd;
 mod session_storage;
 mod sessions_cmd;
 mod sessions_watch;
@@ -64,6 +65,9 @@ async fn main() {
         Some("rag") => cmd_rag(&args[1..]).await,
         Some("agent") => handle_agent_subcommand(&args[1..]),
         Some("sessions") => sessions_cmd::cmd_sessions(&args[1..]).await,
+        // Runs de agentes (PRD-021-D). Ojo: `sessions` son las sesiones de
+        // Claude en tmux; `runs` son las ejecuciones del motor sobre el grafo.
+        Some("runs") => runs_cmd::cmd_runs(&args[1..]).await,
         Some("help" | "--help" | "-h") => print_help(),
         Some(other) => {
             eprintln!(
@@ -244,28 +248,6 @@ async fn run_agent(args: &[String]) {
         openmirai_engine::benchmark::enable(bench_path);
     }
 
-    // Show provider info
-    eprintln!(
-        "{}LLM: {provider}/{model}{}{}",
-        colors::DIM,
-        if benchmark_enabled {
-            " [benchmark]"
-        } else {
-            ""
-        },
-        colors::RESET
-    );
-
-    // PRD-014: preflight — ensure the provider/model is ready, guide if not.
-    if !run_preflight(&provider, &model, &api_key, &base_url).await {
-        eprintln!(
-            "{}Run aborted: provider not ready. Run `mirai doctor` for the full check.{}",
-            colors::RED,
-            colors::RESET
-        );
-        process::exit(1);
-    }
-
     // Load agent spec
     let spec = match AgentSpec::from_file(path) {
         Ok(s) => s,
@@ -278,6 +260,39 @@ async fn run_agent(args: &[String]) {
             process::exit(1);
         }
     };
+
+    // Un workflow SIN nodos de IA no necesita proveedor: es un programa determinista
+    // paso a paso. Antes el preflight corría ANTES de leer el YAML y abortaba un grafo
+    // de puro `system/bash` exigiendo un modelo — la dependencia de IA era del CLI, no
+    // del agente. Ahora el requisito lo declara el grafo.
+    let usa_ia = spec.needs_llm();
+    if usa_ia {
+        eprintln!(
+            "{}LLM: {provider}/{model}{}{}",
+            colors::DIM,
+            if benchmark_enabled {
+                " [benchmark]"
+            } else {
+                ""
+            },
+            colors::RESET
+        );
+        // PRD-014: preflight — ensure the provider/model is ready, guide if not.
+        if !run_preflight(&provider, &model, &api_key, &base_url).await {
+            eprintln!(
+                "{}Run aborted: provider not ready. Run `mirai doctor` for the full check.{}",
+                colors::RED,
+                colors::RESET
+            );
+            process::exit(1);
+        }
+    } else {
+        eprintln!(
+            "{}Determinista: este agente no usa IA — sin proveedor{}",
+            colors::DIM,
+            colors::RESET
+        );
+    }
 
     // PRD-008: Reject live agents — they must be started with `mirai play`
     if spec.agent_type == openmirai_engine::AgentType::Live {
@@ -292,6 +307,9 @@ async fn run_agent(args: &[String]) {
     // Convert to graph
     let mut graph = spec.to_graph(Some(&spec.name));
     graph.auto_generate_edge_ids();
+    // PRD-022: `--strict` forces the guarantee on a graph that does not declare
+    // it. There is no `--no-strict`: a graph that asks for it keeps it.
+    graph.strict_completion |= has_flag(args, "--strict");
     if let Err(e) = graph.validate() {
         eprintln!(
             "{}Graph validation failed: {e}{}",
@@ -485,25 +503,42 @@ async fn run_agent(args: &[String]) {
 }
 
 /// Validate an agent spec without running it.
+///
+/// `--strict` applies the `strict_completion` shape rules to a spec that does
+/// not declare them (PRD-022) — the way to sweep an existing fleet for graphs
+/// with holes without editing a single YAML.
 fn validate_agent(args: &[String]) {
-    let path = match args.first() {
+    let path = match args.iter().find(|a| !a.starts_with("--")) {
         Some(p) => p.as_str(),
         None => {
             eprintln!(
-                "{}Usage: mirai validate <agent.yaml>{}",
+                "{}Usage: mirai validate <agent.yaml> [--strict]{}",
                 colors::YELLOW,
                 colors::RESET
             );
             process::exit(1);
         }
     };
+    let force_strict = has_flag(args, "--strict");
 
     match AgentSpec::from_file(path) {
-        Ok(spec) => {
+        Ok(mut spec) => {
+            if force_strict && !spec.graph.strict_completion {
+                spec.graph.strict_completion = true;
+                if let Err(e) = spec.to_graph(None).validate() {
+                    eprintln!("{}✗ Invalid agent spec: {e}{}", colors::RED, colors::RESET);
+                    process::exit(1);
+                }
+            }
             let nodes = spec.graph.nodes.len();
             let edges = spec.graph.edges.len();
+            let strict = if spec.graph.strict_completion {
+                ", strict_completion"
+            } else {
+                ""
+            };
             println!(
-                "{}✓ Valid agent spec: '{}' ({nodes} nodes, {edges} edges){}",
+                "{}✓ Valid agent spec: '{}' ({nodes} nodes, {edges} edges{strict}){}",
                 colors::GREEN,
                 spec.name,
                 colors::RESET
@@ -1482,8 +1517,10 @@ fn print_help() {
 {bold}USAGE:{reset}
     mirai                                    Interactive setup wizard + terminal
     mirai run <file> [options]               Execute agent from JSON/YAML file
-    mirai validate <file>                    Validate agent spec
+    mirai validate <file> [--strict]         Validate agent spec
     mirai serve [--port N] [--ui-dir <dir>] [--db-path <file>]  Start HTTP server (+ web UI at /ui; runs persisted to SQLite, default ~/.openmirai/engine.db)
+    mirai runs <cmd>                         Ver, reanudar y cancelar ejecuciones de agentes
+                                             (list|show|resume|cancel; `mirai runs help`)
     mirai sessions <cmd>                     Orchestrate live coding sessions (needs tmux + a
                                              running `mirai serve`; `mirai sessions help`)
     mirai edit <file>                        Visual editor for an agent in your browser
@@ -1504,6 +1541,9 @@ fn print_help() {
     --model <name>           Model name (auto-detects provider if omitted)
     --api-key <key>          API key (or use env: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     --base-url <url>         Custom API base URL
+    --strict                 Force strict_completion: the run may only report
+                             Completed if it ended on a node that produced a
+                             value. Also available on `mirai validate`.
 
 {bold}ENVIRONMENT VARIABLES:{reset}
     MIRAI_LLM_PROVIDER       Default LLM provider

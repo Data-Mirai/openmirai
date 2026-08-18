@@ -5,11 +5,23 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
-> **Decentralize your AI agents.** One binary. Any LLM. Your machine. Your rules.
+> **Graph Engineering.** Your agent workflow is a YAML file, not a Python program. One binary runs it anywhere.
 
-OpenMirai is a Rust-native engine that runs agentic workflows defined as simple YAML graphs. No cloud lock-in, no heavy runtime, no vendor handcuffs — the engine runs wherever you do: your laptop, your server, your edge. A single portable binary with zero runtime dependencies.
+OpenMirai is a Rust-native engine for **Graph Engineering**: the workflow graph is the artifact you
+engineer, not a by-product of the code that happens to build it. A graph is one plain YAML file
+holding the *whole* workflow — nodes, edges, data flow, routing conditions, retries, input contract.
+You diff it in a pull request, validate it in CI, tag it in git, and hand it to a runtime.
 
-A drop-in alternative to LangGraph, CrewAI, and Google ADK — without tying your agents to someone else's cloud.
+That runtime is a single self-contained binary with **zero runtime dependencies**: no interpreter,
+no virtualenv, no `node_modules`, no Docker Compose, no cluster. The same file runs on your laptop,
+in a CI job, on a server, at the edge, or embedded in your app — driven by CLI, HTTP, an SDK, or the
+Rust crate.
+
+An alternative to LangGraph, CrewAI and Google ADK for the case where you want the graph to be a
+portable artifact instead of code living inside someone else's language runtime.
+
+→ **[docs/graph-engineering.md](docs/graph-engineering.md)** — the four properties that make a graph
+engineerable, and an honest comparison with the alternatives (including where they win).
 
 **It runs workflows. That is the whole job.** Agents as entities, goals, long-term memory and
 team collaboration are deliberately *not* here — they belong to the layer you build on top.
@@ -17,16 +29,22 @@ See **[docs/SCOPE.md](docs/SCOPE.md)** for where the line falls and why.
 
 **52 built-in tools** · **7 LLM providers** · **879 tests** · **Apache-2.0 license**
 
-## Why decentralized?
+## Why Graph Engineering?
 
-Most agent platforms run *their* runtime, on *their* cloud, against *their* preferred model. OpenMirai inverts that:
+Most frameworks make you *program* a graph: import a library, register functions as nodes, wire
+edges with method calls, compile. The graph then exists only while that process is alive — to read
+it you read the code, and to move it you move the interpreter and the dependency tree with it. Most
+platforms go further and run *their* runtime, on *their* cloud, against *their* preferred model.
+OpenMirai inverts both:
 
+- **The graph is data** — a complete YAML file. Nothing to import, no host function to implement, no decorator to remember.
+- **Reviewable and versionable** — a rerouted edge or a changed prompt is a one-line diff a human can read. `mirai validate` gates it in CI, with no keys and no network.
 - **Runs anywhere** — one self-contained binary, zero runtime dependencies. Your machine, your server, your edge.
 - **Any LLM** — 7 providers today, local Ollama included. No vendor lock-in.
-- **Your data stays yours** — agents execute where you put them; nothing phones home.
-- **Embeddable** — drop the engine into any app via CLI, HTTP, or as a Rust crate.
+- **Your data stays yours** — graphs execute where you put them; nothing phones home.
+- **Embeddable** — drop the engine into any app via CLI, HTTP, an SDK, or as a Rust crate.
 
-> Decentralizing AI agents means taking power back from closed platforms and handing it to whoever builds.
+> The graph declares **what** happens. The engine decides **how** it runs. Neither belongs to a cloud.
 
 ## Quick Start
 
@@ -40,6 +58,9 @@ rustup update stable
 ```bash
 # Build from source
 cargo build --release
+
+# Check a graph without running it — no keys, no network (this is your CI gate)
+./target/release/mirai validate examples/hello-world.yaml
 
 # Run an agent (hello-world targets local Ollama — `ollama pull qwen3:8b` first,
 # or pass --provider with your own key, as in the next command)
@@ -86,25 +107,33 @@ mirai run hello.yaml --input '{"query": "What is Rust?"}'
 ## Architecture
 
 ```
-Agent  = YAML config  (portable, versionable, language-agnostic)
-Engine = Rust binary   (FFI, WASM, CLI — 865 tests)
-Host   = Your app      (Python, Swift, Go, JavaScript — anything)
+Graph  = YAML file      (portable, versionable, language-agnostic)
+Engine = single binary   (CLI · HTTP · Rust crate · Python SDK)
+Host   = your app        (Python, Swift, Go, JavaScript — anything that runs a process or calls HTTP)
 ```
 
-The agent defines **what** to do. The engine decides **how** to run it.
+The graph defines **what** to do. The engine decides **how** to run it.
 
 ## What's different
 
-| | OpenMirai | LangGraph / CrewAI | Google ADK |
-|---|---|---|---|
-| Runtime | Single binary, zero deps | Python runtime + deps | Python runtime + deps |
-| Run on your own machine/edge | ✅ first-class | ⚠️ needs Python env | ⚠️ GCP-oriented |
-| LLM choice | 7 providers, local-first | Provider-agnostic | Gemini-first |
-| Agent format | Portable YAML | Python code | Python code |
-| Embed in any app | CLI · HTTP · Rust crate | Python library | Python library |
-| License | Apache-2.0 | MIT | Apache-2.0 |
+Declarative agent files are no longer rare — ADK, CrewAI, Dify and n8n all have one. The question
+worth asking is **how much of the workflow lives in the file, and what it takes to run that file.**
 
-The point isn't "more features" — it's **where and how it runs**: yours, portable, and not chained to a cloud.
+| | OpenMirai | LangGraph | Google ADK | CrewAI |
+|---|---|---|---|---|
+| Where the graph lives | Complete YAML file | Python/JS code (`StateGraph`) | YAML *(Agent Config, experimental)* | `agents.yaml` + `crew.py` |
+| Code needed to run it | None | The graph *is* the code | Python/Java for anything programmable | `@CrewBase` / `@agent` / `@task` |
+| What it takes to execute | One static binary, zero deps | Python or Node runtime + deps | ADK runtime (Python/Java/Go) | Python runtime + deps |
+| Static check of the artifact | `mirai validate` — a binary, no keys, no runtime | At `compile()`, inside Python | On agent load, inside ADK | On crew load, inside Python |
+| LLM choice | 7 providers, local-first | Provider-agnostic | Gemini-only in Agent Config | Provider-agnostic |
+| Embed in any app | CLI · HTTP · Rust crate · SDK | Python/JS library | Python/Java/Go library | Python library |
+| License | Apache-2.0 | MIT | Apache-2.0 | MIT |
+
+The point isn't "more features" — it's **what the artifact is and where it runs**. And the trade is
+real: LangGraph's Python ecosystem, LangSmith-grade visual tracing and dynamic runtime fan-out are
+advantages OpenMirai does not match today (tracked in
+[docs/ROADMAP-PARITY.md](docs/ROADMAP-PARITY.md)). If most of your workflow is bespoke Python, use a
+code-first framework. Full breakdown: **[docs/graph-engineering.md](docs/graph-engineering.md)**.
 
 ## Built-in Tools
 
@@ -171,12 +200,32 @@ docs/          Technical documentation
 - **SSE streaming** — real-time execution events via Server-Sent Events
 - **Security scanner** — prompt injection detection with configurable sensitivity
 - **MCP support** — Model Context Protocol for external tool servers
+- **Run lifecycle** — a run checkpoints as it advances: it can pause for a human, be cancelled in
+  flight, and resume from where it stopped — even across a process restart (see below)
 - **Session orchestration** — run and coordinate several live coding sessions from one engine (see below)
 
-Partially wired, so you know before you build on them: `GraphRunner::resume()` exists and is
-tested at the crate level but is not reachable from the CLI or HTTP yet, and `agent/run_agent`
-validates and guards against cycles but returns a placeholder — nested agent execution is meant
-to happen in the app layer, not inside the engine.
+Partially wired, so you know before you build on it: `agent/run_agent` validates and guards
+against cycles but returns a placeholder — nested agent execution is meant to happen in the app
+layer, not inside the engine.
+
+## Run Lifecycle
+
+Every execution is a **run** with state on disk. It stops when a graph asks a human something,
+resumes from its checkpoint without re-running the nodes that already had effects, and can be
+cancelled mid-flight (cooperatively, at a node boundary).
+
+```bash
+mirai runs list                                # id, agent, state, current node, start time
+mirai runs list --status paused                # the ones waiting on a human
+mirai runs show <run_id>                       # where it stopped, why, and its node trace
+mirai runs resume <run_id> --response "yes"    # answer and continue from the next node
+mirai runs cancel <run_id>                     # stop one in flight
+mirai runs list --json | jq '.[].id'           # every subcommand takes --json
+```
+
+Same over HTTP: `GET /api/v1/sessions?status=paused`, `POST /api/v1/sessions/{id}/resume`,
+`POST /api/v1/sessions/{id}/cancel`. Runs are persisted to SQLite (`--db-path`), so a run that
+was paused before a restart is still there — and still resumable — afterwards.
 
 ## Session Orchestration
 

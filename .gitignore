@@ -88,3 +88,5 @@ tmp/
 *.tmp
 BITACORA.md
 .evidencia/
+visualizer/ejecuciones.jsonl
+visualizer/subidas/

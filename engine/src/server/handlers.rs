@@ -94,6 +94,7 @@ pub(crate) async fn create_graph(
         nodes,
         edges,
         metadata: req.metadata,
+        strict_completion: false,
     };
 
     let body = match serde_json::to_value(&graph) {

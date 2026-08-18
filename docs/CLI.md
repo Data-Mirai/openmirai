@@ -50,7 +50,7 @@ is parsed positionally or as `--flag value` pairs.
 |---|---|---|
 | `mirai` (no args) | **Yes** | Setup wizard → interactive agentic terminal |
 | `mirai run <file>` | No | Execute an agent spec (JSON/YAML) once, print result JSON |
-| `mirai validate <file>` | No | Parse + report node/edge counts; non-zero exit on error |
+| `mirai validate <file> [--strict]` | No | Parse + report node/edge counts; non-zero exit on error. `--strict` also rejects shapes that can end silently |
 | `mirai serve` | No | Start the HTTP server (see [API.md](backend/API.md)) |
 | `mirai tools [<tool_type>]` | No | List all tools, or show one tool's inputs/outputs/config |
 | `mirai templates` | No | List built-in agent templates |
@@ -148,6 +148,7 @@ mirai run agent.yaml --benchmark        # log timing to benchmarks.jsonl
 | `--provider`, `--model`, `--api-key`, `--base-url` | Provider config (see §3) |
 | `--trace` | After the run, render the trace tree + metrics (nodes, total/avg ms, retries) to stderr |
 | `--benchmark` | Enable benchmark logging (also via `MIRAI_BENCHMARK=1`); file via `MIRAI_BENCHMARK_FILE` (default `benchmarks.jsonl`) |
+| `--strict` | Force `strict_completion` for this run even if the graph does not declare it: the run may only report `Completed` if it ended on a node that produced a value. Violations exit `1` with a `strict_completion:` message. There is no `--no-strict` |
 
 **Execution pipeline** (this is the canonical CLI→engine mapping; see also §9):
 
@@ -189,16 +190,26 @@ Provider info (`LLM: <provider>/<model>`) and soul/warning lines go to
 > storage tools won't persist across runs. Use `mirai serve` for a longer-lived
 > context.
 
-### `mirai validate <file>`
+### `mirai validate <file> [--strict]`
 
 ```bash
 mirai validate my-agent.yaml
 # → ✓ Valid agent spec: 'my-agent' (3 nodes, 2 edges)
+
+mirai validate my-agent.yaml --strict
+# → ✗ Invalid agent spec: node `route` has only conditional outgoing edges: …
 ```
 
 Parses the spec and reports node/edge counts. Invalid specs print
 `✗ Invalid agent spec: <error>` to stderr and exit `1`. It does **not** run the
 graph or contact any LLM.
+
+`--strict` applies the `strict_completion` shape rules even when the graph does
+not declare them: it rejects a node whose only exits are conditional, and a
+fan-out whose branches never converge. Graphs that already declare
+`graph.strict_completion: true` are checked either way, and the summary line
+says so. Use it to sweep a directory of agents for silent-ending holes before
+committing the flag to any of them.
 
 ### `mirai serve`
 

@@ -495,9 +495,76 @@ graph:
 | `skip` | Continue as if the node succeeded (empty output) |
 | `route_to_error` | Follow an edge with `condition: { error: true }` |
 
+Note the hole in that table: with `skip`, a node can fail and the run still
+reports `Completed`. The next section closes it.
+
 ---
 
-## 10. MCP servers (external tools)
+## 10. `strict_completion` — no silent endings
+
+By default a graph can finish without producing anything and still report
+`Completed`: a node whose conditions all miss, an error swallowed by
+`on_failure: skip`, a last node that returns an empty map. Turn the guarantee on
+and the engine may only sign off `Completed` if the run **ended on a node that
+produced a value**. Everything else is a `Failed` naming the node and the cause.
+
+```yaml
+name: my-agent
+version: v1
+
+graph:
+  strict_completion: true    # default: false
+  nodes: [...]
+  edges: [...]
+```
+
+It works in two layers.
+
+**At load time** — rejected before a single token is spent:
+
+| Rule | Rejected |
+|---|---|
+| No default route | A node whose outgoing edges are *all* conditional. Add one unconditional edge as the fallback. |
+| Fan-out without a join | Branches that do more work but never converge — everything after them would never run. Route them to a common node. |
+
+The `default_handler` pattern from §5 stops being a recommendation and becomes a
+requirement. A `logic/switch` with no default branch no longer loads.
+
+**At run time** — a `Completed` that has not been earned becomes a `Failed`:
+
+```
+strict_completion: run ended at node 'summarize' with no value
+strict_completion: node 'save' failed and was skipped — <original cause>
+strict_completion: node 'save' routed to error but no error edge matched — <original cause>
+strict_completion: run ended at node 'route' but none of its 3 outgoing edges matched
+```
+
+The `strict_completion:` prefix is stable — grep for it.
+
+**Scope.** The flag can only turn a `Completed` into a `Failed`. `Paused`,
+`Cancelled` and `Timeout` are untouched: a run waiting on a human has not ended,
+so nothing is checked. A graph without the flag behaves exactly as before.
+
+**Adopting it on graphs you already have.** `--strict` forces the guarantee for
+one invocation, without editing any YAML:
+
+```bash
+mirai validate agent.yaml --strict    # does this graph have holes?
+mirai run agent.yaml --strict         # enforce it for this run
+```
+
+Sweeping a directory tells you which agents are sound before you commit the flag
+to any of them:
+
+```bash
+for f in agents/*.yaml; do mirai validate "$f" --strict; done
+```
+
+There is no `--no-strict`: a graph that asks for the guarantee keeps it.
+
+---
+
+## 11. MCP servers (external tools)
 
 Connect to Model Context Protocol servers for additional tools:
 
@@ -535,7 +602,7 @@ Supported transports: `stdio` (local process) and `http` (remote server).
 
 ---
 
-## 11. Deploying as a server
+## 12. Deploying as a server
 
 ```bash
 # Start with auth
@@ -583,7 +650,7 @@ data: {"status": "Completed", "total_duration_ms": 2100}
 
 ---
 
-## 12. Multimodal — audio, images, video (v0.5.0)
+## 13. Multimodal — audio, images, video (v0.5.0)
 
 Send files directly to LLMs that support multimodal input.
 
@@ -637,7 +704,7 @@ The engine reads the file, base64-encodes it, validates the MIME type against th
 agent.yaml    = graph definition (nodes + edges)
 mirai run     = execute locally
 mirai serve   = HTTP API
-mirai validate = check syntax
+mirai validate = check syntax (--strict: also check for silent endings)
 mirai tools   = list all tools with inputs/outputs/config
 
 node       = one action (tool_type)
@@ -647,6 +714,7 @@ condition  = route based on output values
 inputs     = typed input contract (validation at boundary)
 outputs    = typed output contract (documentation + validation)
 config     = agent-level settings (retry, max_iterations, timeout)
+strict_completion = graph-level: refuse to report Completed without a value
 mcp_servers = external tool servers (Model Context Protocol)
 media_path = attach a file to an LLM call (v0.5.0)
 output_files = declare files a bash command generates (v0.5.0)

@@ -1,0 +1,46 @@
+# TEST-208 / TEST-215 — the same graph as 207 without the flag.
+#
+# It must keep loading and running exactly as it always did (TEST-208), and
+# `--strict` on the command line must make the guarantee apply anyway for that
+# one invocation (TEST-215).
+
+name: strict-208-no-flag
+version: v1
+
+graph:
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          score: 5
+
+    - id: route
+      tool_type: logic/merge
+      config: {}
+
+    - id: high
+      tool_type: output/response
+      config:
+        message: "high"
+
+    - id: low
+      tool_type: output/response
+      config:
+        message: "low"
+
+  edges:
+    - source: trigger
+      target: route
+    - source: route
+      target: high
+      condition:
+        field: score
+        op: greater_than
+        value: 100
+    - source: route
+      target: low
+      condition:
+        field: score
+        op: less_than
+        value: 0

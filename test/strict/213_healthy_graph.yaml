@@ -1,0 +1,43 @@
+# TEST-213 — a sound graph with the flag on. Zero false positives.
+#
+# Conditional routing WITH a default route, and every path ends on an
+# `output/response` that produces a real value. The guarantee must stay silent.
+
+name: strict-213-healthy-graph
+version: v1
+
+graph:
+  strict_completion: true
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          score: 5
+
+    - id: route
+      tool_type: logic/merge
+      config: {}
+
+    - id: high
+      tool_type: output/response
+      config:
+        message: "high score"
+
+    - id: default_handler
+      tool_type: output/response
+      config:
+        message: "scored 5 — handled by the default route"
+
+  edges:
+    - source: trigger
+      target: route
+    - source: route
+      target: high
+      condition:
+        field: score
+        op: greater_than
+        value: 100
+    # The unconditional edge is the default route S1 requires.
+    - source: route
+      target: default_handler

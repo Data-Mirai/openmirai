@@ -25,6 +25,15 @@ pub enum GraphError {
 
     #[error("self-loop detected on node `{0}`")]
     SelfLoop(String),
+
+    #[error("node `{node_id}` has only conditional outgoing edges: no path can be guaranteed. Add an unconditional edge as the default route.")]
+    StrictDeadEnd { node_id: String },
+
+    #[error("fan-out from `{node_id}` into [{}] never converges: work after the branches would never run. Route all branches to a common node.", branches.join(", "))]
+    StrictFanOutWithoutJoin {
+        node_id: String,
+        branches: Vec<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +154,7 @@ pub(crate) fn default_version() -> String {
 // GraphDef
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GraphDef {
     pub id: String,
     pub name: String,
@@ -154,6 +163,15 @@ pub struct GraphDef {
     pub edges: Vec<EdgeDef>,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// When true, the engine may only report `Completed` if the run ended on a
+    /// node that produced a value (PRD-022). Opt-in, default `false`: a graph
+    /// that does not declare it behaves exactly as before.
+    ///
+    /// Enforced in two layers — [`GraphDef::validate`] rejects graphs whose
+    /// shape guarantees a silent end, and the runner turns a value-less or
+    /// error-swallowing termination into `Failed`.
+    #[serde(default)]
+    pub strict_completion: bool,
 }
 
 impl GraphDef {
@@ -220,7 +238,85 @@ impl GraphDef {
             }
         }
 
+        if self.strict_completion {
+            self.validate_strict()?;
+        }
+
         Ok(())
+    }
+
+    /// Shape rules that only apply under `strict_completion` (PRD-022, layer 1).
+    ///
+    /// Only what is provable without executing:
+    ///
+    /// - **S1** — a node with outgoing edges must have at least one
+    ///   unconditional edge, or a run reaching it with no condition matching
+    ///   dies with the cursor at `None`.
+    /// - **S2** — a fan-out whose branches do work afterwards must converge on
+    ///   a common node, or everything hanging off the branches never runs.
+    ///
+    /// Conditions depend on data, so neither rule evaluates them — that is the
+    /// runtime layer's job.
+    fn validate_strict(&self) -> Result<(), GraphError> {
+        for node in &self.nodes {
+            let outgoing = self.outgoing_edges(&node.id);
+            if outgoing.is_empty() {
+                continue;
+            }
+
+            let branches = self.unconditional_targets(&node.id);
+
+            // S1 — no default route.
+            if branches.is_empty() {
+                return Err(GraphError::StrictDeadEnd {
+                    node_id: node.id.clone(),
+                });
+            }
+
+            // S2 — fan-out that never converges. Branches with no outgoing
+            // edges of their own are terminal: nothing is stranded behind them.
+            if branches.len() > 1 {
+                let any_branch_continues =
+                    branches.iter().any(|b| !self.outgoing_edges(b).is_empty());
+                if any_branch_continues && self.common_unconditional_successor(&branches).is_none()
+                {
+                    return Err(GraphError::StrictFanOutWithoutJoin {
+                        node_id: node.id.clone(),
+                        branches,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Targets a node reaches without a condition in the way — its guaranteed
+    /// routes, in edge order.
+    fn unconditional_targets(&self, node_id: &str) -> Vec<String> {
+        self.outgoing_edges(node_id)
+            .iter()
+            .filter(|e| e.condition.is_none())
+            .map(|e| e.target.clone())
+            .collect()
+    }
+
+    /// The node every branch of a fan-out leads to unconditionally, if any.
+    ///
+    /// This is the join the runner resumes the walk on after a fan-out, and the
+    /// convergence S2 requires — one definition, two callers.
+    pub fn common_unconditional_successor(&self, branch_ids: &[String]) -> Option<String> {
+        let others: Vec<HashSet<String>> = branch_ids
+            .get(1..)?
+            .iter()
+            .map(|nid| self.unconditional_targets(nid).into_iter().collect())
+            .collect();
+
+        // Walk the first branch's targets in edge order so the answer is stable
+        // when more than one node happens to be common.
+        self.unconditional_targets(branch_ids.first()?)
+            .into_iter()
+            .find(|t| others.iter().all(|s| s.contains(t)))
     }
 
     /// Convenience: auto-generate IDs then validate.
@@ -284,6 +380,7 @@ mod tests {
             ],
             edges: vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")],
             metadata: HashMap::new(),
+            strict_completion: false,
         }
     }
 
@@ -301,6 +398,7 @@ mod tests {
             nodes: vec![],
             edges: vec![],
             metadata: HashMap::new(),
+            strict_completion: false,
         };
         assert!(matches!(g.validate(), Err(GraphError::EmptyGraph)));
     }
@@ -367,6 +465,7 @@ mod tests {
             ],
             edges: vec![make_edge("e1", "x", "z"), make_edge("e2", "y", "z")],
             metadata: HashMap::new(),
+            strict_completion: false,
         };
         let mut ids: Vec<&str> = g.entry_nodes().iter().map(|n| n.id.as_str()).collect();
         ids.sort();
@@ -388,6 +487,7 @@ mod tests {
                 data_map: None,
             }],
             metadata: HashMap::new(),
+            strict_completion: false,
         };
         g.prepare().unwrap();
         assert_eq!(g.edges[0].id, "a__b");
@@ -425,6 +525,7 @@ mod tests {
                 },
             ],
             metadata: HashMap::new(),
+            strict_completion: false,
         };
         g.auto_generate_edge_ids();
         let ids: Vec<&str> = g.edges.iter().map(|e| e.id.as_str()).collect();
@@ -451,6 +552,7 @@ mod tests {
                 data_map: None,
             }],
             metadata: HashMap::new(),
+            strict_completion: false,
         };
         assert!(g.validate().is_ok());
     }
@@ -519,5 +621,162 @@ mod tests {
     fn comparison_op_rejects_invalid() {
         let result: Result<ComparisonOp, _> = serde_json::from_str("\"banana\"");
         assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // strict_completion — layer 1 (PRD-022)
+    // -----------------------------------------------------------------------
+
+    fn make_cond_edge(id: &str, source: &str, target: &str, value: bool) -> EdgeDef {
+        EdgeDef {
+            id: id.to_string(),
+            source: source.to_string(),
+            target: target.to_string(),
+            condition: Some(EdgeCondition {
+                field: "ok".into(),
+                op: ComparisonOp::Eq,
+                value: serde_json::json!(value),
+            }),
+            data_map: None,
+        }
+    }
+
+    /// `route` can only leave through conditions — if neither matches, the run
+    /// dies where nobody declared an end.
+    fn only_conditional_exits() -> GraphDef {
+        GraphDef {
+            id: "g".into(),
+            name: "dead-end".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("route", "logic/switch"),
+                make_node("yes", "output/response"),
+                make_node("no", "output/response"),
+            ],
+            edges: vec![
+                make_cond_edge("e1", "route", "yes", true),
+                make_cond_edge("e2", "route", "no", false),
+            ],
+            metadata: HashMap::new(),
+            strict_completion: true,
+        }
+    }
+
+    #[test]
+    fn strict_s1_rejects_node_without_default_route() {
+        let g = only_conditional_exits();
+        match g.validate() {
+            Err(GraphError::StrictDeadEnd { node_id }) => assert_eq!(node_id, "route"),
+            other => panic!("expected StrictDeadEnd, got {other:?}"),
+        }
+    }
+
+    /// TEST-208 — the same graph without the flag keeps loading, exactly as before.
+    #[test]
+    fn strict_off_accepts_the_same_graph() {
+        let mut g = only_conditional_exits();
+        g.strict_completion = false;
+        assert!(g.validate().is_ok());
+    }
+
+    #[test]
+    fn strict_s1_accepts_conditional_exits_with_a_default_edge() {
+        let mut g = only_conditional_exits();
+        g.nodes.push(make_node("fallback", "output/response"));
+        g.edges.push(make_edge("e3", "route", "fallback"));
+        assert!(g.validate().is_ok());
+    }
+
+    /// Fan-out whose branches keep working but never meet again: everything
+    /// hanging off them would silently never run.
+    fn fanout_without_join() -> GraphDef {
+        GraphDef {
+            id: "g".into(),
+            name: "fanout".into(),
+            version: "1.0.0".into(),
+            nodes: vec![
+                make_node("split", "logic/merge"),
+                make_node("a", "logic/merge"),
+                make_node("b", "logic/merge"),
+                make_node("a_next", "output/response"),
+                make_node("b_next", "output/response"),
+            ],
+            edges: vec![
+                make_edge("e1", "split", "a"),
+                make_edge("e2", "split", "b"),
+                make_edge("e3", "a", "a_next"),
+                make_edge("e4", "b", "b_next"),
+            ],
+            metadata: HashMap::new(),
+            strict_completion: true,
+        }
+    }
+
+    #[test]
+    fn strict_s2_rejects_fanout_that_never_converges() {
+        match fanout_without_join().validate() {
+            Err(GraphError::StrictFanOutWithoutJoin { node_id, branches }) => {
+                assert_eq!(node_id, "split");
+                assert_eq!(branches, vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("expected StrictFanOutWithoutJoin, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strict_s2_accepts_fanout_with_a_join() {
+        let mut g = fanout_without_join();
+        g.nodes.retain(|n| n.id != "b_next");
+        g.edges.retain(|e| e.id != "e4");
+        g.edges.push(make_edge("e4", "b", "a_next"));
+        assert!(g.validate().is_ok());
+    }
+
+    /// Branches that end where they are strand nothing — no join required.
+    #[test]
+    fn strict_s2_accepts_fanout_into_terminal_branches() {
+        let mut g = fanout_without_join();
+        g.nodes.retain(|n| n.id != "a_next" && n.id != "b_next");
+        g.edges.retain(|e| e.id == "e1" || e.id == "e2");
+        assert!(g.validate().is_ok());
+    }
+
+    #[test]
+    fn common_successor_is_the_node_all_branches_reach() {
+        let mut g = fanout_without_join();
+        g.edges.retain(|e| e.id != "e4");
+        g.edges.push(make_edge("e4", "b", "a_next"));
+        let branches = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(
+            g.common_unconditional_successor(&branches),
+            Some("a_next".to_string())
+        );
+        assert_eq!(
+            fanout_without_join().common_unconditional_successor(&branches),
+            None
+        );
+    }
+
+    /// TEST-216 — a graph serialized before the field existed still loads.
+    #[test]
+    fn strict_completion_defaults_to_false_when_absent() {
+        let legacy = r#"{
+            "id": "g",
+            "name": "legacy",
+            "version": "1.0.0",
+            "nodes": [{"id": "a", "tool_type": "output/response", "version": "1.0.0", "config": {}}],
+            "edges": []
+        }"#;
+        let g: GraphDef = serde_json::from_str(legacy).unwrap();
+        assert!(!g.strict_completion);
+        assert!(g.validate().is_ok());
+    }
+
+    #[test]
+    fn strict_completion_survives_a_roundtrip() {
+        let mut g = sample_graph();
+        g.strict_completion = true;
+        let back: GraphDef = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert!(back.strict_completion);
     }
 }

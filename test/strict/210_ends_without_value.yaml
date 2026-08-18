@@ -1,0 +1,25 @@
+# TEST-210 — the run ends on a node that produced no value.
+#
+# `logic/merge` forwards whatever arrives as `data`; nothing does, so its output
+# is `{data: null}`. The graph loads fine — the shape is sound — but the run
+# ends with nothing to show, and that is not a `Completed`.
+
+name: strict-210-ends-without-value
+version: v1
+
+graph:
+  strict_completion: true
+  nodes:
+    - id: trigger
+      tool_type: trigger/manual
+      config:
+        payload:
+          task: "produce nothing"
+
+    - id: summarize
+      tool_type: logic/merge
+      config: {}
+
+  edges:
+    - source: trigger
+      target: summarize

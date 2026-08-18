@@ -4,6 +4,29 @@ All notable changes to openmirai-engine. Consumers: check **Breaking** sections 
 
 ---
 
+## Unreleased
+
+### Added
+- **`strict_completion` — a graph can no longer end in silence (PRD-022).** Opt-in,
+  per graph (`graph.strict_completion: true`, default `false`). When on, the engine is
+  only allowed to report `Completed` if the run actually ended on a node that produced
+  a value. Two layers: **at load time** it rejects graphs where a node's only way out is
+  conditional (no default route) or where a fan-out's branches never converge — both are
+  paths that die silently; **at run time** any termination without a value, any error
+  swallowed by `on_failure: skip`, and any `route_to_error` that found no error edge
+  become an explicit `Failed` carrying the node and the original cause, prefixed
+  `strict_completion:`. `mirai run --strict` / `mirai validate --strict` force the
+  guarantee on a graph that does not declare it — the way to sweep an existing fleet.
+  Real driver: runs that reported `completed` having written nothing.
+
+### Changed
+- **Rust API — `GraphError` gained two variants** (`StrictDeadEnd`,
+  `StrictFanOutWithoutJoin`): exhaustive `match`es on it stop compiling. The agent YAML
+  spec and the HTTP API are unchanged, and a graph without the flag behaves exactly as
+  before.
+
+---
+
 ## v0.7.1 (2026-08-07)
 
 Run state that survives everything (PRD-021). A run can now pause waiting for a human, be cancelled mid-flight, and resume from its checkpoint — **even across a process restart**. Additive migrations only; the HTTP API and the agent YAML spec stay backward-compatible.

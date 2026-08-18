@@ -36,7 +36,7 @@ Todos los ejemplos a continuación asumen que `mirai` está en tu `PATH` (o sust
 |---|---|---|
 | `mirai` (sin argumentos) | **Sí** | Asistente de configuración → terminal de agente interactiva |
 | `mirai run <archivo>` | No | Ejecuta una especificación de agente (JSON/YAML) una vez, imprime el JSON resultante |
-| `mirai validate <archivo>` | No | Analiza e informa el conteo de nodos/aristas; salida no cero en caso de error |
+| `mirai validate <archivo> [--strict]` | No | Analiza e informa el conteo de nodos/aristas; salida no cero en caso de error. Con `--strict` también rechaza las formas que pueden terminar en silencio |
 | `mirai serve` | No | Inicia el servidor HTTP (ver [API.md](backend/API.md)) |
 | `mirai tools [<tool_type>]` | No | Lista todas las herramientas, o muestra las entradas/salidas/configuración de una herramienta |
 | `mirai templates` | No | Lista las plantillas de agentes integradas |
@@ -127,6 +127,7 @@ mirai run agent.yaml --benchmark        # registra tiempos en benchmarks.jsonl
 | `--provider`, `--model`, `--api-key`, `--base-url` | Configuración del proveedor (ver §3) |
 | `--trace` | Después de la ejecución, renderiza el árbol de traza + métricas (nodos, ms totales/promedio, reintentos) en stderr |
 | `--benchmark` | Habilita el registro de benchmarks (también vía `MIRAI_BENCHMARK=1`); archivo vía `MIRAI_BENCHMARK_FILE` (defecto `benchmarks.jsonl`) |
+| `--strict` | Fuerza `strict_completion` en esta ejecución aunque el grafo no lo declare: solo puede reportar `Completed` si terminó en un nodo que produjo un valor. Las violaciones salen con código `1` y un mensaje con prefijo `strict_completion:`. No existe `--no-strict` |
 
 **Pipeline de ejecución** (este es el mapeo canónico CLI→motor; ver también §9):
 
@@ -158,14 +159,19 @@ mirai run agent.yaml --benchmark        # registra tiempos en benchmarks.jsonl
 
 > **Solo en memoria:** `mirai run` le otorga al agente una base de datos/almacenamiento efímeros. Las herramientas de datos y almacenamiento no persistirán entre ejecuciones. Usa `mirai serve` para un contexto de mayor duración.
 
-### `mirai validate <archivo>`
+### `mirai validate <archivo> [--strict]`
 
 ```bash
 mirai validate my-agent.yaml
 # → ✓ Valid agent spec: 'my-agent' (3 nodes, 2 edges)
+
+mirai validate my-agent.yaml --strict
+# → ✗ Invalid agent spec: node `route` has only conditional outgoing edges: …
 ```
 
 Analiza la especificación e informa los conteos de nodos/aristas. Las especificaciones inválidas imprimen `✗ Invalid agent spec: <error>` en stderr y salen con código `1`. **No** ejecuta el grafo ni contacta a ningún LLM.
+
+`--strict` aplica las reglas de forma de `strict_completion` aunque el grafo no las declare: rechaza un nodo cuyas únicas salidas son condicionales, y un fan-out cuyas ramas nunca convergen. Los grafos que ya declaran `graph.strict_completion: true` se verifican igual, y la línea de resumen lo indica. Sirve para barrer un directorio de agentes buscando finales silenciosos antes de comprometer el flag en alguno.
 
 ### `mirai serve`
 

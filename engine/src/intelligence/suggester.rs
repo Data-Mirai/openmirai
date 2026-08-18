@@ -309,6 +309,7 @@ mod tests {
                 data_map: None,
             }],
             metadata: HashMap::new(),
+            strict_completion: false,
         }
     }
 

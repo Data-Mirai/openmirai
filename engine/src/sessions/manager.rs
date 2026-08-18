@@ -167,6 +167,70 @@ fn now_rfc3339() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Session metadata inside tmux (startup adoption)
+// ---------------------------------------------------------------------------
+
+/// Env var injected at spawn/restart carrying the record's core fields as
+/// compact JSON, so a live tmux session holds its own metadata. If the
+/// registry is lost (deleted, corrupted, or the session was spawned by
+/// another engine instance), `initialize` re-adopts the orphan from this var
+/// instead of inventing fields. One var with JSON — not loose vars — because
+/// `show-environment` is line-based and JSON keeps newlines escaped (same
+/// rationale as mirai-server's MIRAI_META).
+pub const SESSION_META_ENV: &str = "OPENMIRAI_SESSION_META";
+
+/// The subset of [`SessionRecord`] persisted inside tmux. Every field is
+/// defaulted so a meta written by an older/newer engine still parses.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SessionMeta {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    project_dir: String,
+    #[serde(default)]
+    objective: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+    #[serde(default)]
+    ultracode: bool,
+    #[serde(default)]
+    created_at: String,
+    #[serde(default)]
+    parent_id: Option<String>,
+    #[serde(default)]
+    permission_mode: Option<String>,
+}
+
+impl SessionMeta {
+    fn of(rec: &SessionRecord) -> Self {
+        Self {
+            id: rec.id.clone(),
+            name: rec.name.clone(),
+            project_dir: rec.project_dir.clone(),
+            objective: rec.objective.clone(),
+            model: rec.model.clone(),
+            effort: rec.effort.clone(),
+            ultracode: rec.ultracode,
+            created_at: rec.created_at.clone(),
+            parent_id: rec.parent_id.clone(),
+            permission_mode: rec.permission_mode.clone(),
+        }
+    }
+
+    /// The `(SESSION_META_ENV, <compact json>)` pair for a spawn env slice.
+    fn env_pair(rec: &SessionRecord) -> (String, String) {
+        (
+            SESSION_META_ENV.to_string(),
+            serde_json::to_string(&Self::of(rec)).unwrap_or_default(),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SessionManager
 // ---------------------------------------------------------------------------
 
@@ -279,7 +343,126 @@ impl SessionManager {
                 sessions.insert(rec.id.clone(), rec);
             }
         }
-        self.persist().await
+
+        // Reconciliation is two-directional: the loop above stops registry
+        // entries whose tmux died; this adopts live `mirai-*` tmux sessions
+        // the registry does NOT know (registry lost/corrupted, or spawned by
+        // another engine instance). Without it a live session becomes an
+        // invisible orphan: tmux keeps it running but the API can't see it.
+        let adopted = self.adopt_orphans().await;
+        self.persist().await?;
+        for rec in adopted {
+            self.emit(EventType::SessionCreated, &rec.id, rec.to_api_json());
+        }
+        Ok(())
+    }
+
+    /// Adopt live `mirai-*` tmux sessions absent from the registry. Metadata
+    /// comes from the [`SESSION_META_ENV`] var injected at spawn; when it is
+    /// missing or corrupt the record is reconstructed minimally (id from the
+    /// session name, unknown project_dir/objective) and logged as such — a
+    /// reconstruction is never silent. A failure to adopt one session never
+    /// blocks the others or startup.
+    async fn adopt_orphans(&self) -> Vec<SessionRecord> {
+        let known: std::collections::HashSet<String> = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .values()
+                .filter(|r| !r.tmux_session.is_empty())
+                .map(|r| r.tmux_session.clone())
+                .collect()
+        };
+
+        let mut adopted = Vec::new();
+        for tmux_name in self.backend.list() {
+            // `TmuxBackend::list` already filters the prefix; the fake (and
+            // any future backend) may not — the filter is the contract here.
+            if !tmux_name.starts_with(TMUX_SESSION_PREFIX) || known.contains(&tmux_name) {
+                continue;
+            }
+
+            let meta = match self.backend.get_env(&tmux_name, SESSION_META_ENV) {
+                Ok(Some(raw)) => match serde_json::from_str::<SessionMeta>(&raw) {
+                    Ok(m) => Some(m),
+                    Err(e) => {
+                        tracing::warn!(
+                            "orchestrator: {SESSION_META_ENV} corrupt in {tmux_name} ({e}); reconstructing"
+                        );
+                        None
+                    }
+                },
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!(
+                        "orchestrator: could not read env of {tmux_name} ({e}); reconstructing"
+                    );
+                    None
+                }
+            };
+
+            let reconstructed = meta.is_none();
+            let meta = meta.unwrap_or_default();
+            let id = if meta.id.trim().is_empty() {
+                tmux_name[TMUX_SESSION_PREFIX.len()..].to_string()
+            } else {
+                meta.id.clone()
+            };
+            if id.trim().is_empty() {
+                tracing::warn!("orchestrator: cannot derive an id for {tmux_name}; skipped");
+                continue;
+            }
+
+            let now = now_rfc3339();
+            let record = SessionRecord {
+                id: id.clone(),
+                name: if meta.name.trim().is_empty() {
+                    tmux_name.clone()
+                } else {
+                    meta.name
+                },
+                project_dir: meta.project_dir,
+                objective: meta.objective,
+                // `starting` is neutral: the ~2s poll detects the real status
+                // from the pane right after boot.
+                status: SessionStatus::Starting,
+                model: meta.model,
+                effort: meta.effort,
+                ultracode: meta.ultracode,
+                tmux_session: tmux_name.clone(),
+                created_at: if meta.created_at.trim().is_empty() {
+                    now.clone()
+                } else {
+                    meta.created_at
+                },
+                last_activity: now,
+                // The session was already running: never re-prepend
+                // "ultracode" to a mid-conversation prompt.
+                first_prompt_sent: true,
+                parent_id: meta.parent_id,
+                external: false,
+                permission_mode: normalize_permission_mode(meta.permission_mode),
+            };
+
+            {
+                let mut sessions = self.sessions.write().await;
+                if sessions.contains_key(&id) {
+                    tracing::warn!(
+                        "orchestrator: id '{id}' of {tmux_name} collides with a registry entry; not adopted"
+                    );
+                    continue;
+                }
+                sessions.insert(id.clone(), record.clone());
+            }
+            if reconstructed {
+                tracing::warn!(
+                    "orchestrator: adopted orphan {tmux_name} WITHOUT {SESSION_META_ENV} — metadata reconstructed (project_dir/objective unknown)"
+                );
+            } else {
+                tracing::info!("orchestrator: adopted orphan tmux session {tmux_name}");
+            }
+            adopted.push(record);
+        }
+        adopted
     }
 
     /// Write the registry to disk (sorted by created_at for stable diffs).
@@ -461,13 +644,6 @@ impl SessionManager {
             params.permission_mode.as_deref(),
         )?;
 
-        // M6: the session (and its hook subprocesses) must know who it is and
-        // where the engine listens (single source of truth for the env).
-        let env = self.session_env(&id);
-
-        self.backend
-            .spawn(&tmux_session, &params.project_dir, &command, &env)?;
-
         let now = now_rfc3339();
         let record = SessionRecord {
             id: id.clone(),
@@ -486,6 +662,16 @@ impl SessionManager {
             external: false,
             permission_mode: normalize_permission_mode(params.permission_mode),
         };
+
+        // M6: the session (and its hook subprocesses) must know who it is and
+        // where the engine listens (single source of truth for the env). The
+        // record's core fields also travel INSIDE tmux (SESSION_META_ENV), so
+        // a lost registry is rebuilt by adoption instead of guessed.
+        let mut env = self.session_env(&id);
+        env.push(SessionMeta::env_pair(&record));
+
+        self.backend
+            .spawn(&record.tmux_session, &record.project_dir, &command, &env)?;
 
         self.sessions
             .write()
@@ -673,8 +859,16 @@ impl SessionManager {
         }
 
         // 2) Re-spawn claude under the SAME tmux session name + id, with the
-        //    new command/flags and the same env injection as a fresh spawn.
-        let env = self.session_env(id);
+        //    new command/flags and the same env injection as a fresh spawn —
+        //    including a refreshed SESSION_META_ENV so a later adoption
+        //    reflects the config that is actually running.
+        let mut env = self.session_env(id);
+        env.push(SessionMeta::env_pair(&SessionRecord {
+            model: new_model.clone(),
+            effort: new_effort.clone(),
+            permission_mode: new_permission_mode.clone(),
+            ..current.clone()
+        }));
         self.backend
             .spawn(&tmux_session, &project_dir, &command, &env)?;
 
@@ -1317,6 +1511,121 @@ mod tests {
             assert!(env.iter().any(|(k, _)| k == "MIRAI_SESSION_ID"));
             assert!(env.iter().any(|(k, _)| k == "MIRAI_PORT"));
         }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn spawn_injects_session_meta_env() {
+        // The record's core fields must travel INSIDE tmux so a lost registry
+        // can be rebuilt by adoption instead of guessed.
+        let (manager, backend, path) = manager_with_fake();
+        let rec = manager.spawn(spawn_params()).await.unwrap();
+
+        let spawned = backend.spawned.lock().unwrap();
+        let meta_raw = spawned[0]
+            .3
+            .iter()
+            .find(|(k, _)| k == SESSION_META_ENV)
+            .map(|(_, v)| v.clone())
+            .expect("spawn debe inyectar OPENMIRAI_SESSION_META");
+        let meta: serde_json::Value = serde_json::from_str(&meta_raw).unwrap();
+        assert_eq!(meta["id"], rec.id.as_str());
+        assert_eq!(meta["project_dir"], "/tmp");
+        assert_eq!(meta["objective"], "do the thing");
+        assert_eq!(meta["model"], "claude-opus-4-8");
+        assert_eq!(meta["created_at"], rec.created_at.as_str());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn initialize_adopts_orphan_with_meta_roundtrip() {
+        // Engine A spawns; engine B boots with a FRESH (lost) registry against
+        // the same tmux state → the session must reappear, not become an
+        // invisible orphan, and with its real metadata (from inside tmux).
+        let (manager_a, backend, path_a) = manager_with_fake();
+        let original = manager_a.spawn(spawn_params()).await.unwrap();
+
+        let path_b = temp_registry();
+        let manager_b = Arc::new(SessionManager::new(backend.clone(), path_b.clone()));
+        manager_b.initialize().await.unwrap();
+
+        let adopted = manager_b
+            .get(&original.id)
+            .await
+            .expect("la huérfana debe re-adoptarse con su id original");
+        assert_eq!(adopted.tmux_session, original.tmux_session);
+        assert_eq!(adopted.name, original.name);
+        assert_eq!(adopted.project_dir, original.project_dir);
+        assert_eq!(adopted.objective, original.objective);
+        assert_eq!(adopted.model, original.model);
+        assert_eq!(adopted.effort, original.effort);
+        assert_eq!(adopted.created_at, original.created_at);
+        assert_eq!(adopted.status, SessionStatus::Starting);
+        assert!(
+            adopted.first_prompt_sent,
+            "una sesión adoptada ya estaba en marcha: nunca re-prepender ultracode"
+        );
+        assert!(!adopted.external);
+
+        // Adoption persists: a third boot from B's registry needs no adoption.
+        let raw = std::fs::read_to_string(&path_b).unwrap();
+        assert!(raw.contains(&original.id), "la adopción debe persistirse");
+
+        let _ = std::fs::remove_file(path_a);
+        let _ = std::fs::remove_file(path_b);
+    }
+
+    #[tokio::test]
+    async fn initialize_adopts_orphan_without_meta_reconstructing() {
+        // A live mirai-* session with no OPENMIRAI_SESSION_META (older engine,
+        // hand-made session): adopted anyway, minimally reconstructed.
+        let (manager, backend, path) = manager_with_fake();
+        backend.set_pane("mirai-huerfana1", &["$ claude", "> "]);
+
+        manager.initialize().await.unwrap();
+
+        let rec = manager
+            .get("huerfana1")
+            .await
+            .expect("sin meta también se adopta (id del nombre tmux)");
+        assert_eq!(rec.tmux_session, "mirai-huerfana1");
+        assert_eq!(rec.name, "mirai-huerfana1");
+        assert_eq!(rec.project_dir, "");
+        assert_eq!(rec.objective, "");
+        assert!(rec.first_prompt_sent);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn initialize_adopts_orphan_with_corrupt_meta_reconstructing() {
+        // Corrupt meta must not abort startup nor skip the session.
+        let (manager, backend, path) = manager_with_fake();
+        backend.set_pane("mirai-rota1", &["> "]);
+        backend.set_env("mirai-rota1", SESSION_META_ENV, "{esto no es json");
+
+        manager.initialize().await.unwrap();
+
+        let rec = manager.get("rota1").await.expect("meta corrupta → fallback");
+        assert_eq!(rec.tmux_session, "mirai-rota1");
+        assert_eq!(rec.objective, "");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn initialize_does_not_adopt_known_or_foreign_sessions() {
+        // Registry-known sessions are not duplicated; tmux sessions without
+        // the mirai- prefix belong to a human and are never touched.
+        let (manager_a, backend, path) = manager_with_fake();
+        let rec = manager_a.spawn(spawn_params()).await.unwrap();
+        backend.set_pane("ajena-del-humano", &["$ vim"]);
+
+        // Same registry file, fresh manager (a normal restart).
+        let manager_b = Arc::new(SessionManager::new(backend.clone(), path.clone()));
+        manager_b.initialize().await.unwrap();
+
+        let list = manager_b.list().await;
+        assert_eq!(list.len(), 1, "ni duplicados ni sesiones ajenas: {list:?}");
+        assert_eq!(list[0].id, rec.id);
         let _ = std::fs::remove_file(path);
     }
 

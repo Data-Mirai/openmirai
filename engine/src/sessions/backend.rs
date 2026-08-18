@@ -38,6 +38,12 @@ pub trait SessionBackend: Send + Sync {
 
     /// List live tmux session names managed by us (prefix `mirai-`).
     fn list(&self) -> Vec<String>;
+
+    /// Read one variable from the session's environment (`show-environment`).
+    /// `Ok(None)` when the variable is not set in that session. Used by the
+    /// startup adoption to recover a session's metadata from inside tmux
+    /// (see `OPENMIRAI_SESSION_META` in the manager) instead of inventing it.
+    fn get_env(&self, tmux_session: &str, var: &str) -> Result<Option<String>, SessionError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +151,22 @@ impl SessionBackend for TmuxBackend {
             })
             .unwrap_or_default()
     }
+
+    fn get_env(&self, tmux_session: &str, var: &str) -> Result<Option<String>, SessionError> {
+        // Full listing + local filter instead of `show-environment <var>`:
+        // when the variable is unset tmux exits non-zero with a message that
+        // varies by version, and parsing stderr to tell "unset" from a real
+        // failure is brittle. The listing is line-based (`K=V`, removed vars
+        // as `-K`), so values must never contain a raw newline — the manager
+        // stores compact JSON, where newlines travel escaped.
+        let target = format!("={tmux_session}");
+        let out = self.tmux(&["show-environment", "-t", &target])?;
+        let prefix = format!("{var}=");
+        Ok(out
+            .lines()
+            .find(|l| l.starts_with(&prefix))
+            .map(|l| l[prefix.len()..].to_string()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +187,9 @@ pub(crate) mod fake {
         pub panes: Mutex<HashMap<String, Vec<String>>>,
         /// (session name, text) pairs, in send order
         pub sent: Mutex<Vec<(String, String)>>,
+        /// session name → scripted session environment (adoption tests use
+        /// this to simulate a pre-existing tmux session with metadata inside).
+        pub envs: Mutex<HashMap<String, HashMap<String, String>>>,
         /// (session, project_dir, command, env) spawn calls
         #[allow(clippy::type_complexity)]
         pub spawned: Mutex<Vec<(String, String, String, Vec<(String, String)>)>>,
@@ -186,6 +211,16 @@ pub(crate) mod fake {
         /// Simulate the tmux session dying (claude exited / killed manually).
         pub fn kill_externally(&self, session: &str) {
             self.panes.lock().unwrap().remove(session);
+        }
+
+        /// Script one env var of a session (simulates `tmux show-environment`).
+        pub fn set_env(&self, session: &str, var: &str, value: &str) {
+            self.envs
+                .lock()
+                .unwrap()
+                .entry(session.to_string())
+                .or_default()
+                .insert(var.to_string(), value.to_string());
         }
     }
 
@@ -245,6 +280,32 @@ pub(crate) mod fake {
 
         fn list(&self) -> Vec<String> {
             self.panes.lock().unwrap().keys().cloned().collect()
+        }
+
+        fn get_env(&self, tmux_session: &str, var: &str) -> Result<Option<String>, SessionError> {
+            if !self.session_exists(tmux_session) {
+                return Err(SessionError::Backend(format!("no session {tmux_session}")));
+            }
+            // Scripted env first (adoption tests), then whatever spawn injected.
+            if let Some(v) = self
+                .envs
+                .lock()
+                .unwrap()
+                .get(tmux_session)
+                .and_then(|m| m.get(var))
+            {
+                return Ok(Some(v.clone()));
+            }
+            Ok(self
+                .spawned
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|(s, _, _, _)| s == tmux_session)
+                .and_then(|(_, _, _, env)| {
+                    env.iter().find(|(k, _)| k == var).map(|(_, v)| v.clone())
+                }))
         }
     }
 }

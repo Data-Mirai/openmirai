@@ -155,7 +155,7 @@ Se muestra al iniciar sesión interactiva. El banner y la información de sesió
 
 Provider: claude
 Model:    claude-3-sonnet-20250219
-CWD:      /Users/gabo/Documents/project
+CWD:      /Users/alice/project
 Tools loaded: 45
 Autonomy: copilot (max 25 rounds/turn)
 Context window: 200K

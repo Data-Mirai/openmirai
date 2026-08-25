@@ -12,6 +12,20 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  publication-safety:
+    name: public repository boundary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check public repository boundary
+        env:
+          PUBLICATION_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: bash tools/check_publication_safety.sh
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest

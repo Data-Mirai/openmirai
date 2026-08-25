@@ -30,8 +30,7 @@ Rust engine + Axum HTTP server + SQLite + 7 LLM providers. Full details → [ARC
 | COMPONENTS.md | Reusable units (built-in tools, SDKs) | [frontend/COMPONENTS.md](frontend/COMPONENTS.md) |
 | DESIGN-GUIDE.md | CLI terminal UX conventions | [frontend/DESIGN-GUIDE.md](frontend/DESIGN-GUIDE.md) |
 | TESTS.md | Test strategy and scenarios | [TESTS.md](TESTS.md) |
-| GAPS.md | Feature gap tracking (historical) | [GAPS.md](GAPS.md) |
-| ROADMAP-PARITY.md | Competitive parity analysis | [ROADMAP-PARITY.md](ROADMAP-PARITY.md) |
+| ROADMAP-PARITY.md | Competitive parity + internal gap tracking | [ROADMAP-PARITY.md](ROADMAP-PARITY.md) |
 
 ## 4. Key Decisions
 

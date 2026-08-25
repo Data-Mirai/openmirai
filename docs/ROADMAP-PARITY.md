@@ -117,6 +117,57 @@ Estos NO son gaps — son features donde Mirai ya gana. Pulirlos y marketearlos.
 
 ---
 
+## Gaps internos pendientes (migrado de GAPS.md)
+
+Estos son gaps de completitud interna de Mirai, no comparaciones con LangGraph. Migrados desde
+`docs/GAPS.md` (eliminado por quedar desactualizado — su registro "Completados" v0.3.0/v0.4.0
+ya vive en `CHANGELOG.md`).
+
+### GAP-F: Universe ejecuta agentes completos
+- **Modulo**: `engine/src/universe.rs`
+- **Estado**: Routing funciona (keyword, explicit, round-robin, LLM-based)
+- **Falta**:
+  1. `Universe.handle_message()` → routea + carga workflow del Soul + ejecuta con GraphRunner + retorna respuesta
+  2. A2A message delivery queue (cola interna por agente)
+  3. GroupChat execution loop (N rondas con LLM)
+  4. CLI: `mirai universe start <config.yaml>`
+- **Esfuerzo**: medio (3-6 horas)
+
+### GAP-G: Eval integrado en ejecucion
+- **Modulo**: `engine/src/eval.rs`
+- **Estado**: Evaluadores programaticos funcionan, judge prompts generados
+- **Falta**:
+  1. Registrar `eval/run` como tool
+  2. CLI: `mirai eval <session_id> --types relevance,format_compliance`
+  3. Hook post-execution que ejecute evals configurados en AgentSpec
+  4. LLM-as-judge: llamar al LLM real para relevance/faithfulness/completeness
+- **Esfuerzo**: medio (3-6 horas)
+
+### GAP-H: RAG con embeddings reales
+- **Modulo**: `engine/src/rag.rs`
+- **Estado**: Chunking funciona (4 estrategias). `data/rag_search` tool existe. `SimpleVectorResource` con FTS5 funciona. Ver tambien [RAG.md](backend/RAG.md).
+- **Falta**:
+  1. Conectar con `context.llm().embed()` para generar embeddings reales por chunk
+  2. Busqueda por similitud coseno con embeddings reales (no solo FTS5 keyword)
+  3. CLI: `mirai rag ingest --source ./docs/`
+- **Esfuerzo**: medio (3-6 horas)
+
+### GAP-J: Channel adapters
+- **Estado**: `channels.rs` y `voice.rs` eliminados en v0.4.0 (dead code). Empezar desde cero.
+- **Falta**: TelegramAdapter (Bot API), SlackAdapter (Events API), WhatsAppAdapter (Business API)
+- **Approach**: Cada adapter como feature flag independiente. ~500 lineas cada uno.
+- **Esfuerzo**: alto (1-2 semanas)
+
+### GAP-K: Voice STT/TTS
+- **Estado**: `voice.rs` eliminado en v0.4.0. Empezar desde cero.
+- **Falta**: Whisper integration (STT), ElevenLabs/OpenAI TTS integration, audio streaming
+- **Approach**: Modulo nuevo `engine/src/voice/`. Feature flag `voice`.
+- **Esfuerzo**: alto (1-2 semanas)
+
+**Orden recomendado dentro de este grupo**: GAP-F → GAP-H → GAP-G, despues GAP-J → GAP-K.
+
+---
+
 ## Orden de ejecucion sugerido
 
 ```
